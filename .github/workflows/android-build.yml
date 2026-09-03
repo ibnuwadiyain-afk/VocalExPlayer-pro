@@ -30,7 +30,12 @@ jobs:
         run: |
           if [ ! -f "./gradlew" ]; then
             echo "Gradle wrapper not found. Generating wrapper..."
-            gradle wrapper
+            if command -v gradle >/dev/null 2>&1; then
+              gradle wrapper
+            else
+              sudo apt-get update && sudo apt-get install -y gradle
+              gradle wrapper
+            fi
           fi
           chmod +x ./gradlew
 
@@ -38,8 +43,9 @@ jobs:
         run: |
           if [ -f "debug.keystore.base64" ]; then
             echo "Decoding debug.keystore from debug.keystore.base64..."
-            base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f "debug.keystore" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore 2>/dev/null || base64 --decode debug.keystore.base64 > debug.keystore
+          fi
+          if [ ! -f "debug.keystore" ] || [ ! -s "debug.keystore" ]; then
             echo "Generating debug.keystore via keytool..."
             keytool -genkey -v \
               -keystore debug.keystore \
@@ -51,74 +57,32 @@ jobs:
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
-
-          if [ -f "debug.keystore" ]; then
-            echo "debug.keystore is ready."
-          else
-            echo "Error: debug.keystore could not be established."
-            exit 1
-          fi
+          echo "Debug keystore verified ($(wc -c < debug.keystore) bytes)."
 
       - name: Setup Environment and Configuration Files
         env:
-          ENV_FILE_SECRET: ${{ secrets.ENV_FILE }}
+          ENV_SECRET: ${{ secrets.ENV_FILE }}
           GOOGLE_SERVICES_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          # Gracefully handle .env
-          if [ -n "$ENV_FILE_SECRET" ]; then
-            echo "Applying .env from repository secret..."
-            echo "$ENV_FILE_SECRET" > .env
+          if [ -n "$ENV_SECRET" ]; then
+            echo "Writing .env from GitHub Secrets..."
+            echo "$ENV_SECRET" > .env
           elif [ ! -f ".env" ]; then
             if [ -f ".env.example" ]; then
-              echo ".env not found. Copying template from .env.example..."
+              echo "Copying .env from .env.example..."
               cp .env.example .env
             else
-              echo "Neither .env nor .env.example found. Creating empty .env..."
+              echo "Creating empty .env..."
               touch .env
             fi
-          else
-            echo ".env file already exists."
           fi
 
-          # Gracefully handle optional google-services.json
           if [ -n "$GOOGLE_SERVICES_SECRET" ]; then
-            echo "Writing app/google-services.json from repository secret..."
+            echo "Writing app/google-services.json from GitHub Secrets..."
             echo "$GOOGLE_SERVICES_SECRET" > app/google-services.json
           elif [ ! -f "app/google-services.json" ]; then
-            echo "app/google-services.json not found. Creating placeholder configuration to ensure build stability..."
-            cat << 'EOF' > app/google-services.json
-{
-  "project_info": {
-    "project_number": "000000000000",
-    "project_id": "placeholder-project",
-    "storage_bucket": "placeholder-project.appspot.com"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
-        "android_client_info": {
-          "package_name": "com.example"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyPlaceholderKeyForBuild00000000"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    }
-  ],
-  "configuration_version": "1"
-}
-EOF
-          else
-            echo "app/google-services.json already exists."
+            echo "Creating placeholder app/google-services.json..."
+            echo '{"project_info":{"project_number":"000000000000","project_id":"placeholder-project","storage_bucket":"placeholder.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000000000000","android_client_info":{"package_name":"com.example"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyPlaceholderKeyForBuild00000000"}],"services":{}}],"configuration_version":"1"}' > app/google-services.json
           fi
 
       - name: Build Debug APK
