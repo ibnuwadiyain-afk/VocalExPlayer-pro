@@ -1,0 +1,133 @@
+name: Android Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Ensure Gradle Wrapper
+        run: |
+          if [ ! -f "./gradlew" ]; then
+            echo "Gradle wrapper not found. Generating wrapper..."
+            gradle wrapper
+          fi
+          chmod +x ./gradlew
+
+      - name: Setup Debug Keystore
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            echo "Decoding debug.keystore from debug.keystore.base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            echo "Generating debug.keystore via keytool..."
+            keytool -genkey -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          if [ -f "debug.keystore" ]; then
+            echo "debug.keystore is ready."
+          else
+            echo "Error: debug.keystore could not be established."
+            exit 1
+          fi
+
+      - name: Setup Environment and Configuration Files
+        env:
+          ENV_FILE_SECRET: ${{ secrets.ENV_FILE }}
+          GOOGLE_SERVICES_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          # Gracefully handle .env
+          if [ -n "$ENV_FILE_SECRET" ]; then
+            echo "Applying .env from repository secret..."
+            echo "$ENV_FILE_SECRET" > .env
+          elif [ ! -f ".env" ]; then
+            if [ -f ".env.example" ]; then
+              echo ".env not found. Copying template from .env.example..."
+              cp .env.example .env
+            else
+              echo "Neither .env nor .env.example found. Creating empty .env..."
+              touch .env
+            fi
+          else
+            echo ".env file already exists."
+          fi
+
+          # Gracefully handle optional google-services.json
+          if [ -n "$GOOGLE_SERVICES_SECRET" ]; then
+            echo "Writing app/google-services.json from repository secret..."
+            echo "$GOOGLE_SERVICES_SECRET" > app/google-services.json
+          elif [ ! -f "app/google-services.json" ]; then
+            echo "app/google-services.json not found. Creating placeholder configuration to ensure build stability..."
+            cat << 'EOF' > app/google-services.json
+{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "placeholder-project",
+    "storage_bucket": "placeholder-project.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "com.example"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyPlaceholderKeyForBuild00000000"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
+EOF
+          else
+            echo "app/google-services.json already exists."
+          fi
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/
+          if-no-files-found: error
+          retention-days: 14
