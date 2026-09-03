@@ -1,0 +1,6 @@
+{
+  "name": "VocalExtractor",
+  "description": "Video player with AI vocal extraction using UVR/MDX-Net ONNX models.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
