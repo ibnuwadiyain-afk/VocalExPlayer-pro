@@ -130,4 +130,4 @@ EOF
           name: app-debug-apk
           path: app/build/outputs/apk/debug/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 21
