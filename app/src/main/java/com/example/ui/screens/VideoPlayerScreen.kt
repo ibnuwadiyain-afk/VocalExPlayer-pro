@@ -26,7 +26,9 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VolumeUp
+import com.example.onnx.AccelerationMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -95,6 +97,8 @@ fun VideoPlayerScreen(
     isProcessing: Boolean,
     processingProgress: Float,
     activeModelName: String,
+    accelerationMode: AccelerationMode = AccelerationMode.TURBO,
+    hardwareBackend: String = "Multi-Core CPU",
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
@@ -522,27 +526,33 @@ fun VideoPlayerScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                     }
 
-                    // Model Badge
+                    // Model & Hardware Acceleration Badge
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = DarkSurface,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Audiotrack,
-                                contentDescription = null,
-                                tint = AccentTeal,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Speed,
+                                    contentDescription = null,
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "AI Acceleration: ${accelerationMode.displayName} (${accelerationMode.speedBadge})",
+                                    color = AccentTeal,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Engine: ONNX UVR MDX-Net Vocal Extractor",
+                                text = "Hardware: $hardwareBackend • ONNX UVR MDX-Net 1",
                                 color = TextSecondary,
-                                fontSize = 12.sp
+                                fontSize = 11.sp
                             )
                         }
                     }

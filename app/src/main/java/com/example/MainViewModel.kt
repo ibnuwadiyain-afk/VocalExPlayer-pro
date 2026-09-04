@@ -42,6 +42,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _modelInfoMessage = MutableStateFlow<String?>(null)
     val modelInfoMessage: StateFlow<String?> = _modelInfoMessage.asStateFlow()
 
+    private val _accelerationMode = MutableStateFlow<com.example.onnx.AccelerationMode>(
+        com.example.onnx.AccelerationMode.fromId(prefs.getString("acceleration_mode", com.example.onnx.AccelerationMode.TURBO.id))
+    )
+    val accelerationMode: StateFlow<com.example.onnx.AccelerationMode> = _accelerationMode.asStateFlow()
+
+    val hardwareBackend: String
+        get() = separationPipeline.activeHardwareBackend
+
+    fun setAccelerationMode(mode: com.example.onnx.AccelerationMode) {
+        _accelerationMode.value = mode
+        prefs.edit().putString("acceleration_mode", mode.id).apply()
+        _modelInfoMessage.value = "Acceleration set to: ${mode.displayName} (${mode.speedBadge})"
+    }
+
     val videoList: StateFlow<List<VideoItemEntity>> = videoDao.getAllVideos()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -249,10 +263,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = separationPipeline.processVideo(
                 video = video,
                 customModelPath = _customModelPath.value,
+                accelerationMode = _accelerationMode.value,
                 forceRecompute = forceRecompute,
                 onProgress = { progress ->
                     _processingProgress.value = progress
-                    _processingMessage.value = "Extracting vocals with UVR AI… ${(progress * 100).toInt()}%"
+                    _processingMessage.value = "Extracting vocals with UVR AI (${_accelerationMode.value.displayName})… ${(progress * 100).toInt()}%"
                 }
             )
 

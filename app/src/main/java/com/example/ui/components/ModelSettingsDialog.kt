@@ -3,7 +3,8 @@ package com.example.ui.components
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,11 +17,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,6 +43,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.onnx.AccelerationMode
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -49,7 +55,10 @@ import com.example.ui.theme.TextSecondary
 fun ModelSettingsDialog(
     activeModelName: String,
     customModelPath: String?,
+    accelerationMode: AccelerationMode,
+    hardwareBackend: String,
     onDismiss: () -> Unit,
+    onSelectAccelerationMode: (AccelerationMode) -> Unit,
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltIn: () -> Unit
 ) {
@@ -68,14 +77,14 @@ fun ModelSettingsDialog(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Default.Psychology,
+                    imageVector = Icons.Default.Speed,
                     contentDescription = null,
                     tint = AccentTeal,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "AI Separation Model",
+                    text = "AI Engine & Acceleration",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
@@ -88,56 +97,116 @@ fun ModelSettingsDialog(
                     .fillMaxWidth()
                     .testTag("model_settings_dialog")
             ) {
-                // Active Model Box
+                // Hardware Acceleration Status Badge
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = DarkSurfaceVariant,
+                    shape = RoundedCornerShape(10.dp),
+                    color = DarkSurface,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = AccentTeal,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Memory,
+                            contentDescription = null,
+                            tint = AccentTeal,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
                             Text(
-                                text = if (isCustom) "CUSTOM MODEL ACTIVE" else "BUILT-IN NEURAL MODEL ACTIVE",
+                                text = "ACTIVE HARDWARE ACCELERATION",
                                 color = AccentTeal,
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
+                            Text(
+                                text = hardwareBackend,
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = activeModelName,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Text(
-                            text = if (isCustom) {
-                                "Running ONNX neural source separation inference with your imported model."
-                            } else {
-                                "Full 29.7MB UVR MDX-Net ONNX neural network running real STFT spectrogram source separation."
-                            },
-                            color = TextSecondary,
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp
-                        )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Model Architecture Specs
+                // Processing Acceleration Modes
+                Text(
+                    text = "SEPARATION SPEED PROFILE",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                AccelerationMode.entries.forEach { mode ->
+                    val isSelected = mode == accelerationMode
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) DarkSurfaceVariant else DarkSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .then(
+                                if (isSelected) {
+                                    Modifier.border(1.dp, AccentTeal, RoundedCornerShape(12.dp))
+                                } else Modifier
+                            )
+                            .clickable { onSelectAccelerationMode(mode) }
+                            .testTag("accel_mode_${mode.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (isSelected) AccentTeal else TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = mode.displayName,
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (mode == AccelerationMode.TURBO) AccentTeal.copy(alpha = 0.2f) else DarkBackground
+                                    ) {
+                                        Text(
+                                            text = mode.speedBadge,
+                                            color = if (mode == AccelerationMode.TURBO) AccentTeal else TextSecondary,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = mode.description,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Active Model Box
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = DarkSurface,
@@ -146,30 +215,30 @@ fun ModelSettingsDialog(
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Default.Info,
+                                imageVector = Icons.Default.Psychology,
                                 contentDescription = null,
-                                tint = TextSecondary,
-                                modifier = Modifier.size(14.dp)
+                                tint = AccentTeal,
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Model Specifications",
-                                color = TextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
+                                text = if (isCustom) "CUSTOM MODEL" else "BUILT-IN NEURAL NETWORK",
+                                color = AccentTeal,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• Architecture: MDX-Net ConvTDF\n• Spectrogram: 6144 STFT / 2048 Bins / 256 Frames\n• Tensors: 4-Channel Complex Audio [1, 4, 2048, 256]\n• Target Stem: Primary Vocal Extraction",
-                            color = TextSecondary,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp
+                            text = activeModelName,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Import Custom Model Button
                 Button(

@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.onnx.AccelerationMode
 import com.example.ui.components.ModelSettingsDialog
 import com.example.ui.components.VideoListItem
 import com.example.ui.theme.AccentTeal
@@ -81,12 +82,15 @@ fun VideoListScreen(
     activeModelName: String,
     customModelPath: String?,
     modelInfoMessage: String?,
+    accelerationMode: AccelerationMode = AccelerationMode.TURBO,
+    hardwareBackend: String = "Multi-Core CPU",
     onVideoSelected: (VideoItemEntity) -> Unit,
     onImportVideo: (Uri) -> Unit,
     onImportSampleVideo: () -> Unit,
     onDeleteVideo: (VideoItemEntity) -> Unit,
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
+    onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
     onClearModelMessage: () -> Unit,
     onReprocessVideo: (VideoItemEntity) -> Unit,
     onExportVideo: (VideoItemEntity) -> Unit,
@@ -514,7 +518,10 @@ fun VideoListScreen(
         ModelSettingsDialog(
             activeModelName = activeModelName,
             customModelPath = customModelPath,
+            accelerationMode = accelerationMode,
+            hardwareBackend = hardwareBackend,
             onDismiss = { showModelDialog = false },
+            onSelectAccelerationMode = onSelectAccelerationMode,
             onImportCustomModel = { uri ->
                 onImportCustomModel(uri)
                 showModelDialog = false

@@ -13,6 +13,7 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.math.sqrt
 
 class UvrMdxInferenceEngine(private val context: Context) {
 
@@ -35,6 +36,9 @@ class UvrMdxInferenceEngine(private val context: Context) {
         dimT = DIM_T,
         hopLength = HOP_LENGTH
     )
+
+    var activeHardwareBackend: String = "Multi-Core CPU"
+        private set
 
     /**
      * Ensures the UVR MDX-Net ONNX model is extracted from assets to internal storage.
@@ -74,20 +78,37 @@ class UvrMdxInferenceEngine(private val context: Context) {
 
     /**
      * Executes neural AI source separation using the UVR MDX-Net ONNX model.
-     * Uses sample-accurate STFT -> ONNX Neural Network -> iSTFT with overlap-add windowing.
+     * Uses sample-accurate STFT -> ONNX Neural Network -> iSTFT with zero-allocation buffers.
      */
     fun separateVocals(
         decodedAudio: DecodedAudio,
         outputWavFile: File,
         customModelPath: String? = null,
+        accelerationMode: AccelerationMode = AccelerationMode.TURBO,
         onProgress: (Float) -> Unit = {}
     ): File {
         val modelFile = getOrExtractModelFile(customModelPath)
+
+        val availableProcessors = Runtime.getRuntime().availableProcessors()
+        val numThreads = availableProcessors.coerceIn(4, 8)
+
         val sessionOptions = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(2)
+            setIntraOpNumThreads(numThreads)
+            setInterOpNumThreads(2)
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+
+            // Try hardware acceleration (NNAPI)
+            try {
+                addNnapi()
+                activeHardwareBackend = "NNAPI (NPU/GPU Accelerated)"
+                Log.i(TAG, "Hardware Acceleration enabled: NNAPI NPU/GPU")
+            } catch (e: Throwable) {
+                activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
+                Log.i(TAG, "NNAPI not active, fallback to optimized Multi-Core CPU ($numThreads threads): ${e.message}")
+            }
         }
 
-        Log.i(TAG, "Opening ONNX Session for model: ${modelFile.name} (${modelFile.length() / (1024 * 1024)} MB)")
+        Log.i(TAG, "Opening ONNX Session for model: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
         val session = ortEnvironment.createSession(modelFile.absolutePath, sessionOptions)
 
         try {
@@ -108,8 +129,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
                 throw IllegalArgumentException("Audio track has 0 samples")
             }
 
-            // Check if model is MDX-Net 4-channel STFT model:
-            // e.g., shape ends with [..., 4, 2048, 256] or matches dimF / dimT
+            // Check if model is MDX-Net 4-channel STFT model
             val isMdxModel = inputShape.size >= 4 && (inputShape[1] == 4L || inputShape[inputShape.size - 3] == 4L)
                 || (inputShape.isEmpty() || inputShape.size == 4)
 
@@ -122,10 +142,10 @@ class UvrMdxInferenceEngine(private val context: Context) {
                     rightIn = rightIn,
                     sampleRate = decodedAudio.sampleRate,
                     outputWavFile = outputWavFile,
+                    accelerationMode = accelerationMode,
                     onProgress = onProgress
                 )
             } else {
-                // Waveform-based ONNX model
                 runWaveformPipeline(
                     session = session,
                     inputName = inputName,
@@ -156,6 +176,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
         rightIn: FloatArray,
         sampleRate: Int,
         outputWavFile: File,
+        accelerationMode: AccelerationMode,
         onProgress: (Float) -> Unit
     ) {
         val totalSamples = minOf(leftIn.size, rightIn.size)
@@ -174,12 +195,15 @@ class UvrMdxInferenceEngine(private val context: Context) {
         System.arraycopy(rightIn, 0, rightPadded, trim, totalSamples)
 
         val totalChunks = (totalSamples + pad) / genSize
-        Log.i(TAG, "Running UVR MDX-Net: $totalSamples samples, $totalChunks chunks (genSize=$genSize, chunkSize=$chunkSize)")
+        Log.i(TAG, "Running UVR MDX-Net [${accelerationMode.displayName}]: $totalSamples samples, $totalChunks chunks (genSize=$genSize)")
 
         val outFinalLeft = FloatArray(totalSamples)
         val outFinalRight = FloatArray(totalSamples)
 
-        // Preallocate buffers for chunk processing
+        // Preallocate reusable scratchpads and buffers for chunk processing
+        val scratchL = processor.createScratchpad()
+        val scratchR = processor.createScratchpad()
+
         val chunkL = FloatArray(chunkSize + processor.nFft)
         val chunkR = FloatArray(chunkSize + processor.nFft)
 
@@ -202,6 +226,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
 
         var chunkIdx = 0
         var samplePos = 0
+        var skippedChunks = 0
 
         while (samplePos < totalSamples + pad) {
             val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks) * 0.70f
@@ -214,9 +239,32 @@ class UvrMdxInferenceEngine(private val context: Context) {
             System.arraycopy(leftPadded, samplePos, chunkL, 0, copyLen)
             System.arraycopy(rightPadded, samplePos, chunkR, 0, copyLen)
 
-            // 2. Compute STFT for Left and Right channels
-            processor.computeChannelStft(chunkL, specReL, specImL)
-            processor.computeChannelStft(chunkR, specReR, specImR)
+            // Turbo Optimization: Check if chunk is silence/background pause
+            if (accelerationMode.silenceSkipThreshold > 0f) {
+                var sumSq = 0.0
+                val step = 8
+                var sampleCount = 0
+                var i = 0
+                while (i < copyLen) {
+                    val sL = chunkL[i]
+                    val sR = chunkR[i]
+                    sumSq += (sL * sL + sR * sR)
+                    sampleCount += 2
+                    i += step
+                }
+                val rms = if (sampleCount > 0) sqrt(sumSq / sampleCount).toFloat() else 0f
+                if (rms < accelerationMode.silenceSkipThreshold) {
+                    // Silence chunk: bypass heavy neural inference and iSTFT
+                    skippedChunks++
+                    samplePos += genSize
+                    chunkIdx++
+                    continue
+                }
+            }
+
+            // 2. Compute STFT for Left and Right channels with zero-allocation scratchpads
+            processor.computeChannelStft(chunkL, specReL, specImL, scratchL)
+            processor.computeChannelStft(chunkR, specReR, specImR, scratchR)
 
             // 3. Pack into ONNX FloatBuffer
             processor.packToFloatBuffer(specReL, specImL, specReR, specImR, inputFloatBuffer)
@@ -247,19 +295,19 @@ class UvrMdxInferenceEngine(private val context: Context) {
                         outBuffer.get(specImR[f], 0, DIM_T)
                     }
 
-                    // 5. Compute Inverse STFT
+                    // 5. Compute Inverse STFT with zero-allocation scratchpads
                     java.util.Arrays.fill(istftWaveL, 0f)
                     java.util.Arrays.fill(istftWaveR, 0f)
                     java.util.Arrays.fill(istftWeightL, 0f)
                     java.util.Arrays.fill(istftWeightR, 0f)
 
-                    processor.computeChannelIstft(specReL, specImL, istftWaveL, istftWeightL, COMPENSATION)
-                    processor.computeChannelIstft(specReR, specImR, istftWaveR, istftWeightR, COMPENSATION)
+                    processor.computeChannelIstft(specReL, specImL, istftWaveL, istftWeightL, COMPENSATION, scratchL)
+                    processor.computeChannelIstft(specReR, specImR, istftWaveR, istftWeightR, COMPENSATION, scratchR)
 
                     // 6. Normalize interior window weight and extract trim .. (trim + genSize)
-                    for (i in 0 until genSize) {
-                        val srcIdx = trim + i
-                        val targetIdx = samplePos + i
+                    for (k in 0 until genSize) {
+                        val srcIdx = trim + k
+                        val targetIdx = samplePos + k
                         if (targetIdx < totalSamples) {
                             val wL = istftWeightL[srcIdx]
                             val wR = istftWeightR[srcIdx]
@@ -279,6 +327,10 @@ class UvrMdxInferenceEngine(private val context: Context) {
             chunkIdx++
         }
 
+        if (skippedChunks > 0) {
+            Log.i(TAG, "Turbo Mode: Fast-skipped $skippedChunks silent chunks (${skippedChunks * 5.78f}s of compute saved)")
+        }
+
         onProgress(0.97f)
         Log.i(TAG, "Writing separated vocal WAV: ${outputWavFile.absolutePath} ($totalSamples samples at $sampleRate Hz)")
         WavWriter.writeWavFile(outFinalLeft, outFinalRight, sampleRate, outputWavFile)
@@ -286,7 +338,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
     }
 
     /**
-     * Fallback processor for raw waveform-based ONNX models (e.g. 2-channel audio chunks).
+     * Fallback processor for raw waveform-based ONNX models.
      */
     private fun runWaveformPipeline(
         session: OrtSession,
@@ -299,83 +351,67 @@ class UvrMdxInferenceEngine(private val context: Context) {
         onProgress: (Float) -> Unit
     ) {
         val totalSamples = minOf(leftIn.size, rightIn.size)
-        val chunkSize = 44100
-        val hopSize = chunkSize / 2
-        val hanning = FloatArray(chunkSize) { i ->
-            (0.5f * (1.0f - kotlin.math.cos(2.0 * kotlin.math.PI * i / (chunkSize - 1)))).toFloat()
-        }
+        val chunkSize = 44100 * 5 // 5 second chunks
+        val outFinalLeft = FloatArray(totalSamples)
+        val outFinalRight = FloatArray(totalSamples)
 
-        val outLeftAcc = FloatArray(totalSamples + chunkSize)
-        val outRightAcc = FloatArray(totalSamples + chunkSize)
-        val weightAcc = FloatArray(totalSamples + chunkSize)
+        val totalChunks = (totalSamples + chunkSize - 1) / chunkSize
+        var chunkIdx = 0
+        var samplePos = 0
 
-        val inputFloatBuffer = FloatBuffer.allocate(2 * chunkSize)
-        val tensorShape = longArrayOf(1, 2, chunkSize.toLong())
+        val chunkAudio = FloatArray(chunkSize * 2)
+        val floatBuffer = ByteBuffer.allocateDirect(chunkSize * 2 * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
 
-        var sampleOffset = 0
-        val totalSteps = (totalSamples + hopSize - 1) / hopSize
-        var stepIndex = 0
+        while (samplePos < totalSamples) {
+            val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks) * 0.70f
+            onProgress(progressStart)
 
-        while (sampleOffset < totalSamples) {
-            inputFloatBuffer.clear()
-            for (i in 0 until chunkSize) {
-                val idx = sampleOffset + i
-                inputFloatBuffer.put(if (idx < totalSamples) leftIn[idx] else 0f)
+            val currentChunkLen = minOf(chunkSize, totalSamples - samplePos)
+            floatBuffer.clear()
+            for (i in 0 until currentChunkLen) {
+                floatBuffer.put(leftIn[samplePos + i])
+                floatBuffer.put(rightIn[samplePos + i])
             }
-            for (i in 0 until chunkSize) {
-                val idx = sampleOffset + i
-                inputFloatBuffer.put(if (idx < totalSamples) rightIn[idx] else 0f)
+            for (i in currentChunkLen until chunkSize) {
+                floatBuffer.put(0f)
+                floatBuffer.put(0f)
             }
-            inputFloatBuffer.flip()
+            floatBuffer.flip()
 
-            val inputTensor = OnnxTensor.createTensor(ortEnvironment, inputFloatBuffer, tensorShape)
+            val tensorShape = longArrayOf(1, 2, chunkSize.toLong())
+            val inputTensor = OnnxTensor.createTensor(ortEnvironment, floatBuffer, tensorShape)
             var ortResult: OrtSession.Result? = null
 
             try {
                 ortResult = session.run(mapOf(inputName to inputTensor))
                 val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
                 if (resultValue is OnnxTensor) {
-                    val outBuffer = resultValue.floatBuffer
-                    val outL = FloatArray(chunkSize)
-                    val outR = FloatArray(chunkSize)
-                    outBuffer.position(0)
-                    outBuffer.get(outL, 0, chunkSize)
-                    outBuffer.get(outR, 0, chunkSize)
-
-                    for (i in 0 until chunkSize) {
-                        val targetIdx = sampleOffset + i
-                        val w = hanning[i]
-                        outLeftAcc[targetIdx] += outL[i] * w
-                        outRightAcc[targetIdx] += outR[i] * w
-                        weightAcc[targetIdx] += w
+                    val outBuf = resultValue.floatBuffer
+                    outBuf.position(0)
+                    for (i in 0 until currentChunkLen) {
+                        if (outBuf.hasRemaining()) {
+                            outFinalLeft[samplePos + i] = outBuf.get().coerceIn(-1.0f, 1.0f)
+                        }
+                        if (outBuf.hasRemaining()) {
+                            outFinalRight[samplePos + i] = outBuf.get().coerceIn(-1.0f, 1.0f)
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error in waveform chunk inference", e)
+                Log.e(TAG, "Error in waveform model inference at chunk $chunkIdx", e)
             } finally {
                 inputTensor.close()
                 ortResult?.close()
             }
 
-            sampleOffset += hopSize
-            stepIndex++
-            onProgress(0.25f + (stepIndex.toFloat() / totalSteps) * 0.70f)
+            samplePos += currentChunkLen
+            chunkIdx++
         }
 
-        val finalLeft = FloatArray(totalSamples)
-        val finalRight = FloatArray(totalSamples)
-        for (i in 0 until totalSamples) {
-            val w = weightAcc[i]
-            if (w > 1e-4f) {
-                finalLeft[i] = (outLeftAcc[i] / w).coerceIn(-1.0f, 1.0f)
-                finalRight[i] = (outRightAcc[i] / w).coerceIn(-1.0f, 1.0f)
-            } else {
-                finalLeft[i] = leftIn[i]
-                finalRight[i] = rightIn[i]
-            }
-        }
-
-        WavWriter.writeWavFile(finalLeft, finalRight, sampleRate, outputWavFile)
+        onProgress(0.97f)
+        WavWriter.writeWavFile(outFinalLeft, outFinalRight, sampleRate, outputWavFile)
         onProgress(1.0f)
     }
 }

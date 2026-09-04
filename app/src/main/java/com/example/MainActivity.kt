@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
                     val modelName by viewModel.customModelName.collectAsState()
                     val customModelPath by viewModel.customModelPath.collectAsState()
                     val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
+                    val accelerationMode by viewModel.accelerationMode.collectAsState()
+                    val hardwareBackend = viewModel.hardwareBackend
 
                     val isExporting by viewModel.isExporting.collectAsState()
                     val exportProgress by viewModel.exportProgress.collectAsState()
@@ -57,6 +59,8 @@ class MainActivity : ComponentActivity() {
                             isProcessing = isProcessing,
                             processingProgress = progress,
                             activeModelName = modelName,
+                            accelerationMode = accelerationMode,
+                            hardwareBackend = hardwareBackend,
                             onBack = { viewModel.clearSelectedVideo() },
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
@@ -68,12 +72,15 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             customModelPath = customModelPath,
                             modelInfoMessage = modelInfoMessage,
+                            accelerationMode = accelerationMode,
+                            hardwareBackend = hardwareBackend,
                             onVideoSelected = { video -> viewModel.selectVideo(video) },
                             onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
                             onImportSampleVideo = { viewModel.importSampleVideo() },
                             onDeleteVideo = { video -> viewModel.deleteVideo(video) },
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
+                            onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },
                             onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
                             onExportVideo = { video -> viewModel.exportVideo(video) }

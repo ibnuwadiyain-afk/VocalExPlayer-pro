@@ -45,6 +45,19 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `verify AccelerationMode properties and lookup`() {
+    val turbo = com.example.onnx.AccelerationMode.fromId("turbo")
+    val studio = com.example.onnx.AccelerationMode.fromId("studio")
+    val defaultMode = com.example.onnx.AccelerationMode.fromId("invalid")
+
+    assertEquals(com.example.onnx.AccelerationMode.TURBO, turbo)
+    assertEquals(com.example.onnx.AccelerationMode.STUDIO, studio)
+    assertEquals(com.example.onnx.AccelerationMode.TURBO, defaultMode)
+    org.junit.Assert.assertTrue(turbo.silenceSkipThreshold > 0f)
+    assertEquals(0.0f, studio.silenceSkipThreshold, 0.0001f)
+  }
+
+  @Test
   fun `verify VideoVocalsExporter handles invalid files gracefully`() = kotlinx.coroutines.test.runTest {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val result = com.example.export.VideoVocalsExporter.exportVideoWithVocals(

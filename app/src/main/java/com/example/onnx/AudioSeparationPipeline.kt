@@ -21,12 +21,16 @@ class AudioSeparationPipeline(
 
     private val inferenceEngine = UvrMdxInferenceEngine(context)
 
+    val activeHardwareBackend: String
+        get() = inferenceEngine.activeHardwareBackend
+
     /**
      * Runs the real separation pipeline for the given video.
      */
     suspend fun processVideo(
         video: VideoItemEntity,
         customModelPath: String? = null,
+        accelerationMode: AccelerationMode = AccelerationMode.TURBO,
         forceRecompute: Boolean = false,
         onProgress: (Float) -> Unit = {}
     ): Result<File> = withContext(Dispatchers.IO) {
@@ -80,6 +84,7 @@ class AudioSeparationPipeline(
                 decodedAudio = decodedAudio,
                 outputWavFile = vocalWavFile,
                 customModelPath = customModelPath,
+                accelerationMode = accelerationMode,
                 onProgress = { sepProgress ->
                     onProgress(sepProgress)
                 }

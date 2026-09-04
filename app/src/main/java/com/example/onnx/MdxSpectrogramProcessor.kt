@@ -29,7 +29,7 @@ class MdxSpectrogramProcessor(
     val trim: Int = nFft / 2 // 3072
     val genSize: Int = chunkSize - 2 * trim // 254,976 samples per chunk
 
-    private val subN = 2048
+    val subN = 2048
     private val bitRev2048 = IntArray(subN)
     private val cos2048 = FloatArray(subN)
     private val sin2048 = FloatArray(subN)
@@ -44,18 +44,31 @@ class MdxSpectrogramProcessor(
     private val twiddle2Re = FloatArray(dimF)
     private val twiddle2Im = FloatArray(dimF)
 
-    // Twiddle factors for inverse mixed-radix
-    // exp(2pi * i * k * n1 / 6144)
-    private val invTwiddle = Array(3) { n1 ->
-        Array(3) { p ->
-            FloatArray(subN) // Real
-        }
+    // Twiddle factors for inverse mixed-radix: exp(2pi * i * (m + p * 2048) * n1 / 6144)
+    private val invTwiddle = Array(3) { Array(3) { FloatArray(subN) } }
+    private val invTwiddleIm = Array(3) { Array(3) { FloatArray(subN) } }
+
+    /**
+     * Zero-allocation scratchpad to prevent creating millions of garbage-collected float arrays
+     * in the innermost audio loop.
+     */
+    class Scratchpad(nFft: Int, subN: Int) {
+        val frame = FloatArray(nFft)
+        val sub0Re = FloatArray(subN)
+        val sub0Im = FloatArray(subN)
+        val sub1Re = FloatArray(subN)
+        val sub1Im = FloatArray(subN)
+        val sub2Re = FloatArray(subN)
+        val sub2Im = FloatArray(subN)
+
+        val zRe = FloatArray(subN)
+        val zIm = FloatArray(subN)
+        val frameWave = FloatArray(nFft)
+        val fullRe = FloatArray(nFft)
+        val fullIm = FloatArray(nFft)
     }
-    private val invTwiddleIm = Array(3) { n1 ->
-        Array(3) { p ->
-            FloatArray(subN) // Imag
-        }
-    }
+
+    fun createScratchpad(): Scratchpad = Scratchpad(nFft, subN)
 
     init {
         // Precompute bit reversal for 2048 (11 bits)
@@ -109,9 +122,9 @@ class MdxSpectrogramProcessor(
     }
 
     /**
-     * In-place Radix-2 Cooley-Tukey FFT for 2048 points.
+     * Highly optimized in-place Radix-2 Cooley-Tukey forward FFT for 2048 points.
      */
-    private fun fft2048(re: FloatArray, im: FloatArray, inverse: Boolean = false) {
+    private fun fft2048(re: FloatArray, im: FloatArray) {
         // Bit-reversal permutation
         for (i in 0 until subN) {
             val j = bitRev2048[i]
@@ -136,11 +149,58 @@ class MdxSpectrogramProcessor(
                 var k = 0
                 for (j in 0 until halfLen) {
                     val twRe = cos2048[k]
-                    val twIm = if (inverse) -sin2048[k] else sin2048[k]
+                    val twIm = sin2048[k]
 
                     val uRe = re[i + j]
                     val uIm = im[i + j]
+                    val vRe = re[i + j + halfLen] * twRe - im[i + j + halfLen] * twIm
+                    val vIm = re[i + j + halfLen] * twIm + im[i + j + halfLen] * twRe
 
+                    re[i + j] = uRe + vRe
+                    im[i + j] = uIm + vIm
+                    re[i + j + halfLen] = uRe - vRe
+                    im[i + j + halfLen] = uIm - vIm
+
+                    k += step
+                }
+                i += len
+            }
+            len = len shl 1
+        }
+    }
+
+    /**
+     * Highly optimized in-place Radix-2 Cooley-Tukey inverse FFT for 2048 points.
+     */
+    private fun ifft2048(re: FloatArray, im: FloatArray) {
+        // Bit-reversal permutation
+        for (i in 0 until subN) {
+            val j = bitRev2048[i]
+            if (j > i) {
+                val tempRe = re[i]
+                re[i] = re[j]
+                re[j] = tempRe
+
+                val tempIm = im[i]
+                im[i] = im[j]
+                im[j] = tempIm
+            }
+        }
+
+        // Cooley-Tukey butterflies with negated imaginary twiddles
+        var len = 2
+        while (len <= subN) {
+            val halfLen = len shr 1
+            val step = subN / len
+            var i = 0
+            while (i < subN) {
+                var k = 0
+                for (j in 0 until halfLen) {
+                    val twRe = cos2048[k]
+                    val twIm = -sin2048[k]
+
+                    val uRe = re[i + j]
+                    val uIm = im[i + j]
                     val vRe = re[i + j + halfLen] * twRe - im[i + j + halfLen] * twIm
                     val vIm = re[i + j + halfLen] * twIm + im[i + j + halfLen] * twRe
 
@@ -156,31 +216,30 @@ class MdxSpectrogramProcessor(
             len = len shl 1
         }
 
-        if (inverse) {
-            val invN = 1.0f / subN
-            for (i in 0 until subN) {
-                re[i] *= invN
-                im[i] *= invN
-            }
+        val invN = 1.0f / subN
+        for (i in 0 until subN) {
+            re[i] *= invN
+            im[i] *= invN
         }
     }
 
     /**
-     * Computes forward STFT on a single channel waveform of length [chunkSize + nFft],
-     * populating the destination arrays [specRe] and [specIm] of dimensions [dimF x dimT].
+     * Computes forward STFT on a single channel waveform using a reusable scratchpad
+     * to avoid dynamic memory allocation.
      */
     fun computeChannelStft(
         signal: FloatArray,
         specRe: Array<FloatArray>, // [dimF][dimT]
-        specIm: Array<FloatArray>
+        specIm: Array<FloatArray>,
+        scratch: Scratchpad = createScratchpad()
     ) {
-        val frame = FloatArray(nFft)
-        val sub0Re = FloatArray(subN)
-        val sub0Im = FloatArray(subN)
-        val sub1Re = FloatArray(subN)
-        val sub1Im = FloatArray(subN)
-        val sub2Re = FloatArray(subN)
-        val sub2Im = FloatArray(subN)
+        val frame = scratch.frame
+        val sub0Re = scratch.sub0Re
+        val sub0Im = scratch.sub0Im
+        val sub1Re = scratch.sub1Re
+        val sub1Im = scratch.sub1Im
+        val sub2Re = scratch.sub2Re
+        val sub2Im = scratch.sub2Im
 
         for (t in 0 until dimT) {
             val start = t * hopLength
@@ -205,9 +264,9 @@ class MdxSpectrogramProcessor(
                 sub2Im[n2] = 0f
             }
 
-            fft2048(sub0Re, sub0Im, false)
-            fft2048(sub1Re, sub1Im, false)
-            fft2048(sub2Re, sub2Im, false)
+            fft2048(sub0Re, sub0Im)
+            fft2048(sub1Re, sub1Im)
+            fft2048(sub2Re, sub2Im)
 
             // Recombine via twiddle factors for bins 0 until dimF (2048)
             for (k in 0 until dimF) {
@@ -263,25 +322,21 @@ class MdxSpectrogramProcessor(
 
     /**
      * Computes inverse STFT for a single channel from output spectrogram tensors
-     * using the fast Mixed-Radix 3x2048 inverse transform and overlap-add.
+     * using the fast Mixed-Radix 3x2048 inverse transform and overlap-add, with zero allocation.
      */
     fun computeChannelIstft(
         specRe: Array<FloatArray>, // [dimF][dimT]
         specIm: Array<FloatArray>,
         outWaveform: FloatArray, // size at least (dimT - 1) * hopLength + nFft
         weightAcc: FloatArray,
-        compensation: Float = 1.0f
+        compensation: Float = 1.0f,
+        scratch: Scratchpad = createScratchpad()
     ) {
-        val zRe = FloatArray(subN)
-        val zIm = FloatArray(subN)
-        val frameWave = FloatArray(nFft)
-
-        // Synthesize full 6144 complex spectrum with conjugate symmetry
-        // Bins 0 until 2048 from model
-        // Bins 2048 until 4096 are 0
-        // Bins 4096 until 6144 are conjugate symmetric: X[6144 - k] = X[k]*
-        val fullRe = FloatArray(nFft)
-        val fullIm = FloatArray(nFft)
+        val zRe = scratch.zRe
+        val zIm = scratch.zIm
+        val frameWave = scratch.frameWave
+        val fullRe = scratch.fullRe
+        val fullIm = scratch.fullIm
 
         for (t in 0 until dimT) {
             // Fill spectrum for this frame
@@ -323,7 +378,7 @@ class MdxSpectrogramProcessor(
                 }
 
                 // 2048-point IFFT
-                fft2048(zRe, zIm, true)
+                ifft2048(zRe, zIm)
 
                 // Place into frameWave: frameWave[3 * n2 + n1] = 1/3 * zRe[n2]
                 val oneThird = 1.0f / 3.0f
