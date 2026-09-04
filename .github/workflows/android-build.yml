@@ -64,6 +64,7 @@ jobs:
           ENV_SECRET: ${{ secrets.ENV_FILE }}
           GOOGLE_SERVICES_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
+          # 1. Handle .env file
           if [ -n "$ENV_SECRET" ]; then
             echo "Writing .env from GitHub Secrets..."
             echo "$ENV_SECRET" > .env
@@ -77,13 +78,8 @@ jobs:
             fi
           fi
 
-          if [ -n "$GOOGLE_SERVICES_SECRET" ]; then
-            echo "Writing app/google-services.json from GitHub Secrets..."
-            echo "$GOOGLE_SERVICES_SECRET" > app/google-services.json
-          elif [ ! -f "app/google-services.json" ]; then
-            echo "Creating placeholder app/google-services.json..."
-            echo '{"project_info":{"project_number":"000000000000","project_id":"placeholder-project","storage_bucket":"placeholder.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000000000000","android_client_info":{"package_name":"com.example"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyPlaceholderKeyForBuild00000000"}],"services":{}}],"configuration_version":"1"}' > app/google-services.json
-          fi
+          # 2. Handle google-services.json matching applicationId
+          python3 scripts/setup_google_services.py
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
