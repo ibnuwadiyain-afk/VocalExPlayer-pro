@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.example.ui.components.ExportProgressDialog
 import com.example.ui.screens.VideoListScreen
 import com.example.ui.screens.VideoPlayerScreen
 import com.example.ui.theme.DarkBackground
@@ -41,6 +42,11 @@ class MainActivity : ComponentActivity() {
                     val customModelPath by viewModel.customModelPath.collectAsState()
                     val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
 
+                    val isExporting by viewModel.isExporting.collectAsState()
+                    val exportProgress by viewModel.exportProgress.collectAsState()
+                    val exportResult by viewModel.exportResult.collectAsState()
+                    val exportError by viewModel.exportError.collectAsState()
+
                     BackHandler(enabled = selectedVideo != null) {
                         viewModel.clearSelectedVideo()
                     }
@@ -53,7 +59,8 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             onBack = { viewModel.clearSelectedVideo() },
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
-                            onReprocess = { viewModel.reprocessVideo(selectedVideo!!) }
+                            onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
+                            onExportVideo = { viewModel.exportVideo(selectedVideo!!) }
                         )
                     } else {
                         VideoListScreen(
@@ -68,7 +75,19 @@ class MainActivity : ComponentActivity() {
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },
-                            onReprocessVideo = { video -> viewModel.reprocessVideo(video) }
+                            onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
+                            onExportVideo = { video -> viewModel.exportVideo(video) }
+                        )
+                    }
+
+                    // Global Export Progress and Success Dialog
+                    if (isExporting || exportResult != null || exportError != null) {
+                        ExportProgressDialog(
+                            isExporting = isExporting,
+                            exportProgress = exportProgress,
+                            exportResult = exportResult,
+                            exportError = exportError,
+                            onDismiss = { viewModel.dismissExportDialog() }
                         )
                     }
                 }

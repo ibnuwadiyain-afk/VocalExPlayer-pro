@@ -57,6 +57,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _processingMessage = MutableStateFlow("Extracting vocals with AI…")
     val processingMessage: StateFlow<String> = _processingMessage.asStateFlow()
 
+    private val _isExporting = MutableStateFlow(false)
+    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
+
+    private val _exportProgress = MutableStateFlow(0f)
+    val exportProgress: StateFlow<Float> = _exportProgress.asStateFlow()
+
+    private val _exportResult = MutableStateFlow<com.example.export.ExportResult?>(null)
+    val exportResult: StateFlow<com.example.export.ExportResult?> = _exportResult.asStateFlow()
+
+    private val _exportError = MutableStateFlow<String?>(null)
+    val exportError: StateFlow<String?> = _exportError.asStateFlow()
+
+    fun exportVideo(video: VideoItemEntity) {
+        val vocalPath = video.vocalUri
+        if (vocalPath.isNullOrBlank() || !java.io.File(vocalPath).exists()) {
+            _exportError.value = "Vocal track is not ready yet. Please ensure vocal separation finishes first."
+            return
+        }
+
+        viewModelScope.launch {
+            _isExporting.value = true
+            _exportProgress.value = 0.05f
+            _exportError.value = null
+            _exportResult.value = null
+
+            val context = getApplication<Application>()
+            val result = com.example.export.VideoVocalsExporter.exportVideoWithVocals(
+                context = context,
+                videoUriString = video.videoUri,
+                vocalWavPath = vocalPath,
+                outputTitle = video.title,
+                onProgress = { progress ->
+                    _exportProgress.value = progress
+                }
+            )
+
+            result.onSuccess { res ->
+                _exportResult.value = res
+                _isExporting.value = false
+            }.onFailure { err ->
+                _exportError.value = err.localizedMessage ?: "Video export failed"
+                _isExporting.value = false
+            }
+        }
+    }
+
+    fun dismissExportDialog() {
+        _isExporting.value = false
+        _exportResult.value = null
+        _exportError.value = null
+        _exportProgress.value = 0f
+    }
+
     fun importCustomModel(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {

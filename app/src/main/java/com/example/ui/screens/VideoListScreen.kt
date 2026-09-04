@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
+import com.example.data.model.VideoStatus
 import com.example.ui.components.ModelSettingsDialog
 import com.example.ui.components.VideoListItem
 import com.example.ui.theme.AccentTeal
@@ -87,6 +89,7 @@ fun VideoListScreen(
     onResetToBuiltInModel: () -> Unit,
     onClearModelMessage: () -> Unit,
     onReprocessVideo: (VideoItemEntity) -> Unit,
+    onExportVideo: (VideoItemEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var videoForAction by remember { mutableStateOf<VideoItemEntity?>(null) }
@@ -446,18 +449,36 @@ fun VideoListScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Button(
+                    if (video.status == VideoStatus.READY) {
+                        Button(
+                            onClick = {
+                                onExportVideo(video)
+                                videoForAction = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("dialog_export_button")
+                        ) {
+                            Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color.Black)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Export Video (Vocals Only)", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    OutlinedButton(
                         onClick = {
                             onReprocessVideo(video)
                             videoForAction = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth().testTag("dialog_reprocess_button")
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.Black)
+                        Icon(Icons.Default.Refresh, contentDescription = null, tint = AccentTeal)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Re-extract Vocals with AI", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text("Re-extract Vocals with AI", color = AccentTeal, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))

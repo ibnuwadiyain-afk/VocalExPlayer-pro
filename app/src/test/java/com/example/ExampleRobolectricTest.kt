@@ -43,4 +43,16 @@ class ExampleRobolectricTest {
     }
     org.junit.Assert.assertTrue("Peak bin ($maxBin) should be near 61 for 440Hz", kotlin.math.abs(maxBin - 61) <= 2)
   }
+
+  @Test
+  fun `verify VideoVocalsExporter handles invalid files gracefully`() = kotlinx.coroutines.test.runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val result = com.example.export.VideoVocalsExporter.exportVideoWithVocals(
+      context = context,
+      videoUriString = "file:///non/existent/video.mp4",
+      vocalWavPath = "/non/existent/vocals.wav",
+      outputTitle = "Test"
+    )
+    org.junit.Assert.assertTrue("Export should fail for non-existent vocal file", result.isFailure)
+  }
 }

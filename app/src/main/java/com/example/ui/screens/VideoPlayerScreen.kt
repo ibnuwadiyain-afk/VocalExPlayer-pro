@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -97,6 +98,7 @@ fun VideoPlayerScreen(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
+    onExportVideo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -224,6 +226,20 @@ fun VideoPlayerScreen(
                             contentDescription = "Back",
                             tint = TextPrimary
                         )
+                    }
+                },
+                actions = {
+                    if (video.status == VideoStatus.READY) {
+                        IconButton(
+                            onClick = onExportVideo,
+                            modifier = Modifier.testTag("export_video_top_bar_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = "Export Video with Vocals Only",
+                                tint = AccentTeal
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -476,7 +492,35 @@ fun VideoPlayerScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    if (video.status == VideoStatus.READY) {
+                        Button(
+                            onClick = onExportVideo,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("export_video_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Export Video (Vocals Only)",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
 
                     // Model Badge
                     Surface(
