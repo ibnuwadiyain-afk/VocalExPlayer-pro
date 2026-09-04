@@ -66,8 +66,8 @@ import com.example.ui.components.ModelSettingsDialog
 import com.example.ui.components.VideoListItem
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
-import com.example.ui.theme.DarkCard
 import com.example.ui.theme.DarkSurface
+import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.StatusError
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -225,7 +225,7 @@ fun VideoListScreen(
                 // AI Model Status Bar Card
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = DarkCard,
+                    color = DarkSurfaceVariant,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp)
