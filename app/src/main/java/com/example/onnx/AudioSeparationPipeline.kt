@@ -27,6 +27,7 @@ class AudioSeparationPipeline(
     suspend fun processVideo(
         video: VideoItemEntity,
         customModelPath: String? = null,
+        forceRecompute: Boolean = false,
         onProgress: (Float) -> Unit = {}
     ): Result<File> = withContext(Dispatchers.IO) {
         try {
@@ -35,7 +36,12 @@ class AudioSeparationPipeline(
             if (!vocalsDir.exists()) vocalsDir.mkdirs()
             val vocalWavFile = File(vocalsDir, "vocal_${video.id}.wav")
 
-            if (vocalWavFile.exists() && vocalWavFile.length() > 44) {
+            if (forceRecompute && vocalWavFile.exists()) {
+                vocalWavFile.delete()
+                Log.d(TAG, "forceRecompute requested: deleted old cached vocal file at ${vocalWavFile.absolutePath}")
+            }
+
+            if (!forceRecompute && vocalWavFile.exists() && vocalWavFile.length() > 44) {
                 Log.d(TAG, "Cached vocal track found at ${vocalWavFile.absolutePath}")
                 videoDao.updateSeparationStatus(
                     id = video.id,

@@ -37,6 +37,9 @@ class MainActivity : ComponentActivity() {
                     val selectedVideo by viewModel.selectedVideo.collectAsState()
                     val isProcessing by viewModel.isProcessing.collectAsState()
                     val progress by viewModel.processingProgress.collectAsState()
+                    val modelName by viewModel.customModelName.collectAsState()
+                    val customModelPath by viewModel.customModelPath.collectAsState()
+                    val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
 
                     BackHandler(enabled = selectedVideo != null) {
                         viewModel.clearSelectedVideo()
@@ -47,16 +50,25 @@ class MainActivity : ComponentActivity() {
                             video = selectedVideo!!,
                             isProcessing = isProcessing,
                             processingProgress = progress,
+                            activeModelName = modelName,
                             onBack = { viewModel.clearSelectedVideo() },
-                            onRetry = { viewModel.retrySeparation(selectedVideo!!) }
+                            onRetry = { viewModel.retrySeparation(selectedVideo!!) },
+                            onReprocess = { viewModel.reprocessVideo(selectedVideo!!) }
                         )
                     } else {
                         VideoListScreen(
                             videos = videos,
+                            activeModelName = modelName,
+                            customModelPath = customModelPath,
+                            modelInfoMessage = modelInfoMessage,
                             onVideoSelected = { video -> viewModel.selectVideo(video) },
                             onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
                             onImportSampleVideo = { viewModel.importSampleVideo() },
-                            onDeleteVideo = { video -> viewModel.deleteVideo(video) }
+                            onDeleteVideo = { video -> viewModel.deleteVideo(video) },
+                            onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
+                            onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
+                            onClearModelMessage = { viewModel.clearModelInfoMessage() },
+                            onReprocessVideo = { video -> viewModel.reprocessVideo(video) }
                         )
                     }
                 }

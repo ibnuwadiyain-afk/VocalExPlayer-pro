@@ -75,6 +75,9 @@ object AudioExtractor {
         codec.configure(audioFormat, null, null, 0)
         codec.start()
 
+        var actualSampleRate = sampleRate
+        var actualChannelCount = channelCount
+
         val rawPcmSamples = ArrayList<Short>(sampleRate * channelCount * 10)
         val bufferInfo = MediaCodec.BufferInfo()
         var sawInputEOS = false
@@ -110,7 +113,16 @@ object AudioExtractor {
                 }
 
                 val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
-                if (outputBufferIndex >= 0) {
+                if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val outFormat = codec.outputFormat
+                    if (outFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        actualSampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    }
+                    if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                        actualChannelCount = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
+                    Log.i(TAG, "Decoder output format changed: sampleRate=$actualSampleRate, channelCount=$actualChannelCount")
+                } else if (outputBufferIndex >= 0) {
                     val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         outputBuffer.position(bufferInfo.offset)
@@ -142,30 +154,52 @@ object AudioExtractor {
 
         // Convert interleaved Short samples to stereo Float32 arrays [-1.0f, 1.0f]
         val totalShorts = rawPcmSamples.size
-        val numFrames = if (channelCount >= 2) totalShorts / channelCount else totalShorts
+        val channels = actualChannelCount.coerceAtLeast(1)
+        val numFrames = totalShorts / channels
         val left = FloatArray(numFrames)
         val right = FloatArray(numFrames)
 
-        if (channelCount >= 2) {
-            for (i in 0 until numFrames) {
-                val lShort = rawPcmSamples[i * channelCount]
-                val rShort = rawPcmSamples[i * channelCount + 1]
-                left[i] = lShort / 32768.0f
-                right[i] = rShort / 32768.0f
-            }
-        } else {
+        if (channels == 1) {
+            // Mono: duplicate to both channels
             for (i in 0 until numFrames) {
                 val mono = rawPcmSamples[i] / 32768.0f
                 left[i] = mono
                 right[i] = mono
             }
+        } else if (channels == 2) {
+            // Stereo
+            for (i in 0 until numFrames) {
+                val lShort = rawPcmSamples[i * 2]
+                val rShort = rawPcmSamples[i * 2 + 1]
+                left[i] = lShort / 32768.0f
+                right[i] = rShort / 32768.0f
+            }
+        } else {
+            // Multi-channel (> 2 channels, e.g. 5.1 surround sound)
+            // Downmix standard 5.1 layout: L, R, C, LFE, Ls, Rs
+            for (i in 0 until numFrames) {
+                val base = i * channels
+                val l = rawPcmSamples[base] / 32768.0f
+                val r = rawPcmSamples[base + 1] / 32768.0f
+                val c = if (channels > 2) (rawPcmSamples[base + 2] / 32768.0f) * 0.707f else 0f
+                left[i] = (l + c).coerceIn(-1.0f, 1.0f)
+                right[i] = (r + c).coerceIn(-1.0f, 1.0f)
+            }
         }
+
+        val calculatedDurationMs = if (actualSampleRate > 0) {
+            (numFrames.toLong() * 1000L) / actualSampleRate
+        } else {
+            durationUs / 1000L
+        }
+
+        Log.i(TAG, "Extracted audio: $numFrames frames at $actualSampleRate Hz (${calculatedDurationMs}ms), channels=$channels")
 
         return DecodedAudio(
             leftChannel = left,
             rightChannel = right,
-            sampleRate = sampleRate,
-            durationMs = durationUs / 1000L
+            sampleRate = actualSampleRate,
+            durationMs = calculatedDurationMs
         )
     }
 }

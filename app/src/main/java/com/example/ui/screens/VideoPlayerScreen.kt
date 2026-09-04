@@ -40,6 +40,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -64,6 +65,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -90,8 +93,10 @@ fun VideoPlayerScreen(
     video: VideoItemEntity,
     isProcessing: Boolean,
     processingProgress: Float,
+    activeModelName: String,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onReprocess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -102,51 +107,55 @@ fun VideoPlayerScreen(
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var useIsolatedVocals by remember { mutableStateOf(true) }
 
-    // ExoPlayer instances:
-    // When playing isolated vocals, we configure ExoPlayer with the vocal WAV or MergingMediaSource
+    // Single unified ExoPlayer instance for frame-accurate, sample-synced video and audio playback
     val player = remember {
         ExoPlayer.Builder(context).build()
     }
 
-    // Secondary synchronized audio player for vocal track if playing alongside video
-    val vocalPlayer = remember {
-        ExoPlayer.Builder(context).build()
+    fun selectTrack(vocalsOnly: Boolean) {
+        val tracks = player.currentTracks
+        val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (audioGroups.size >= 2) {
+            // Audio Group 0: Original Audio from video file
+            // Audio Group 1: AI Isolated Vocal Audio from separated WAV file
+            val targetGroup = if (vocalsOnly) audioGroups[1] else audioGroups[0]
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setOverrideForType(TrackSelectionOverride(targetGroup.mediaTrackGroup, 0))
+                .build()
+        }
     }
 
     DisposableEffect(Unit) {
         onDispose {
             player.release()
-            vocalPlayer.release()
         }
     }
 
     // Update media sources based on video status & vocal audio track
-    LaunchedEffect(video.status, video.vocalUri, useIsolatedVocals) {
+    LaunchedEffect(video.status, video.videoUri, video.vocalUri) {
         if (video.status == VideoStatus.READY) {
             val videoUri = Uri.fromFile(File(video.videoUri)).let {
                 if (File(video.videoUri).exists()) it else Uri.parse(video.videoUri)
             }
 
             val hasVocalFile = !video.vocalUri.isNullOrBlank() && File(video.vocalUri).exists()
+            val dataSourceFactory = DefaultDataSource.Factory(context)
+            val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(videoUri))
 
-            if (useIsolatedVocals && hasVocalFile) {
-                // Setup Synced Isolated Vocal Playback
+            if (hasVocalFile) {
+                // Merge video track and isolated vocal audio track into one hardware-clock synced stream
                 val vocalUri = Uri.fromFile(File(video.vocalUri))
-
-                player.setMediaItem(MediaItem.fromUri(videoUri))
-                player.volume = 0f // Mute original video audio
-                player.prepare()
-
-                vocalPlayer.setMediaItem(MediaItem.fromUri(vocalUri))
-                vocalPlayer.volume = 1f
-                vocalPlayer.prepare()
+                val vocalSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(vocalUri))
+                val mergedSource = MergingMediaSource(videoSource, vocalSource)
+                player.setMediaSource(mergedSource)
             } else {
-                // Play original video audio
-                vocalPlayer.stop()
-                player.setMediaItem(MediaItem.fromUri(videoUri))
-                player.volume = 1f
-                player.prepare()
+                player.setMediaSource(videoSource)
             }
+
+            player.prepare()
         }
     }
 
@@ -155,16 +164,18 @@ fun VideoPlayerScreen(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
-                if (useIsolatedVocals && video.vocalUri != null) {
-                    if (playing) vocalPlayer.play() else vocalPlayer.pause()
-                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     val d = player.duration
                     if (d > 0) duration = d
+                    selectTrack(useIsolatedVocals)
                 }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                selectTrack(useIsolatedVocals)
             }
         }
         player.addListener(listener)
@@ -173,17 +184,15 @@ fun VideoPlayerScreen(
         }
     }
 
+    // Switch between AI Vocals Only and Original Audio
+    LaunchedEffect(useIsolatedVocals) {
+        selectTrack(useIsolatedVocals)
+    }
+
     // Sync position tracker loop
     LaunchedEffect(isPlaying, isSliderDragging) {
         while (isPlaying && !isSliderDragging) {
             currentPosition = player.currentPosition
-            // Drift correction between video and vocal audio track
-            if (useIsolatedVocals && video.vocalUri != null) {
-                val drift = Math.abs(player.currentPosition - vocalPlayer.currentPosition)
-                if (drift > 80L) {
-                    vocalPlayer.seekTo(player.currentPosition)
-                }
-            }
             delay(150L)
         }
     }
@@ -354,7 +363,41 @@ fun VideoPlayerScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Model: $activeModelName",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        TextButton(
+                            onClick = onReprocess,
+                            modifier = Modifier.testTag("reprocess_vocals_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = AccentTeal,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Re-extract Vocals",
+                                color = AccentTeal,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // Progress Slider
                     val effectivePosition = if (isSliderDragging) sliderPosition else (currentPosition.toFloat() / duration.coerceAtLeast(1L).toFloat())
@@ -367,9 +410,6 @@ fun VideoPlayerScreen(
                         onValueChangeFinished = {
                             val seekTarget = (sliderPosition * duration).toLong()
                             player.seekTo(seekTarget)
-                            if (useIsolatedVocals) {
-                                vocalPlayer.seekTo(seekTarget)
-                            }
                             isSliderDragging = false
                         },
                         colors = SliderDefaults.colors(
@@ -415,10 +455,8 @@ fun VideoPlayerScreen(
                             onClick = {
                                 if (isPlaying) {
                                     player.pause()
-                                    if (useIsolatedVocals) vocalPlayer.pause()
                                 } else {
                                     player.play()
-                                    if (useIsolatedVocals) vocalPlayer.play()
                                 }
                             }
                         ) {

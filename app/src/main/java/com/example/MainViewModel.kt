@@ -29,6 +29,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val videoDao = db.videoDao()
     private val separationPipeline = AudioSeparationPipeline(application, videoDao)
 
+    private val prefs = application.getSharedPreferences("model_prefs", android.content.Context.MODE_PRIVATE)
+
+    private val _customModelPath = MutableStateFlow<String?>(prefs.getString("custom_model_path", null))
+    val customModelPath: StateFlow<String?> = _customModelPath.asStateFlow()
+
+    private val _customModelName = MutableStateFlow<String>(
+        prefs.getString("custom_model_name", null) ?: "UVR-MDX-NET 1 (Built-in 29.7MB Neural Network)"
+    )
+    val customModelName: StateFlow<String> = _customModelName.asStateFlow()
+
+    private val _modelInfoMessage = MutableStateFlow<String?>(null)
+    val modelInfoMessage: StateFlow<String?> = _modelInfoMessage.asStateFlow()
+
     val videoList: StateFlow<List<VideoItemEntity>> = videoDao.getAllVideos()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -43,6 +56,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _processingMessage = MutableStateFlow("Extracting vocals with AI…")
     val processingMessage: StateFlow<String> = _processingMessage.asStateFlow()
+
+    fun importCustomModel(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val modelsDir = File(context.filesDir, "custom_models")
+                if (!modelsDir.exists()) modelsDir.mkdirs()
+
+                val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "custom_model.onnx"
+                val dest = File(modelsDir, fileName)
+
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(dest).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                if (dest.exists() && dest.length() > 10_000L) {
+                    val sizeMb = dest.length() / (1024 * 1024)
+                    val name = "$fileName (${sizeMb} MB)"
+                    prefs.edit()
+                        .putString("custom_model_path", dest.absolutePath)
+                        .putString("custom_model_name", name)
+                        .apply()
+                    _customModelPath.value = dest.absolutePath
+                    _customModelName.value = name
+                    _modelInfoMessage.value = "Active model updated: $name"
+                    Log.i("MainViewModel", "Loaded custom model: ${dest.absolutePath} ($sizeMb MB)")
+                } else {
+                    _modelInfoMessage.value = "Selected file is invalid or too small to be an ONNX model."
+                }
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Failed to import custom model", e)
+                _modelInfoMessage.value = "Failed to import model: ${e.localizedMessage}"
+            }
+        }
+    }
+
+    fun resetToBuiltInModel() {
+        prefs.edit()
+            .remove("custom_model_path")
+            .remove("custom_model_name")
+            .apply()
+        _customModelPath.value = null
+        _customModelName.value = "UVR-MDX-NET 1 (Built-in 29.7MB Neural Network)"
+        _modelInfoMessage.value = "Reset to built-in UVR-MDX-NET 1 model."
+    }
+
+    fun clearModelInfoMessage() {
+        _modelInfoMessage.value = null
+    }
 
     fun selectVideo(video: VideoItemEntity) {
         _selectedVideo.value = video
@@ -123,17 +187,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startSeparation(video: VideoItemEntity) {
+    fun startSeparation(video: VideoItemEntity, forceRecompute: Boolean = false) {
         viewModelScope.launch {
             _isProcessing.value = true
             _processingProgress.value = 0.05f
-            _processingMessage.value = "Extracting vocals with AI…"
+            _processingMessage.value = "Extracting vocals with AI (${_customModelName.value})…"
 
             val result = separationPipeline.processVideo(
                 video = video,
+                customModelPath = _customModelPath.value,
+                forceRecompute = forceRecompute,
                 onProgress = { progress ->
                     _processingProgress.value = progress
-                    _processingMessage.value = "Extracting vocals with AI… ${(progress * 100).toInt()}%"
+                    _processingMessage.value = "Extracting vocals with UVR AI… ${(progress * 100).toInt()}%"
                 }
             )
 
@@ -148,7 +214,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retrySeparation(video: VideoItemEntity) {
-        startSeparation(video)
+        startSeparation(video, forceRecompute = true)
+    }
+
+    fun reprocessVideo(video: VideoItemEntity) {
+        startSeparation(video, forceRecompute = true)
     }
 
     fun deleteVideo(video: VideoItemEntity) {

@@ -18,7 +18,7 @@ object SampleVideoGenerator {
      * immediately test the UVR MDX-Net ONNX separation pipeline without manual file transfers.
      */
     fun getOrCreateSampleVideo(context: Context): File {
-        val sampleFile = File(context.filesDir, "sample_vocal_track.mp4")
+        val sampleFile = File(context.filesDir, "sample_vocal_track_v2.mp4")
         if (sampleFile.exists() && sampleFile.length() > 5000) {
             return sampleFile
         }
@@ -79,7 +79,7 @@ object SampleVideoGenerator {
                 }
             }
 
-            // Encode Audio (harmonics and vocal-like sine chords)
+            // Encode Audio (vocal lead in center, stereo instruments + bass panned)
             val totalAudioSamples = sampleRate * durationSec
             val audioChunkSamples = 1024
             var audioSampleIndex = 0
@@ -93,12 +93,35 @@ object SampleVideoGenerator {
                     val pcmBytes = ByteBuffer.allocate(samplesToWrite * 4) // stereo 16-bit
                     for (i in 0 until samplesToWrite) {
                         val t = (audioSampleIndex + i).toDouble() / sampleRate
-                        // Vocal formant approximation + music backing chord
-                        val vocalMelody = sin(2.0 * Math.PI * 440.0 * t) * 0.4 + sin(2.0 * Math.PI * 880.0 * t) * 0.2
-                        val bass = sin(2.0 * Math.PI * 110.0 * t) * 0.3
-                        val sampleVal = ((vocalMelody + bass).coerceIn(-1.0, 1.0) * 32767).toInt().toShort()
-                        pcmBytes.putShort(sampleVal)
-                        pcmBytes.putShort(sampleVal)
+                        
+                        // 1. Vocal lead (Center panned, 440Hz / 554Hz notes with vibrato & formants)
+                        val noteFreq = if ((t % 2.0) < 1.0) 440.0 else 554.37 // A4 -> C#5 melody
+                        val vibrato = sin(2.0 * Math.PI * 5.0 * t) * 6.0
+                        val vocalPhase = 2.0 * Math.PI * (noteFreq + vibrato) * t
+                        val vocalFormant = sin(vocalPhase) * 0.45 +
+                                sin(vocalPhase * 2.0) * 0.22 +
+                                sin(vocalPhase * 3.0) * 0.10
+
+                        // 2. Heavy sub-bass (65 Hz kick/bass - filtered out by vocal separation)
+                        val bass = sin(2.0 * Math.PI * 65.0 * t) * 0.35
+
+                        // 3. Stereo accompaniment synth chord (panned out-of-phase L vs R)
+                        val chordL = sin(2.0 * Math.PI * 261.63 * t) * 0.25 // C4
+                        val chordR = -sin(2.0 * Math.PI * 261.63 * t) * 0.25 // Inverted C4 (Side channel)
+
+                        // 4. Percussion hi-hat click at 6500 Hz every 0.5s (filtered out)
+                        val clickTime = t % 0.5
+                        val hihat = if (clickTime < 0.04) {
+                            sin(2.0 * Math.PI * 6500.0 * t) * (1.0 - clickTime / 0.04) * 0.2
+                        } else {
+                            0.0
+                        }
+
+                        val leftMix = (vocalFormant + bass + chordL + hihat).coerceIn(-1.0, 1.0)
+                        val rightMix = (vocalFormant + bass + chordR + hihat).coerceIn(-1.0, 1.0)
+
+                        pcmBytes.putShort((leftMix * 32767.0).toInt().toShort())
+                        pcmBytes.putShort((rightMix * 32767.0).toInt().toShort())
                     }
                     val pts = audioSampleIndex * 1_000_000L / sampleRate
                     val isLast = (audioSampleIndex + samplesToWrite >= totalAudioSamples)
