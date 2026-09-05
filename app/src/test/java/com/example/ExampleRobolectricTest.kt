@@ -68,4 +68,49 @@ class ExampleRobolectricTest {
     )
     org.junit.Assert.assertTrue("Export should fail for non-existent vocal file", result.isFailure)
   }
+
+  @Test
+  fun `verify social media url extraction and youtube id parsing`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val processor = com.example.media.SocialMediaVideoProcessor(context)
+
+    // YouTube share message
+    val shareText = "Look at this song! https://youtu.be/dQw4w9WgXcQ sent from YouTube"
+    val extracted = processor.extractUrlFromText(shareText)
+    assertEquals("https://youtu.be/dQw4w9WgXcQ", extracted)
+
+    // YouTube ID parsing
+    val id1 = processor.extractYouTubeId("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    val id2 = processor.extractYouTubeId("https://youtu.be/dQw4w9WgXcQ")
+    val id3 = processor.extractYouTubeId("https://www.youtube.com/shorts/AbCdEfGhIjK")
+
+    assertEquals("dQw4w9WgXcQ", id1)
+    assertEquals("dQw4w9WgXcQ", id2)
+    assertEquals("AbCdEfGhIjK", id3)
+
+    // TikTok and Instagram extraction
+    val tiktokText = "Check this dance https://www.tiktok.com/@artist/video/9876543210 cool"
+    assertEquals("https://www.tiktok.com/@artist/video/9876543210", processor.extractUrlFromText(tiktokText))
+
+    val instaText = "Reel: https://www.instagram.com/reel/DA12345678/ #music"
+    assertEquals("https://www.instagram.com/reel/DA12345678/", processor.extractUrlFromText(instaText))
+  }
+
+  @Test
+  fun `verify SocialMediaVideoProcessor platform detection and presets`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val processor = com.example.media.SocialMediaVideoProcessor(context)
+
+    assertEquals("YouTube", processor.detectPlatform("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+    assertEquals("YouTube Shorts", processor.detectPlatform("https://www.youtube.com/shorts/AbCdEfGhIjK"))
+    assertEquals("TikTok", processor.detectPlatform("https://www.tiktok.com/@user/video/123456"))
+    assertEquals("Instagram Reel", processor.detectPlatform("https://www.instagram.com/reel/12345/"))
+    assertEquals("X (Twitter)", processor.detectPlatform("https://twitter.com/user/status/12345"))
+    assertEquals("Direct Video Link", processor.detectPlatform("https://example.com/audio/test.mp4"))
+
+    // Presets verification
+    org.junit.Assert.assertFalse(com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.isEmpty())
+    val firstPreset = com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.first()
+    org.junit.Assert.assertTrue(firstPreset.url.startsWith("http"))
+  }
 }

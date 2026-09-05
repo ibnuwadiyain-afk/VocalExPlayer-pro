@@ -1,5 +1,8 @@
 package com.example
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -26,6 +29,7 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIntent(intent)
         enableEdgeToEdge()
 
         setContent {
@@ -48,6 +52,11 @@ class MainActivity : ComponentActivity() {
                     val exportProgress by viewModel.exportProgress.collectAsState()
                     val exportResult by viewModel.exportResult.collectAsState()
                     val exportError by viewModel.exportError.collectAsState()
+
+                    val downloadProgressState by viewModel.downloadProgressState.collectAsState()
+                    val isDownloadingMedia by viewModel.isDownloadingMedia.collectAsState()
+                    val downloadErrorMessage by viewModel.downloadErrorMessage.collectAsState()
+                    val sharedMediaUrl by viewModel.sharedMediaUrl.collectAsState()
 
                     BackHandler(enabled = selectedVideo != null) {
                         viewModel.clearSelectedVideo()
@@ -74,6 +83,10 @@ class MainActivity : ComponentActivity() {
                             modelInfoMessage = modelInfoMessage,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
+                            downloadProgressState = downloadProgressState,
+                            isDownloadingMedia = isDownloadingMedia,
+                            downloadErrorMessage = downloadErrorMessage,
+                            sharedMediaUrl = sharedMediaUrl,
                             onVideoSelected = { video -> viewModel.selectVideo(video) },
                             onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
                             onImportSampleVideo = { viewModel.importSampleVideo() },
@@ -81,6 +94,9 @@ class MainActivity : ComponentActivity() {
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
                             onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
+                            onSubmitMediaUrl = { url -> viewModel.processSocialMediaUrl(url) },
+                            onClearDownloadError = { viewModel.clearDownloadError() },
+                            onDismissDownloadDialog = { viewModel.dismissDownloadDialog() },
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },
                             onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
                             onExportVideo = { video -> viewModel.exportVideo(video) }
@@ -98,6 +114,42 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.action == Intent.ACTION_SEND) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+            if (!text.isNullOrBlank()) {
+                viewModel.handleIncomingShareUrl(text)
+                return
+            }
+            val clipData = intent.clipData
+            if (clipData != null && clipData.itemCount > 0) {
+                val clipText = clipData.getItemAt(0).text?.toString()
+                if (!clipText.isNullOrBlank()) {
+                    viewModel.handleIncomingShareUrl(clipText)
+                    return
+                }
+            }
+
+            // In case a video file was shared directly to the app
+            @Suppress("DEPRECATION")
+            val streamUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+            if (streamUri != null) {
+                viewModel.importVideoFromUri(streamUri)
             }
         }
     }

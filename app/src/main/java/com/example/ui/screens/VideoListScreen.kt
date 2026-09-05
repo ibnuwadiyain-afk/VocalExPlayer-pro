@@ -26,10 +26,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
@@ -38,6 +41,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +54,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,8 +69,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.media.DownloadProgressState
 import com.example.onnx.AccelerationMode
 import com.example.ui.components.ModelSettingsDialog
+import com.example.ui.components.UrlImportDialog
 import com.example.ui.components.VideoListItem
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
@@ -84,6 +91,10 @@ fun VideoListScreen(
     modelInfoMessage: String?,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
+    downloadProgressState: DownloadProgressState? = null,
+    isDownloadingMedia: Boolean = false,
+    downloadErrorMessage: String? = null,
+    sharedMediaUrl: String? = null,
     onVideoSelected: (VideoItemEntity) -> Unit,
     onImportVideo: (Uri) -> Unit,
     onImportSampleVideo: () -> Unit,
@@ -91,6 +102,9 @@ fun VideoListScreen(
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
+    onSubmitMediaUrl: (String) -> Unit = {},
+    onClearDownloadError: () -> Unit = {},
+    onDismissDownloadDialog: () -> Unit = {},
     onClearModelMessage: () -> Unit,
     onReprocessVideo: (VideoItemEntity) -> Unit,
     onExportVideo: (VideoItemEntity) -> Unit,
@@ -98,6 +112,13 @@ fun VideoListScreen(
 ) {
     var videoForAction by remember { mutableStateOf<VideoItemEntity?>(null) }
     var showModelDialog by remember { mutableStateOf(false) }
+    var showUrlDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(sharedMediaUrl) {
+        if (!sharedMediaUrl.isNullOrBlank()) {
+            showUrlDialog = true
+        }
+    }
 
     // Video Picker via modern zero-permission Android Photo Picker
     val videoPickerLauncher = rememberLauncherForActivityResult(
@@ -139,6 +160,16 @@ fun VideoListScreen(
                 },
                 actions = {
                     IconButton(
+                        onClick = { showUrlDialog = true },
+                        modifier = Modifier.testTag("import_url_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = "Import from YouTube or Social Media",
+                            tint = AccentTeal
+                        )
+                    }
+                    IconButton(
                         onClick = { showModelDialog = true },
                         modifier = Modifier.testTag("model_settings_button")
                     ) {
@@ -155,28 +186,49 @@ fun VideoListScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    try {
-                        videoPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                        )
-                    } catch (e: Exception) {
-                        documentPickerLauncher.launch(arrayOf("video/*"))
-                    }
-                },
-                containerColor = AccentTeal,
-                contentColor = Color.Black,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.testTag("import_video_fab")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                ExtendedFloatingActionButton(
+                    onClick = { showUrlDialog = true },
+                    containerColor = DarkSurfaceVariant,
+                    contentColor = AccentTeal,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.testTag("import_url_fab")
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Import Video")
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = "From Link",
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Import Video", fontWeight = FontWeight.Bold)
+                    Text("YouTube / Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
+                FloatingActionButton(
+                    onClick = {
+                        try {
+                            videoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            )
+                        } catch (e: Exception) {
+                            documentPickerLauncher.launch(arrayOf("video/*"))
+                        }
+                    },
+                    containerColor = AccentTeal,
+                    contentColor = Color.Black,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.testTag("import_video_fab")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Import Video")
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Import", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -370,7 +422,23 @@ fun VideoListScreen(
                             Text("Import from Gallery", color = Color.Black, fontWeight = FontWeight.Bold)
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = { showUrlDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceVariant),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .height(50.dp)
+                                .testTag("import_youtube_button")
+                        ) {
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = AccentTeal)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("From YouTube / Social Link", color = TextPrimary, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         OutlinedButton(
                             onClick = onImportSampleVideo,
@@ -530,6 +598,24 @@ fun VideoListScreen(
                 onResetToBuiltInModel()
                 showModelDialog = false
             }
+        )
+    }
+
+    // YouTube & Social Media URL Import Dialog
+    if (showUrlDialog || isDownloadingMedia || !sharedMediaUrl.isNullOrBlank()) {
+        UrlImportDialog(
+            initialUrl = sharedMediaUrl ?: "",
+            downloadState = downloadProgressState,
+            isDownloading = isDownloadingMedia,
+            errorMessage = downloadErrorMessage,
+            onDismiss = {
+                showUrlDialog = false
+                onDismissDownloadDialog()
+            },
+            onSubmitUrl = { url ->
+                onSubmitMediaUrl(url)
+            },
+            onClearError = onClearDownloadError
         )
     }
 }

@@ -10,6 +10,9 @@ import com.example.audio.SampleVideoGenerator
 import com.example.data.db.AppDatabase
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.media.DownloadProgressState
+import com.example.media.ExtractedVideoInfo
+import com.example.media.SocialMediaVideoProcessor
 import com.example.onnx.AudioSeparationPipeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -82,6 +85,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
+
+    private val socialMediaProcessor = SocialMediaVideoProcessor(application)
+
+    private val _downloadProgressState = MutableStateFlow<DownloadProgressState?>(null)
+    val downloadProgressState: StateFlow<DownloadProgressState?> = _downloadProgressState.asStateFlow()
+
+    private val _isDownloadingMedia = MutableStateFlow(false)
+    val isDownloadingMedia: StateFlow<Boolean> = _isDownloadingMedia.asStateFlow()
+
+    private val _downloadErrorMessage = MutableStateFlow<String?>(null)
+    val downloadErrorMessage: StateFlow<String?> = _downloadErrorMessage.asStateFlow()
+
+    private val _sharedMediaUrl = MutableStateFlow<String?>(null)
+    val sharedMediaUrl: StateFlow<String?> = _sharedMediaUrl.asStateFlow()
+
+    fun handleIncomingShareUrl(rawText: String) {
+        val extractedUrl = socialMediaProcessor.extractUrlFromText(rawText) ?: rawText.trim()
+        if (extractedUrl.isNotBlank()) {
+            _sharedMediaUrl.value = extractedUrl
+        }
+    }
+
+    fun clearSharedMediaUrl() {
+        _sharedMediaUrl.value = null
+    }
+
+    fun processSocialMediaUrl(url: String) {
+        if (url.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isDownloadingMedia.value = true
+            _downloadErrorMessage.value = null
+            _downloadProgressState.value = DownloadProgressState.Resolving("Analyzing link…")
+
+            val result = socialMediaProcessor.processAndDownload(url) { state ->
+                _downloadProgressState.value = state
+            }
+
+            result.onSuccess { info ->
+                val videoId = UUID.randomUUID().toString().substring(0, 8)
+                val newVideo = VideoItemEntity(
+                    id = videoId,
+                    title = info.title,
+                    videoUri = info.file.toURI().toString(),
+                    duration = info.durationMs,
+                    status = VideoStatus.NEW,
+                    dateAdded = System.currentTimeMillis()
+                )
+                videoDao.insertVideo(newVideo)
+                _isDownloadingMedia.value = false
+                _downloadProgressState.value = null
+                _sharedMediaUrl.value = null
+                withContext(Dispatchers.Main) {
+                    selectVideo(newVideo)
+                }
+            }.onFailure { error ->
+                _isDownloadingMedia.value = false
+                _downloadErrorMessage.value = error.localizedMessage ?: "Failed to process video from link."
+            }
+        }
+    }
+
+    fun dismissDownloadDialog() {
+        if (!_isDownloadingMedia.value) {
+            _downloadProgressState.value = null
+            _downloadErrorMessage.value = null
+            _sharedMediaUrl.value = null
+        }
+    }
+
+    fun clearDownloadError() {
+        _downloadErrorMessage.value = null
+    }
 
     fun exportVideo(video: VideoItemEntity) {
         val vocalPath = video.vocalUri
