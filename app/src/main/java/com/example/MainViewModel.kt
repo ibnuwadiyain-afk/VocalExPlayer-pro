@@ -65,14 +65,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedVideo = MutableStateFlow<VideoItemEntity?>(null)
     val selectedVideo: StateFlow<VideoItemEntity?> = _selectedVideo.asStateFlow()
 
-    private val _isProcessing = MutableStateFlow(false)
-    val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
-
-    private val _processingProgress = MutableStateFlow(0f)
-    val processingProgress: StateFlow<Float> = _processingProgress.asStateFlow()
-
-    private val _processingMessage = MutableStateFlow("Extracting vocals with AI…")
-    val processingMessage: StateFlow<String> = _processingMessage.asStateFlow()
+    // Delegate processing state & elapsed timer to singleton VocalProcessingManager
+    val isProcessing: StateFlow<Boolean> = com.example.service.VocalProcessingManager.isProcessing
+    val processingProgress: StateFlow<Float> = com.example.service.VocalProcessingManager.progress
+    val processingMessage: StateFlow<String> = com.example.service.VocalProcessingManager.message
+    val processingElapsedSeconds: StateFlow<Long> = com.example.service.VocalProcessingManager.elapsedSeconds
+    val processingElapsedTimeFormatted: StateFlow<String> = com.example.service.VocalProcessingManager.elapsedTimeFormatted
+    val processingEstimatedRemainingFormatted: StateFlow<String?> = com.example.service.VocalProcessingManager.estimatedRemainingFormatted
+    val isBackgroundProtected: StateFlow<Boolean> = com.example.service.VocalProcessingManager.isBackgroundProtected
+    val activeProcessingVideoId: StateFlow<String?> = com.example.service.VocalProcessingManager.activeVideoId
+    val activeProcessingVideoTitle: StateFlow<String?> = com.example.service.VocalProcessingManager.activeVideoTitle
 
     private val _isExporting = MutableStateFlow(false)
     val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
@@ -93,6 +95,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isDownloadingMedia = MutableStateFlow(false)
     val isDownloadingMedia: StateFlow<Boolean> = _isDownloadingMedia.asStateFlow()
+
+    private val _downloadElapsedFormatted = MutableStateFlow("00:00")
+    val downloadElapsedFormatted: StateFlow<String> = _downloadElapsedFormatted.asStateFlow()
 
     private val _downloadErrorMessage = MutableStateFlow<String?>(null)
     val downloadErrorMessage: StateFlow<String?> = _downloadErrorMessage.asStateFlow()
@@ -117,10 +122,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isDownloadingMedia.value = true
             _downloadErrorMessage.value = null
             _downloadProgressState.value = DownloadProgressState.Resolving("Analyzing link…")
+            _downloadElapsedFormatted.value = "00:00"
+
+            val startDownloadTime = android.os.SystemClock.elapsedRealtime()
+            val downloadTimerJob = viewModelScope.launch(Dispatchers.Default) {
+                while (_isDownloadingMedia.value) {
+                    val elapsed = (android.os.SystemClock.elapsedRealtime() - startDownloadTime) / 1000
+                    _downloadElapsedFormatted.value = com.example.service.VocalProcessingManager.formatSeconds(elapsed)
+                    kotlinx.coroutines.delay(500)
+                }
+            }
 
             val result = socialMediaProcessor.processAndDownload(url) { state ->
                 _downloadProgressState.value = state
             }
+
+            downloadTimerJob.cancel()
 
             result.onSuccess { info ->
                 val videoId = UUID.randomUUID().toString().substring(0, 8)
@@ -330,30 +347,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startSeparation(video: VideoItemEntity, forceRecompute: Boolean = false) {
-        viewModelScope.launch {
-            _isProcessing.value = true
-            _processingProgress.value = 0.05f
-            _processingMessage.value = "Extracting vocals with AI (${_customModelName.value})…"
-
-            val result = separationPipeline.processVideo(
-                video = video,
-                customModelPath = _customModelPath.value,
-                accelerationMode = _accelerationMode.value,
-                forceRecompute = forceRecompute,
-                onProgress = { progress ->
-                    _processingProgress.value = progress
-                    _processingMessage.value = "Extracting vocals with UVR AI (${_accelerationMode.value.displayName})… ${(progress * 100).toInt()}%"
+        val context = getApplication<Application>()
+        com.example.service.VocalProcessingManager.startSeparation(
+            context = context,
+            video = video,
+            customModelPath = _customModelPath.value,
+            accelerationMode = _accelerationMode.value,
+            forceRecompute = forceRecompute,
+            onComplete = {
+                viewModelScope.launch {
+                    val updated = videoDao.getVideoById(video.id)
+                    if (_selectedVideo.value?.id == video.id) {
+                        _selectedVideo.value = updated
+                    }
                 }
-            )
-
-            // Refresh selected video state
-            val updated = videoDao.getVideoById(video.id)
-            if (_selectedVideo.value?.id == video.id) {
-                _selectedVideo.value = updated
             }
+        )
+    }
 
-            _isProcessing.value = false
-        }
+    fun cancelSeparation() {
+        val context = getApplication<Application>()
+        com.example.service.VocalProcessingManager.cancelActiveProcessing(context)
     }
 
     fun retrySeparation(video: VideoItemEntity) {

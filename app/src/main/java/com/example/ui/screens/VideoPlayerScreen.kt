@@ -99,10 +99,14 @@ fun VideoPlayerScreen(
     activeModelName: String,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
+    elapsedTime: String = "00:00",
+    estimatedRemaining: String? = null,
+    isBackgroundProtected: Boolean = true,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
     onExportVideo: () -> Unit,
+    onCancelProcessing: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -564,7 +568,11 @@ fun VideoPlayerScreen(
         ProcessingOverlay(
             isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
             progress = processingProgress,
-            message = "Extracting vocals with AI…"
+            message = "Extracting vocals with UVR AI ($activeModelName)…",
+            elapsedTime = elapsedTime,
+            estimatedRemaining = estimatedRemaining,
+            isBackgroundProtected = isBackgroundProtected,
+            onCancel = onCancelProcessing
         )
     }
 }

@@ -61,12 +61,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import com.example.media.DownloadProgressState
@@ -79,6 +85,7 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.StatusError
+import com.example.ui.theme.StatusProcessing
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -95,6 +102,14 @@ fun VideoListScreen(
     isDownloadingMedia: Boolean = false,
     downloadErrorMessage: String? = null,
     sharedMediaUrl: String? = null,
+    downloadElapsedFormatted: String = "00:00",
+    isProcessing: Boolean = false,
+    processingProgress: Float = 0f,
+    processingElapsedFormatted: String = "00:00",
+    processingEstimatedRemaining: String? = null,
+    activeProcessingVideoId: String? = null,
+    activeProcessingVideoTitle: String? = null,
+    isBackgroundProtected: Boolean = true,
     onVideoSelected: (VideoItemEntity) -> Unit,
     onImportVideo: (Uri) -> Unit,
     onImportSampleVideo: () -> Unit,
@@ -108,6 +123,7 @@ fun VideoListScreen(
     onClearModelMessage: () -> Unit,
     onReprocessVideo: (VideoItemEntity) -> Unit,
     onExportVideo: (VideoItemEntity) -> Unit,
+    onCancelProcessing: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var videoForAction by remember { mutableStateOf<VideoItemEntity?>(null) }
@@ -350,6 +366,120 @@ fun VideoListScreen(
                     }
                 }
 
+                // Active Processing Status Banner (survives background & shows timer/ETA)
+                if (isProcessing) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF132620),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val target = videos.find { it.id == activeProcessingVideoId }
+                                if (target != null) {
+                                    onVideoSelected(target)
+                                }
+                            }
+                            .testTag("active_processing_banner")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = AccentTeal,
+                                        strokeWidth = 2.5.dp,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = activeProcessingVideoTitle?.let { "Extracting: $it" } ?: "AI Vocal Extraction Active",
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Text(
+                                    text = "${(processingProgress * 100).toInt()}%",
+                                    color = AccentTeal,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            LinearProgressIndicator(
+                                progress = { processingProgress.coerceIn(0f, 1f) },
+                                color = AccentTeal,
+                                trackColor = Color(0xFF243B32),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(5.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.HourglassTop,
+                                        contentDescription = null,
+                                        tint = StatusProcessing,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Elapsed: $processingElapsedFormatted",
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.sp
+                                    )
+                                    if (!processingEstimatedRemaining.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "• $processingEstimatedRemaining",
+                                            color = AccentTeal,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Security,
+                                        contentDescription = null,
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Background safe",
+                                        color = AccentTeal,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (videos.isEmpty()) {
                     // Empty State
                     Column(
@@ -491,10 +621,13 @@ fun VideoListScreen(
                         }
 
                         items(videos, key = { it.id }) { video ->
+                            val isActive = isProcessing && (video.id == activeProcessingVideoId)
                             VideoListItem(
                                 video = video,
                                 onClick = { onVideoSelected(video) },
-                                onLongClick = { videoForAction = video }
+                                onLongClick = { videoForAction = video },
+                                elapsedTime = if (isActive) processingElapsedFormatted else "",
+                                isActiveProcessing = isActive
                             )
                         }
 
@@ -608,6 +741,7 @@ fun VideoListScreen(
             downloadState = downloadProgressState,
             isDownloading = isDownloadingMedia,
             errorMessage = downloadErrorMessage,
+            elapsedTime = downloadElapsedFormatted,
             onDismiss = {
                 showUrlDialog = false
                 onDismissDownloadDialog()

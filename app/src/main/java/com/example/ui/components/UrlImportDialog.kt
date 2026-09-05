@@ -73,6 +73,7 @@ fun UrlImportDialog(
     downloadState: DownloadProgressState?,
     isDownloading: Boolean,
     errorMessage: String?,
+    elapsedTime: String = "00:00",
     onDismiss: () -> Unit,
     onSubmitUrl: (String) -> Unit,
     onClearError: () -> Unit
@@ -126,7 +127,7 @@ fun UrlImportDialog(
             ) {
                 if (isDownloading) {
                     // Active Download Progress View
-                    ActiveDownloadProgressView(downloadState)
+                    ActiveDownloadProgressView(downloadState, elapsedTime)
                 } else {
                     // Input & Quick Paste View
                     Text(
@@ -393,7 +394,10 @@ fun UrlImportDialog(
 }
 
 @Composable
-private fun ActiveDownloadProgressView(downloadState: DownloadProgressState?) {
+private fun ActiveDownloadProgressView(
+    downloadState: DownloadProgressState?,
+    elapsedTime: String = "00:00"
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -419,6 +423,21 @@ private fun ActiveDownloadProgressView(downloadState: DownloadProgressState?) {
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
+                Spacer(modifier = Modifier.height(10.dp))
+                // Elapsed time pill
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = DarkSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                ) {
+                    Text(
+                        text = "⏱ Elapsed: $elapsedTime",
+                        color = AccentTeal,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
             }
             is DownloadProgressState.Downloading -> {
                 val percentInt = (downloadState.progress * 100).toInt()
@@ -451,6 +470,20 @@ private fun ActiveDownloadProgressView(downloadState: DownloadProgressState?) {
                             fontSize = 11.sp
                         )
                     }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                // Elapsed time badge during download
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = DarkSurfaceVariant
+                ) {
+                    Text(
+                        text = "⏱ Elapsed: $elapsedTime",
+                        color = AccentTeal,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(

@@ -2,6 +2,7 @@ package com.example.onnx
 
 import android.content.Context
 import android.net.Uri
+import android.os.PowerManager
 import android.util.Log
 import com.example.audio.AudioExtractor
 import com.example.data.dao.VideoDao
@@ -17,6 +18,7 @@ class AudioSeparationPipeline(
 ) {
     companion object {
         private const val TAG = "AudioSeparation"
+        private const val WAKELOCK_TAG = "AudioSeparationPipeline:CPU"
     }
 
     private val inferenceEngine = UvrMdxInferenceEngine(context)
@@ -25,7 +27,7 @@ class AudioSeparationPipeline(
         get() = inferenceEngine.activeHardwareBackend
 
     /**
-     * Runs the real separation pipeline for the given video.
+     * Runs the real separation pipeline for the given video with CPU WakeLock stability.
      */
     suspend fun processVideo(
         video: VideoItemEntity,
@@ -34,7 +36,19 @@ class AudioSeparationPipeline(
         forceRecompute: Boolean = false,
         onProgress: (Float) -> Unit = {}
     ): Result<File> = withContext(Dispatchers.IO) {
+        var localWakeLock: PowerManager.WakeLock? = null
         try {
+            // Acquire partial wake lock to prevent background CPU throttling or sleep
+            try {
+                val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                localWakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)?.apply {
+                    setReferenceCounted(false)
+                    acquire(15 * 60 * 1000L) // 15-minute timeout safeguard
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not acquire pipeline WakeLock: ${e.message}")
+            }
+
             // Check cache
             val vocalsDir = File(context.filesDir, "vocals")
             if (!vocalsDir.exists()) vocalsDir.mkdirs()
@@ -112,6 +126,14 @@ class AudioSeparationPipeline(
                 errorMessage = msg
             )
             Result.failure(e)
+        } finally {
+            try {
+                if (localWakeLock?.isHeld == true) {
+                    localWakeLock.release()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error releasing pipeline WakeLock: ${e.message}")
+            }
         }
     }
 }

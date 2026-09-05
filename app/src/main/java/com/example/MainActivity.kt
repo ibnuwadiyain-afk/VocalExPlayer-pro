@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -48,6 +49,12 @@ class MainActivity : ComponentActivity() {
                     val accelerationMode by viewModel.accelerationMode.collectAsState()
                     val hardwareBackend = viewModel.hardwareBackend
 
+                    val processingElapsedFormatted by viewModel.processingElapsedTimeFormatted.collectAsState()
+                    val processingEstimatedRemaining by viewModel.processingEstimatedRemainingFormatted.collectAsState()
+                    val isBackgroundProtected by viewModel.isBackgroundProtected.collectAsState()
+                    val activeProcessingVideoId by viewModel.activeProcessingVideoId.collectAsState()
+                    val activeProcessingVideoTitle by viewModel.activeProcessingVideoTitle.collectAsState()
+
                     val isExporting by viewModel.isExporting.collectAsState()
                     val exportProgress by viewModel.exportProgress.collectAsState()
                     val exportResult by viewModel.exportResult.collectAsState()
@@ -55,8 +62,19 @@ class MainActivity : ComponentActivity() {
 
                     val downloadProgressState by viewModel.downloadProgressState.collectAsState()
                     val isDownloadingMedia by viewModel.isDownloadingMedia.collectAsState()
+                    val downloadElapsedFormatted by viewModel.downloadElapsedFormatted.collectAsState()
                     val downloadErrorMessage by viewModel.downloadErrorMessage.collectAsState()
                     val sharedMediaUrl by viewModel.sharedMediaUrl.collectAsState()
+
+                    // Android 13+ Notification permission request for foreground service
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                            androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                        ) {}
+                        LaunchedEffect(Unit) {
+                            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
 
                     BackHandler(enabled = selectedVideo != null) {
                         viewModel.clearSelectedVideo()
@@ -70,10 +88,14 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
+                            elapsedTime = processingElapsedFormatted,
+                            estimatedRemaining = processingEstimatedRemaining,
+                            isBackgroundProtected = isBackgroundProtected,
                             onBack = { viewModel.clearSelectedVideo() },
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
-                            onExportVideo = { viewModel.exportVideo(selectedVideo!!) }
+                            onExportVideo = { viewModel.exportVideo(selectedVideo!!) },
+                            onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     } else {
                         VideoListScreen(
@@ -87,6 +109,14 @@ class MainActivity : ComponentActivity() {
                             isDownloadingMedia = isDownloadingMedia,
                             downloadErrorMessage = downloadErrorMessage,
                             sharedMediaUrl = sharedMediaUrl,
+                            downloadElapsedFormatted = downloadElapsedFormatted,
+                            isProcessing = isProcessing,
+                            processingProgress = progress,
+                            processingElapsedFormatted = processingElapsedFormatted,
+                            processingEstimatedRemaining = processingEstimatedRemaining,
+                            activeProcessingVideoId = activeProcessingVideoId,
+                            activeProcessingVideoTitle = activeProcessingVideoTitle,
+                            isBackgroundProtected = isBackgroundProtected,
                             onVideoSelected = { video -> viewModel.selectVideo(video) },
                             onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
                             onImportSampleVideo = { viewModel.importSampleVideo() },
@@ -99,7 +129,8 @@ class MainActivity : ComponentActivity() {
                             onDismissDownloadDialog = { viewModel.dismissDownloadDialog() },
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },
                             onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
-                            onExportVideo = { video -> viewModel.exportVideo(video) }
+                            onExportVideo = { video -> viewModel.exportVideo(video) },
+                            onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     }
 

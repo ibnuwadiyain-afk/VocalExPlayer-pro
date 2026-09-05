@@ -54,6 +54,8 @@ fun VideoListItem(
     video: VideoItemEntity,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    elapsedTime: String = "",
+    isActiveProcessing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -138,15 +140,21 @@ fun VideoListItem(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            // Status Badge
-            StatusBadge(status = video.status)
+            // Status Badge with timer if processing
+            StatusBadge(
+                status = video.status,
+                elapsedTime = if (isActiveProcessing || video.status == VideoStatus.PROCESSING) elapsedTime else ""
+            )
         }
     }
 }
 
 @Composable
-fun StatusBadge(status: VideoStatus) {
-    val (bgColor, textColor, text, icon) = when (status) {
+fun StatusBadge(
+    status: VideoStatus,
+    elapsedTime: String = ""
+) {
+    val (bgColor, textColor, defaultText, icon) = when (status) {
         VideoStatus.READY -> Quadruple(
             StatusReady.copy(alpha = 0.15f),
             StatusReady,
@@ -156,7 +164,7 @@ fun StatusBadge(status: VideoStatus) {
         VideoStatus.PROCESSING -> Quadruple(
             StatusProcessing.copy(alpha = 0.15f),
             StatusProcessing,
-            "Processing",
+            if (elapsedTime.isNotBlank()) "Extracting $elapsedTime" else "Processing…",
             Icons.Default.HourglassTop
         )
         VideoStatus.ERROR -> Quadruple(
@@ -173,10 +181,16 @@ fun StatusBadge(status: VideoStatus) {
         )
     }
 
+    val displayText = if (status == VideoStatus.PROCESSING && elapsedTime.isNotBlank()) {
+        "Extracting $elapsedTime"
+    } else {
+        defaultText
+    }
+
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = bgColor,
-        modifier = Modifier.testTag("status_badge_${text.lowercase()}")
+        modifier = Modifier.testTag("status_badge_${status.name.lowercase()}")
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -190,7 +204,7 @@ fun StatusBadge(status: VideoStatus) {
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = text,
+                text = displayText,
                 color = textColor,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
