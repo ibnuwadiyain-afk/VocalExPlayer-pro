@@ -112,7 +112,7 @@ fun UrlImportDialog(
                         color = TextPrimary
                     )
                     Text(
-                        text = "YouTube & Social Media Link",
+                        text = "Web Video & Stream Link",
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
@@ -131,7 +131,7 @@ fun UrlImportDialog(
                 } else {
                     // Input & Quick Paste View
                     Text(
-                        text = "Paste a link from YouTube, TikTok, Instagram, X, or direct video:",
+                        text = "Paste a video stream or online media link:",
                         fontSize = 12.sp,
                         color = TextSecondary,
                         lineHeight = 16.sp
@@ -147,7 +147,7 @@ fun UrlImportDialog(
                         },
                         placeholder = {
                             Text(
-                                "https://youtu.be/... or video URL",
+                                "https://... or direct .mp4 video URL",
                                 color = TextSecondary.copy(alpha = 0.6f),
                                 fontSize = 13.sp
                             )
@@ -243,13 +243,13 @@ fun UrlImportDialog(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Supported Platforms Badges
+                    // Supported Formats Badges
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        listOf("YouTube", "Shorts", "TikTok", "Instagram", "X (Twitter)", "Direct MP4").forEach { tag ->
+                        listOf("Direct MP4", "Web Video", "WebM", "Online Clip", "Direct Stream").forEach { tag ->
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
                                 color = DarkSurface
@@ -267,50 +267,55 @@ fun UrlImportDialog(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Quick Sample Links
+                    // Verified Working Test Links Section for Testing
                     Text(
-                        text = "TEST PRESETS (INSTANT DEMO)",
+                        text = "TEST VIDEO STREAMS (TAP TO TEST PARSER)",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = TextSecondary
+                        color = AccentTeal,
+                        letterSpacing = 0.5.sp
                     )
+
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    SocialMediaVideoProcessor.SAMPLE_PRESETS.forEach { preset ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = DarkSurface,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 3.dp)
-                                .clickable {
-                                    urlText = preset.url
-                                    onSubmitUrl(preset.url)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SocialMediaVideoProcessor.TEST_PRESETS.forEach { preset ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = DarkSurface,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        urlText = preset.url
+                                        if (errorMessage != null) onClearError()
+                                    }
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayCircleOutline,
-                                    contentDescription = null,
-                                    tint = AccentTeal,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = preset.title,
-                                        color = TextPrimary,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayCircleOutline,
+                                        contentDescription = null,
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(16.dp)
                                     )
-                                    Text(
-                                        text = preset.platform,
-                                        color = TextSecondary,
-                                        fontSize = 10.sp
-                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = preset.title,
+                                            color = TextPrimary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = preset.url,
+                                            color = TextSecondary,
+                                            fontSize = 9.sp,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -336,7 +341,7 @@ fun UrlImportDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Pro-tip: Tap \"Share\" in YouTube or TikTok and pick VocalExtractor!",
+                                text = "Pro-tip: Tap \"Share\" in any video app or browser and choose VocalExtractor!",
                                 color = AccentTeal,
                                 fontSize = 11.sp,
                                 lineHeight = 14.sp

@@ -6,7 +6,6 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.audio.SampleVideoGenerator
 import com.example.data.db.AppDatabase
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
@@ -321,27 +320,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("MainViewModel", "Imported video $videoId: $title")
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error importing video", e)
-            }
-        }
-    }
-
-    fun importSampleVideo() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val context = getApplication<Application>()
-                val sampleFile = SampleVideoGenerator.getOrCreateSampleVideo(context)
-                val videoId = "sample_" + UUID.randomUUID().toString().substring(0, 6)
-
-                val sampleVideo = VideoItemEntity(
-                    id = videoId,
-                    videoUri = sampleFile.absolutePath,
-                    title = "Sample Vocal Track (UVR Demo)",
-                    duration = 4000L,
-                    status = VideoStatus.NEW
-                )
-                videoDao.insertVideo(sampleVideo)
-            } catch (e: Exception) {
-                Log.e("MainViewModel", "Error creating sample video", e)
             }
         }
     }

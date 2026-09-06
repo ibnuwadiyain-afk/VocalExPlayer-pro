@@ -119,7 +119,6 @@ class MainActivity : ComponentActivity() {
                             isBackgroundProtected = isBackgroundProtected,
                             onVideoSelected = { video -> viewModel.selectVideo(video) },
                             onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
-                            onImportSampleVideo = { viewModel.importSampleVideo() },
                             onDeleteVideo = { video -> viewModel.deleteVideo(video) },
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },

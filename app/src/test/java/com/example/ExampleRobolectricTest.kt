@@ -70,19 +70,19 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verify social media url extraction and youtube id parsing`() {
+  fun `verify social media url extraction and video id parsing`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val processor = com.example.media.SocialMediaVideoProcessor(context)
 
-    // YouTube share message
-    val shareText = "Look at this song! https://youtu.be/dQw4w9WgXcQ sent from YouTube"
+    // Web video share message
+    val shareText = "Look at this song! https://youtu.be/dQw4w9WgXcQ shared from video app"
     val extracted = processor.extractUrlFromText(shareText)
     assertEquals("https://youtu.be/dQw4w9WgXcQ", extracted)
 
-    // YouTube ID parsing
-    val id1 = processor.extractYouTubeId("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-    val id2 = processor.extractYouTubeId("https://youtu.be/dQw4w9WgXcQ")
-    val id3 = processor.extractYouTubeId("https://www.youtube.com/shorts/AbCdEfGhIjK")
+    // Video ID parsing
+    val id1 = processor.extractVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    val id2 = processor.extractVideoId("https://youtu.be/dQw4w9WgXcQ")
+    val id3 = processor.extractVideoId("https://www.youtube.com/shorts/AbCdEfGhIjK")
 
     assertEquals("dQw4w9WgXcQ", id1)
     assertEquals("dQw4w9WgXcQ", id2)
@@ -97,20 +97,15 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verify SocialMediaVideoProcessor platform detection and presets`() {
+  fun `verify SocialMediaVideoProcessor platform detection`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val processor = com.example.media.SocialMediaVideoProcessor(context)
 
-    assertEquals("YouTube", processor.detectPlatform("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
-    assertEquals("YouTube Shorts", processor.detectPlatform("https://www.youtube.com/shorts/AbCdEfGhIjK"))
-    assertEquals("TikTok", processor.detectPlatform("https://www.tiktok.com/@user/video/123456"))
-    assertEquals("Instagram Reel", processor.detectPlatform("https://www.instagram.com/reel/12345/"))
-    assertEquals("X (Twitter)", processor.detectPlatform("https://twitter.com/user/status/12345"))
-    assertEquals("Direct Video Link", processor.detectPlatform("https://example.com/audio/test.mp4"))
-
-    // Presets verification
-    org.junit.Assert.assertFalse(com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.isEmpty())
-    val firstPreset = com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.first()
-    org.junit.Assert.assertTrue(firstPreset.url.startsWith("http"))
+    assertEquals("Web Video", processor.detectPlatform("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+    assertEquals("Web Video", processor.detectPlatform("https://www.youtube.com/shorts/AbCdEfGhIjK"))
+    assertEquals("Short Clip", processor.detectPlatform("https://www.tiktok.com/@user/video/123456"))
+    assertEquals("Reel", processor.detectPlatform("https://www.instagram.com/reel/12345/"))
+    assertEquals("Social Clip", processor.detectPlatform("https://twitter.com/user/status/12345"))
+    assertEquals("Direct Video", processor.detectPlatform("https://example.com/audio/test.mp4"))
   }
 }

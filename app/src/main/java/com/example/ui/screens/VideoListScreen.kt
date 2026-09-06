@@ -112,7 +112,6 @@ fun VideoListScreen(
     isBackgroundProtected: Boolean = true,
     onVideoSelected: (VideoItemEntity) -> Unit,
     onImportVideo: (Uri) -> Unit,
-    onImportSampleVideo: () -> Unit,
     onDeleteVideo: (VideoItemEntity) -> Unit,
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
@@ -181,7 +180,7 @@ fun VideoListScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CloudDownload,
-                            contentDescription = "Import from YouTube or Social Media",
+                            contentDescription = "Import from Web Video Link",
                             tint = AccentTeal
                         )
                     }
@@ -219,7 +218,7 @@ fun VideoListScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("YouTube / Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Web Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 FloatingActionButton(
@@ -561,27 +560,11 @@ fun VideoListScreen(
                             modifier = Modifier
                                 .fillMaxWidth(0.85f)
                                 .height(50.dp)
-                                .testTag("import_youtube_button")
+                                .testTag("import_web_link_button")
                         ) {
                             Icon(Icons.Default.CloudDownload, contentDescription = null, tint = AccentTeal)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("From YouTube / Social Link", color = TextPrimary, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        OutlinedButton(
-                            onClick = onImportSampleVideo,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
-                            modifier = Modifier
-                                .fillMaxWidth(0.85f)
-                                .height(50.dp)
-                                .testTag("load_demo_track_button")
-                        ) {
-                            Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = AccentTeal)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Load Demo Music Video", fontWeight = FontWeight.SemiBold)
+                            Text("Paste Video Link", color = TextPrimary, fontWeight = FontWeight.Bold)
                         }
                     }
                 } else {
@@ -734,7 +717,7 @@ fun VideoListScreen(
         )
     }
 
-    // YouTube & Social Media URL Import Dialog
+    // Web Video & Stream Link Import Dialog
     if (showUrlDialog || isDownloadingMedia || !sharedMediaUrl.isNullOrBlank()) {
         UrlImportDialog(
             initialUrl = sharedMediaUrl ?: "",
