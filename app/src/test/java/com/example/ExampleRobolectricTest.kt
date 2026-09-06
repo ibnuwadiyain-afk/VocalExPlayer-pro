@@ -108,4 +108,11 @@ class ExampleRobolectricTest {
             assertTrue(abs(originalReal[i] - real[i]) < 1e-4)
         }
     }
+
+    @Test
+    fun verifyUvrMdxModelAssetPresent() {
+        val assetList = context.assets.list("models")
+        assertNotNull(assetList)
+        assertTrue(assetList!!.contains("UVR_MDXNET_1_9703.onnx"))
+    }
 }

@@ -3,7 +3,7 @@
     <string name="title_library">Video Library</string>
     <string name="btn_import_video">Import Video</string>
     <string name="btn_import_url">From URL / Social</string>
-    <string name="btn_isolate_vocals">Extract Vocals</string>
+    <string name="btn_isolate_vocals">UVR AI Separation</string>
     <string name="btn_settings">Settings</string>
-    <string name="processing_title">Extracting Vocals with UVR AI</string>
+    <string name="processing_title">Extracting Vocals with UVR MDX-Net AI</string>
 </resources>

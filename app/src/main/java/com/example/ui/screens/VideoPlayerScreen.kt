@@ -259,13 +259,13 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Extract Vocals & Karaoke",
+                                text = "Extract Vocals & Karaoke (UVR AI)",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Run AI vocal isolation to unlock real-time volume sliders for vocals and instrumental accompaniment.",
+                                text = "Run UVR MDX-Net neural AI separation to isolate vocals and accompaniment with pristine quality.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -276,7 +276,7 @@ fun VideoPlayerScreen(
                             ) {
                                 Icon(Icons.Default.GraphicEq, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Isolate Vocals Now")
+                                Text("Isolate with UVR Neural AI")
                             }
                         }
                     }
@@ -292,12 +292,23 @@ fun VideoPlayerScreen(
                         )
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "AI Audio Mixer Console",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "AI Audio Mixer Console",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "UVR MDX-Net Separated",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = InstrumentalTeal
+                                )
+                            }
                             Spacer(modifier = Modifier.height(12.dp))
 
                             // Quick Preset Buttons

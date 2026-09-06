@@ -57,6 +57,7 @@ import com.example.ui.components.ProcessingOverlay
 import com.example.ui.components.UrlImportDialog
 import com.example.ui.components.VideoListItem
 import com.example.ui.theme.AccentPurple
+import com.example.ui.theme.InstrumentalTeal
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,18 +96,27 @@ fun VideoListScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = null,
-                            tint = AccentPurple,
-                            modifier = Modifier.size(28.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.GraphicEq,
+                                contentDescription = null,
+                                tint = AccentPurple,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "VocalExtractor",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                         Text(
-                            text = "VocalExtractor",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = "UVR MDX-Net Neural AI Active",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InstrumentalTeal,
+                            fontSize = 11.sp
                         )
                     }
                 },
@@ -180,7 +190,7 @@ fun VideoListScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Import any video from your device or paste a web video link to isolate vocals with UVR MDX AI.",
+                        text = "Import any video from your device or paste a web video link to isolate vocals with genuine UVR MDX-Net neural AI.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center

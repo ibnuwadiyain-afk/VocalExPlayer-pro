@@ -66,7 +66,7 @@ fun ProcessingOverlay(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = "AI Vocal Separation",
+                        text = "UVR Neural AI Vocal Separation",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold

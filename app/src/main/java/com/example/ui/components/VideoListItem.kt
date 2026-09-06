@@ -94,7 +94,7 @@ fun VideoListItem(
                             )
                         }
                         Text(
-                            text = if (video.isSeparated) "Vocals & Inst Ready" else "Original Audio",
+                            text = if (video.isSeparated) "UVR AI: Vocals & Inst Ready" else "Original Audio",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (video.isSeparated) InstrumentalTeal else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
@@ -142,11 +142,11 @@ fun VideoListItem(
                     ) {
                         Icon(
                             imageVector = Icons.Default.GraphicEq,
-                            contentDescription = "Extract Vocals",
+                            contentDescription = "UVR AI Extract",
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Extract Vocals")
+                        Text("UVR AI Extract")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                 }
