@@ -103,9 +103,9 @@ class ExampleRobolectricTest {
 
     assertEquals("Web Video", processor.detectPlatform("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
     assertEquals("Web Video", processor.detectPlatform("https://www.youtube.com/shorts/AbCdEfGhIjK"))
-    assertEquals("Short Clip", processor.detectPlatform("https://www.tiktok.com/@user/video/123456"))
-    assertEquals("Reel", processor.detectPlatform("https://www.instagram.com/reel/12345/"))
-    assertEquals("Social Clip", processor.detectPlatform("https://twitter.com/user/status/12345"))
-    assertEquals("Direct Video", processor.detectPlatform("https://example.com/audio/test.mp4"))
+    assertEquals("TikTok", processor.detectPlatform("https://www.tiktok.com/@user/video/123456"))
+    assertEquals("Instagram Reel", processor.detectPlatform("https://www.instagram.com/reel/12345/"))
+    assertEquals("X (Twitter)", processor.detectPlatform("https://twitter.com/user/status/12345"))
+    assertEquals("Direct Video Link", processor.detectPlatform("https://example.com/audio/test.mp4"))
   }
 }

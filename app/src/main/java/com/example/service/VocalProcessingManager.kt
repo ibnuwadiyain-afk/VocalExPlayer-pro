@@ -106,8 +106,10 @@ object VocalProcessingManager {
             return
         }
 
-        // Cancel previous if any
-        cancelActiveProcessing(appContext)
+        // Cancel previous only if one was actively running
+        if (_isProcessing.value) {
+            cancelActiveProcessing(appContext)
+        }
 
         _isProcessing.value = true
         _activeVideoId.value = video.id
@@ -275,7 +277,15 @@ object VocalProcessingManager {
                 putExtra(VocalProcessingService.EXTRA_VIDEO_TITLE, videoTitle)
                 putExtra(VocalProcessingService.EXTRA_IS_SUCCESS, isSuccess)
             }
-            context.startService(intent)
+            if (isSuccess) {
+                try {
+                    context.startService(intent)
+                } catch (_: Exception) {
+                    context.stopService(Intent(context, VocalProcessingService::class.java))
+                }
+            } else {
+                context.stopService(Intent(context, VocalProcessingService::class.java))
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Could not stop VocalProcessingService: ${e.message}")
         }

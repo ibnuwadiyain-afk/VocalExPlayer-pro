@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
+import com.example.R
 
 /**
  * Android Foreground Service providing ongoing notification and process elevation,
@@ -41,6 +42,10 @@ class VocalProcessingService : Service() {
         super.onCreate()
         createNotificationChannel()
 
+        // CRITICAL FIX: Always call startForeground immediately in onCreate()
+        // so the system timeout never triggers ForegroundServiceDidNotStartInTimeException
+        startForegroundSafely()
+
         // Hook into VocalProcessingManager's updates
         VocalProcessingManager.onNotificationUpdateRequested = { progress, elapsedText, remainingText ->
             val now = System.currentTimeMillis()
@@ -56,27 +61,12 @@ class VocalProcessingService : Service() {
         when (intent?.action) {
             ACTION_START_PROCESSING -> {
                 currentVideoTitle = intent.getStringExtra(EXTRA_VIDEO_TITLE) ?: "Video Track"
-                val initialNotification = buildNotification(
+                updateNotification(
                     progress = 0.05f,
                     elapsedText = "00:00",
                     remainingText = "Estimating…"
                 )
-
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                        } else {
-                            0
-                        }
-                        startForeground(NOTIFICATION_ID, initialNotification, serviceType)
-                    } else {
-                        startForeground(NOTIFICATION_ID, initialNotification)
-                    }
-                    Log.i(TAG, "Foreground service started for $currentVideoTitle")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error starting foreground service: ${e.message}")
-                }
+                Log.i(TAG, "Foreground service active for $currentVideoTitle")
             }
 
             ACTION_STOP_PROCESSING -> {
@@ -88,11 +78,51 @@ class VocalProcessingService : Service() {
                     showCompletionNotification(title)
                 }
 
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping foreground: ${e.message}")
+                }
                 stopSelf()
+            }
+
+            else -> {
+                // If intent is null or unrecognized, ensure foreground notification is present
+                startForegroundSafely()
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun startForegroundSafely(
+        progress: Float = 0.05f,
+        elapsedText: String = "00:00",
+        remainingText: String? = "Estimating…"
+    ) {
+        val initialNotification = buildNotification(progress, elapsedText, remainingText)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    initialNotification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, initialNotification)
+            }
+            Log.i(TAG, "startForeground executed successfully")
+        } catch (e: Exception) {
+            Log.w(TAG, "Typed startForeground failed: ${e.message}, attempting default fallback")
+            try {
+                startForeground(NOTIFICATION_ID, initialNotification)
+            } catch (e2: Exception) {
+                Log.e(TAG, "All startForeground calls failed: ${e2.message}")
+                // Immediate stopSelf prevents OS from throwing ForegroundServiceDidNotStartInTimeException
+                try {
+                    stopSelf()
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -138,7 +168,7 @@ class VocalProcessingService : Service() {
         val contentText = "$currentVideoTitle\n$progressPct% • ⏱ Elapsed: $elapsedText$etaPart"
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_notification_vocal)
             .setContentTitle("Extracting Vocals with UVR AI")
             .setContentText("$progressPct% • ⏱ Elapsed: $elapsedText$etaPart")
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
@@ -178,7 +208,7 @@ class VocalProcessingService : Service() {
             )
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setSmallIcon(R.drawable.ic_notification_vocal)
                 .setContentTitle("Vocal Separation Complete!")
                 .setContentText("Vocals & accompaniment are ready for $title")
                 .setContentIntent(pendingIntent)
