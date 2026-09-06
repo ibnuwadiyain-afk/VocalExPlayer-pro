@@ -6,242 +6,200 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/**
- * Robust, low-memory audio extractor for video files.
- * Uses MediaExtractor and MediaCodec to decode audio tracks directly to disk
- * via streaming I/O to completely eliminate OutOfMemoryError (no ArrayList boxing).
- */
-class AudioExtractor(private val context: Context) {
+class DecodedAudio(
+    val leftChannel: FloatArray,
+    val rightChannel: FloatArray,
+    val sampleRate: Int,
+    val durationMs: Long
+)
 
-    companion object {
-        private const val TAG = "AudioExtractor"
-        private const val TIMEOUT_US = 10000L
-        const val TARGET_SAMPLE_RATE = 44100
-    }
-
-    data class ExtractionResult(
-        val wavFile: File,
-        val sampleRate: Int,
-        val channels: Int,
-        val durationMs: Long,
-        val totalSampleFrames: Long
-    )
+object AudioExtractor {
+    private const val TAG = "AudioExtractor"
+    private const val TIMEOUT_US = 5000L
 
     /**
-     * Extracts and decodes the primary audio track directly into a 16-bit PCM WAV file.
-     * Streams data directly to disk so heap memory footprint is virtually zero (~64KB buffer).
+     * Extracts and decodes the audio track of the given video into stereo Float32 arrays.
      */
-    fun extractAudioToWav(
+    fun extractAudioFromVideo(
+        context: Context,
         videoUri: Uri,
-        outputWavFile: File,
         onProgress: (Float) -> Unit = {}
-    ): ExtractionResult {
+    ): DecodedAudio {
         val extractor = MediaExtractor()
-        var codec: MediaCodec? = null
-
         try {
             extractor.setDataSource(context, videoUri, null)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set data source for extractor", e)
+            throw e
+        }
 
-            // Find audio track
-            var audioTrackIndex = -1
-            var format: MediaFormat? = null
-            var mimeType = ""
-
-            for (i in 0 until extractor.trackCount) {
-                val trackFormat = extractor.getTrackFormat(i)
-                val mime = trackFormat.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("audio/")) {
-                    audioTrackIndex = i
-                    format = trackFormat
-                    mimeType = mime
-                    break
-                }
+        var audioTrackIndex = -1
+        var audioFormat: MediaFormat? = null
+        for (i in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(i)
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+            if (mime.startsWith("audio/")) {
+                audioTrackIndex = i
+                audioFormat = format
+                break
             }
+        }
 
-            if (audioTrackIndex == -1 || format == null) {
-                throw IllegalStateException("No audio track found in media file: $videoUri")
-            }
+        if (audioTrackIndex == -1 || audioFormat == null) {
+            extractor.release()
+            throw IllegalStateException("No audio track found in the selected video")
+        }
 
-            extractor.selectTrack(audioTrackIndex)
+        extractor.selectTrack(audioTrackIndex)
+        val mime = audioFormat.getString(MediaFormat.KEY_MIME) ?: "audio/mp4a-latm"
+        val sampleRate = if (audioFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+            audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+        } else {
+            44100
+        }
+        val channelCount = if (audioFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+            audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+        } else {
+            2
+        }
+        val durationUs = if (audioFormat.containsKey(MediaFormat.KEY_DURATION)) {
+            audioFormat.getLong(MediaFormat.KEY_DURATION)
+        } else {
+            10_000_000L
+        }
 
-            val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
-                format.getLong(MediaFormat.KEY_DURATION)
-            } else {
-                1000000L
-            }
-            val durationMs = durationUs / 1000L
+        val codec = MediaCodec.createDecoderByType(mime)
+        codec.configure(audioFormat, null, null, 0)
+        codec.start()
 
-            var sourceSampleRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            } else {
-                TARGET_SAMPLE_RATE
-            }
-            var channelCount = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-                format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            } else {
-                2
-            }
+        var actualSampleRate = sampleRate
+        var actualChannelCount = channelCount
 
-            codec = MediaCodec.createDecoderByType(mimeType)
-            codec.configure(format, null, null, 0)
-            codec.start()
+        val rawPcmSamples = ArrayList<Short>(sampleRate * channelCount * 10)
+        val bufferInfo = MediaCodec.BufferInfo()
+        var sawInputEOS = false
+        var sawOutputEOS = false
 
-            val bufferInfo = MediaCodec.BufferInfo()
-            var sawInputEOS = false
-            var sawOutputEOS = false
-            var totalPcmBytes = 0L
-
-            // Ensure destination parent directory exists
-            outputWavFile.parentFile?.mkdirs()
-            if (outputWavFile.exists()) {
-                outputWavFile.delete()
-            }
-
-            WavWriter(outputWavFile, TARGET_SAMPLE_RATE, 2).use { wavWriter ->
-                val chunkBuffer = ByteArray(16384)
-
-                while (!sawOutputEOS) {
-                    if (!sawInputEOS) {
-                        val inputBufferId = codec.dequeueInputBuffer(TIMEOUT_US)
-                        if (inputBufferId >= 0) {
-                            val inputBuffer = codec.getInputBuffer(inputBufferId)
-                            if (inputBuffer != null) {
-                                val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                                if (sampleSize < 0) {
-                                    codec.queueInputBuffer(
-                                        inputBufferId, 0, 0, 0L,
-                                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                                    )
-                                    sawInputEOS = true
-                                } else {
-                                    val presentationTimeUs = extractor.sampleTime
-                                    codec.queueInputBuffer(
-                                        inputBufferId, 0, sampleSize,
-                                        presentationTimeUs, 0
-                                    )
-                                    extractor.advance()
+        try {
+            while (!sawOutputEOS) {
+                if (!sawInputEOS) {
+                    val inputBufferIndex = codec.dequeueInputBuffer(TIMEOUT_US)
+                    if (inputBufferIndex >= 0) {
+                        val inputBuffer = codec.getInputBuffer(inputBufferIndex)
+                        if (inputBuffer != null) {
+                            val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                            if (sampleSize < 0) {
+                                sawInputEOS = true
+                                codec.queueInputBuffer(
+                                    inputBufferIndex, 0, 0, 0,
+                                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                )
+                            } else {
+                                val presentationTimeUs = extractor.sampleTime
+                                codec.queueInputBuffer(
+                                    inputBufferIndex, 0, sampleSize, presentationTimeUs, 0
+                                )
+                                extractor.advance()
+                                if (durationUs > 0) {
+                                    val progress = (presentationTimeUs.toFloat() / durationUs.toFloat()).coerceIn(0f, 1f)
+                                    onProgress(progress * 0.25f) // 0-25% progress during audio extraction
                                 }
                             }
                         }
                     }
+                }
 
-                    val outputBufferId = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
-                    if (outputBufferId >= 0) {
-                        if (bufferInfo.size > 0) {
-                            val outputBuffer = codec.getOutputBuffer(outputBufferId)
-                            if (outputBuffer != null) {
-                                outputBuffer.position(bufferInfo.offset)
-                                outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-
-                                // Process and write decoded PCM data to disk
-                                writePcmToWavWriter(
-                                    sourceBuffer = outputBuffer,
-                                    sourceChannels = channelCount,
-                                    sourceRate = sourceSampleRate,
-                                    targetRate = TARGET_SAMPLE_RATE,
-                                    wavWriter = wavWriter
-                                )
-
-                                totalPcmBytes += bufferInfo.size
-                            }
+                val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+                if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val outFormat = codec.outputFormat
+                    if (outFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        actualSampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    }
+                    if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                        actualChannelCount = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
+                    Log.i(TAG, "Decoder output format changed: sampleRate=$actualSampleRate, channelCount=$actualChannelCount")
+                } else if (outputBufferIndex >= 0) {
+                    val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
+                    if (outputBuffer != null && bufferInfo.size > 0) {
+                        outputBuffer.position(bufferInfo.offset)
+                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        val shortBuffer = outputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                        while (shortBuffer.hasRemaining()) {
+                            rawPcmSamples.add(shortBuffer.get())
                         }
-
-                        if (durationUs > 0) {
-                            val progress = (bufferInfo.presentationTimeUs.toFloat() / durationUs)
-                                .coerceIn(0f, 1f)
-                            onProgress(progress)
-                        }
-
-                        codec.releaseOutputBuffer(outputBufferId, false)
-
-                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            sawOutputEOS = true
-                        }
-                    } else if (outputBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                        val newFormat = codec.outputFormat
-                        if (newFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                            sourceSampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                        }
-                        if (newFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-                            channelCount = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                        }
-                        Log.i(TAG, "Output format changed: rate=$sourceSampleRate, channels=$channelCount")
+                    }
+                    codec.releaseOutputBuffer(outputBufferIndex, false)
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        sawOutputEOS = true
                     }
                 }
             }
-
-            val totalSampleFrames = (outputWavFile.length() - 44) / 4 // 16-bit stereo = 4 bytes per frame
-
-            Log.i(TAG, "Extraction finished successfully to ${outputWavFile.absolutePath}, frames=$totalSampleFrames")
-            return ExtractionResult(
-                wavFile = outputWavFile,
-                sampleRate = TARGET_SAMPLE_RATE,
-                channels = 2,
-                durationMs = durationMs,
-                totalSampleFrames = totalSampleFrames
-            )
         } finally {
             try {
-                codec?.stop()
-                codec?.release()
+                codec.stop()
+                codec.release()
             } catch (e: Exception) {
-                Log.w(TAG, "Codec release error: ${e.message}")
+                Log.w(TAG, "Error stopping codec", e)
             }
             try {
                 extractor.release()
             } catch (e: Exception) {
-                Log.w(TAG, "Extractor release error: ${e.message}")
+                Log.w(TAG, "Error releasing extractor", e)
             }
         }
-    }
 
-    /**
-     * Formats incoming 16-bit PCM from decoder and writes stereo 44.1kHz to WavWriter directly.
-     */
-    private fun writePcmToWavWriter(
-        sourceBuffer: ByteBuffer,
-        sourceChannels: Int,
-        sourceRate: Int,
-        targetRate: Int,
-        wavWriter: WavWriter
-    ) {
-        val shortBuffer = sourceBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-        val numShorts = shortBuffer.remaining()
-        if (numShorts <= 0) return
+        // Convert interleaved Short samples to stereo Float32 arrays [-1.0f, 1.0f]
+        val totalShorts = rawPcmSamples.size
+        val channels = actualChannelCount.coerceAtLeast(1)
+        val numFrames = totalShorts / channels
+        val left = FloatArray(numFrames)
+        val right = FloatArray(numFrames)
 
-        if (sourceChannels == 2 && sourceRate == targetRate) {
-            // Direct stereo 44.1kHz passthrough
-            val tempShorts = ShortArray(numShorts)
-            shortBuffer.get(tempShorts)
-            wavWriter.writePcmShorts(tempShorts)
-        } else if (sourceChannels == 1 && sourceRate == targetRate) {
-            // Convert mono to stereo (duplicate channel)
-            val stereoShorts = ShortArray(numShorts * 2)
-            for (i in 0 until numShorts) {
-                val sample = shortBuffer.get()
-                stereoShorts[i * 2] = sample
-                stereoShorts[i * 2 + 1] = sample
+        if (channels == 1) {
+            // Mono: duplicate to both channels
+            for (i in 0 until numFrames) {
+                val mono = rawPcmSamples[i] / 32768.0f
+                left[i] = mono
+                right[i] = mono
             }
-            wavWriter.writePcmShorts(stereoShorts)
+        } else if (channels == 2) {
+            // Stereo
+            for (i in 0 until numFrames) {
+                val lShort = rawPcmSamples[i * 2]
+                val rShort = rawPcmSamples[i * 2 + 1]
+                left[i] = lShort / 32768.0f
+                right[i] = rShort / 32768.0f
+            }
         } else {
-            // Downmix multi-channel or resample to stereo
-            val frames = numShorts / maxOf(1, sourceChannels)
-            val stereoShorts = ShortArray(frames * 2)
-            for (f in 0 until frames) {
-                val left = shortBuffer.get()
-                val right = if (sourceChannels > 1) shortBuffer.get() else left
-                // Skip extra surround channels if present
-                for (extra in 2 until sourceChannels) {
-                    if (shortBuffer.hasRemaining()) shortBuffer.get()
-                }
-                stereoShorts[f * 2] = left
-                stereoShorts[f * 2 + 1] = right
+            // Multi-channel (> 2 channels, e.g. 5.1 surround sound)
+            // Downmix standard 5.1 layout: L, R, C, LFE, Ls, Rs
+            for (i in 0 until numFrames) {
+                val base = i * channels
+                val l = rawPcmSamples[base] / 32768.0f
+                val r = rawPcmSamples[base + 1] / 32768.0f
+                val c = if (channels > 2) (rawPcmSamples[base + 2] / 32768.0f) * 0.707f else 0f
+                left[i] = (l + c).coerceIn(-1.0f, 1.0f)
+                right[i] = (r + c).coerceIn(-1.0f, 1.0f)
             }
-            wavWriter.writePcmShorts(stereoShorts)
         }
+
+        val calculatedDurationMs = if (actualSampleRate > 0) {
+            (numFrames.toLong() * 1000L) / actualSampleRate
+        } else {
+            durationUs / 1000L
+        }
+
+        Log.i(TAG, "Extracted audio: $numFrames frames at $actualSampleRate Hz (${calculatedDurationMs}ms), channels=$channels")
+
+        return DecodedAudio(
+            leftChannel = left,
+            rightChannel = right,
+            sampleRate = actualSampleRate,
+            durationMs = calculatedDurationMs
+        )
     }
 }

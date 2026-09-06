@@ -1,7 +1,10 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,23 +15,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SlowMotionVideo
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -36,153 +37,187 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
-import com.example.ui.theme.AccentPurple
-import com.example.ui.theme.InstrumentalTeal
-import com.example.ui.theme.VocalPink
+import com.example.data.model.VideoStatus
+import com.example.ui.theme.AccentTeal
+import com.example.ui.theme.DarkSurface
+import com.example.ui.theme.StatusError
+import com.example.ui.theme.StatusNew
+import com.example.ui.theme.StatusProcessing
+import com.example.ui.theme.StatusReady
+import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.TextSecondary
+import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun VideoListItem(
     video: VideoItemEntity,
     onClick: () -> Unit,
-    onStartSeparation: () -> Unit,
-    onExport: () -> Unit,
-    onDelete: () -> Unit,
+    onLongClick: () -> Unit,
+    elapsedTime: String = "",
+    isActiveProcessing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("video_item_${video.id}")
-            .clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .testTag("video_item_${video.id}"),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Video Thumbnail / Icon Placeholder
+            Box(
+                modifier = Modifier
+                    .size(68.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF262626)),
+                contentAlignment = Alignment.Center
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (video.isSeparated) AccentPurple.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    BoxIcon(isSeparated = video.isSeparated)
-                }
+                Icon(
+                    imageVector = Icons.Default.Videocam,
+                    contentDescription = "Video Thumbnail",
+                    tint = AccentTeal.copy(alpha = 0.8f),
+                    modifier = Modifier.size(32.dp)
+                )
 
-                Spacer(modifier = Modifier.width(16.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = video.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (video.sourcePlatform != null) {
-                            Text(
-                                text = "${video.sourcePlatform} • ",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 12.sp
-                            )
-                        }
-                        Text(
-                            text = if (video.isSeparated) "UVR AI: Vocals & Inst Ready" else "Original Audio",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (video.isSeparated) InstrumentalTeal else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.testTag("delete_video_${video.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete Video",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (video.isSeparated) {
-                    FilledTonalButton(
-                        onClick = onExport,
-                        modifier = Modifier.testTag("export_video_${video.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Export",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Export Video")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                } else {
-                    FilledTonalButton(
-                        onClick = onStartSeparation,
-                        modifier = Modifier.testTag("separate_video_${video.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = "UVR AI Extract",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("UVR AI Extract")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-
-                FilledTonalButton(
-                    onClick = onClick,
-                    modifier = Modifier.testTag("play_video_${video.id}")
+                // Play icon overlay
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.6f)),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Play",
-                        modifier = Modifier.size(18.dp)
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Play")
                 }
             }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            // Title & Duration Column
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = video.title,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = formatDuration(video.duration),
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = TextSecondary,
+                        fontSize = 13.sp
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            // Status Badge with timer if processing
+            StatusBadge(
+                status = video.status,
+                elapsedTime = if (isActiveProcessing || video.status == VideoStatus.PROCESSING) elapsedTime else ""
+            )
         }
     }
 }
 
 @Composable
-private fun BoxIcon(isSeparated: Boolean) {
-    if (isSeparated) {
-        Icon(
-            imageVector = Icons.Default.GraphicEq,
-            contentDescription = "Separated Track",
-            tint = AccentPurple,
-            modifier = Modifier.padding(12.dp)
+fun StatusBadge(
+    status: VideoStatus,
+    elapsedTime: String = ""
+) {
+    val (bgColor, textColor, defaultText, icon) = when (status) {
+        VideoStatus.READY -> Quadruple(
+            StatusReady.copy(alpha = 0.15f),
+            StatusReady,
+            "Ready",
+            Icons.Default.CheckCircle
         )
-    } else {
-        Icon(
-            imageVector = Icons.Default.Audiotrack,
-            contentDescription = "Standard Track",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(12.dp)
+        VideoStatus.PROCESSING -> Quadruple(
+            StatusProcessing.copy(alpha = 0.15f),
+            StatusProcessing,
+            if (elapsedTime.isNotBlank()) "Extracting $elapsedTime" else "Processing…",
+            Icons.Default.HourglassTop
+        )
+        VideoStatus.ERROR -> Quadruple(
+            StatusError.copy(alpha = 0.15f),
+            StatusError,
+            "Error",
+            Icons.Default.ErrorOutline
+        )
+        VideoStatus.NEW -> Quadruple(
+            StatusNew.copy(alpha = 0.15f),
+            StatusNew,
+            "New",
+            Icons.Default.PlayArrow
         )
     }
+
+    val displayText = if (status == VideoStatus.PROCESSING && elapsedTime.isNotBlank()) {
+        "Extracting $elapsedTime"
+    } else {
+        defaultText
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = bgColor,
+        modifier = Modifier.testTag("status_badge_${status.name.lowercase()}")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = textColor,
+                modifier = Modifier.size(12.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = displayText,
+                color = textColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
 }
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+}
+
+data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

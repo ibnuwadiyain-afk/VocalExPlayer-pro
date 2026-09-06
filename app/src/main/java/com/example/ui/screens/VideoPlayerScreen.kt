@@ -1,8 +1,6 @@
 package com.example.ui.screens
 
 import android.net.Uri
-import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,18 +15,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VolumeUp
+import com.example.onnx.AccelerationMode
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,18 +39,19 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,376 +65,521 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
-import com.example.MainViewModel
+import com.example.data.model.VideoItemEntity
+import com.example.data.model.VideoStatus
 import com.example.ui.components.ProcessingOverlay
-import com.example.ui.theme.AccentPurple
-import com.example.ui.theme.InstrumentalTeal
-import com.example.ui.theme.VocalPink
+import com.example.ui.theme.AccentTeal
+import com.example.ui.theme.DarkBackground
+import com.example.ui.theme.DarkSurface
+import com.example.ui.theme.StatusError
+import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
+import java.io.File
+import java.util.Locale
 
 @OptIn(UnstableApi::class)
 @ExperimentalMaterial3Api
 @Composable
 fun VideoPlayerScreen(
-    videoId: Long,
-    viewModel: MainViewModel,
-    onBack: () -> Unit
+    video: VideoItemEntity,
+    isProcessing: Boolean,
+    processingProgress: Float,
+    activeModelName: String,
+    accelerationMode: AccelerationMode = AccelerationMode.TURBO,
+    hardwareBackend: String = "Multi-Core CPU",
+    elapsedTime: String = "00:00",
+    estimatedRemaining: String? = null,
+    isBackgroundProtected: Boolean = true,
+    onBack: () -> Unit,
+    onRetry: () -> Unit,
+    onReprocess: () -> Unit,
+    onExportVideo: () -> Unit,
+    onCancelProcessing: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val videoList by viewModel.videoList.collectAsState()
-    val video = videoList.find { it.id == videoId }
+    var isPlaying by remember { mutableStateOf(false) }
+    var currentPosition by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(video.duration.coerceAtLeast(1L)) }
+    var isSliderDragging by remember { mutableStateOf(false) }
+    var sliderPosition by remember { mutableFloatStateOf(0f) }
+    var useIsolatedVocals by remember { mutableStateOf(true) }
 
-    val isProcessing by viewModel.isProcessing.collectAsState()
-    val progress by viewModel.progress.collectAsState()
-    val statusMessage by viewModel.statusMessage.collectAsState()
-    val activeTitle by viewModel.activeVideoTitle.collectAsState()
-    val elapsedSeconds by viewModel.elapsedSeconds.collectAsState()
-
-    var vocalVolume by remember { mutableFloatStateOf(1.0f) }
-    var instVolume by remember { mutableFloatStateOf(1.0f) }
-
-    // Video Player
-    val videoPlayer = remember {
+    // Single unified ExoPlayer instance for frame-accurate, sample-synced video and audio playback
+    val player = remember {
         ExoPlayer.Builder(context).build()
     }
 
-    // Secondary synchronized audio player for isolated vocals when separated
-    val vocalPlayer = remember {
-        ExoPlayer.Builder(context).build()
-    }
-    // Instrumental track player
-    val instPlayer = remember {
-        ExoPlayer.Builder(context).build()
+    fun selectTrack(vocalsOnly: Boolean) {
+        val tracks = player.currentTracks
+        val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (audioGroups.size >= 2) {
+            // Audio Group 0: Original Audio from video file
+            // Audio Group 1: AI Isolated Vocal Audio from separated WAV file
+            val targetGroup = if (vocalsOnly) audioGroups[1] else audioGroups[0]
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setOverrideForType(TrackSelectionOverride(targetGroup.mediaTrackGroup, 0))
+                .build()
+        }
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            videoPlayer.release()
-            vocalPlayer.release()
-            instPlayer.release()
+            player.release()
         }
     }
 
-    LaunchedEffect(video) {
-        if (video != null) {
-            val videoMediaItem = MediaItem.fromUri(Uri.parse(video.videoUri))
-            videoPlayer.setMediaItem(videoMediaItem)
-            videoPlayer.prepare()
+    // Update media sources based on video status & vocal audio track
+    LaunchedEffect(video.status, video.videoUri, video.vocalUri) {
+        if (video.status == VideoStatus.READY) {
+            val videoUri = Uri.fromFile(File(video.videoUri)).let {
+                if (File(video.videoUri).exists()) it else Uri.parse(video.videoUri)
+            }
 
-            if (video.isSeparated && video.vocalsUri != null && video.accompanimentUri != null) {
-                // When separated, mute the raw video track so the separated tracks handle audio
-                videoPlayer.volume = 0.0f
+            val hasVocalFile = !video.vocalUri.isNullOrBlank() && File(video.vocalUri).exists()
+            val dataSourceFactory = DefaultDataSource.Factory(context)
+            val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(videoUri))
 
-                vocalPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(video.vocalsUri)))
-                vocalPlayer.prepare()
-                vocalPlayer.volume = vocalVolume
-
-                instPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(video.accompanimentUri)))
-                instPlayer.prepare()
-                instPlayer.volume = instVolume
-
-                // Sync play/pause and seek
-                videoPlayer.addListener(object : Player.Listener {
-                    override fun onIsPlayingChanged(isPlaying: Boolean) {
-                        if (isPlaying) {
-                            vocalPlayer.seekTo(videoPlayer.currentPosition)
-                            instPlayer.seekTo(videoPlayer.currentPosition)
-                            vocalPlayer.play()
-                            instPlayer.play()
-                        } else {
-                            vocalPlayer.pause()
-                            instPlayer.pause()
-                        }
-                    }
-
-                    override fun onPositionDiscontinuity(
-                        oldPosition: Player.PositionInfo,
-                        newPosition: Player.PositionInfo,
-                        reason: Int
-                    ) {
-                        vocalPlayer.seekTo(newPosition.positionMs)
-                        instPlayer.seekTo(newPosition.positionMs)
-                    }
-                })
+            if (hasVocalFile) {
+                // Merge video track and isolated vocal audio track into one hardware-clock synced stream
+                val vocalUri = Uri.fromFile(File(video.vocalUri))
+                val vocalSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(vocalUri))
+                val mergedSource = MergingMediaSource(videoSource, vocalSource)
+                player.setMediaSource(mergedSource)
             } else {
-                videoPlayer.volume = 1.0f
+                player.setMediaSource(videoSource)
+            }
+
+            player.prepare()
+        }
+    }
+
+    // Master Player listener
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    val d = player.duration
+                    if (d > 0) duration = d
+                    selectTrack(useIsolatedVocals)
+                }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                selectTrack(useIsolatedVocals)
             }
         }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+        }
     }
 
-    LaunchedEffect(vocalVolume) {
-        vocalPlayer.volume = vocalVolume
+    // Switch between AI Vocals Only and Original Audio
+    LaunchedEffect(useIsolatedVocals) {
+        selectTrack(useIsolatedVocals)
     }
 
-    LaunchedEffect(instVolume) {
-        instPlayer.volume = instVolume
+    // Sync position tracker loop
+    LaunchedEffect(isPlaying, isSliderDragging) {
+        while (isPlaying && !isSliderDragging) {
+            currentPosition = player.currentPosition
+            delay(150L)
+        }
     }
 
-    Scaffold(
-        topBar = {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(DarkBackground)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top App Bar
             TopAppBar(
                 title = {
                     Text(
-                        text = video?.title ?: "Video Player",
-                        maxLines = 1,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
+                        text = video.title,
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
                     )
                 },
                 navigationIcon = {
                     IconButton(
                         onClick = onBack,
-                        modifier = Modifier.testTag("btn_back_player")
+                        modifier = Modifier.testTag("back_button")
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextPrimary
+                        )
+                    }
+                },
+                actions = {
+                    if (video.status == VideoStatus.READY) {
+                        IconButton(
+                            onClick = onExportVideo,
+                            modifier = Modifier.testTag("export_video_top_bar_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = "Export Video with Vocals Only",
+                                tint = AccentTeal
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = DarkBackground
                 )
             )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            Column(
+
+            // Video Player at Top
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
             ) {
-                // Video Surface
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .background(Color.Black)
-                ) {
+                if (video.status == VideoStatus.READY) {
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
-                                player = videoPlayer
-                                layoutParams = FrameLayout.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT
-                                )
-                                useController = true
+                                this.player = player
+                                useController = false // Custom minimal controls below
                             }
                         },
-                        modifier = Modifier.fillMaxSize().testTag("exo_player_view")
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("video_player_view")
                     )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (video.status == VideoStatus.ERROR) "Playback unavailable" else "Preparing video…",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (video == null) {
-                    Text(
-                        text = "Video not found",
-                        modifier = Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                } else if (!video.isSeparated) {
-                    // Unseparated State: prompt user to extract vocals
+            // Minimal Controls & Audio Mode Below
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
+                if (video.status == VideoStatus.ERROR) {
+                    // Error Card with Retry Button
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                            .padding(vertical = 16.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(
                             modifier = Modifier.padding(20.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(
-                                imageVector = Icons.Default.GraphicEq,
+                                imageVector = Icons.Default.ErrorOutline,
                                 contentDescription = null,
-                                tint = AccentPurple,
-                                modifier = Modifier.size(48.dp)
+                                tint = StatusError,
+                                modifier = Modifier.size(40.dp)
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Extract Vocals & Karaoke (UVR AI)",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                text = "Vocal extraction encountered an issue",
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Run UVR MDX-Net neural AI separation to isolate vocals and accompaniment with pristine quality.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = video.errorMessage ?: "Inference error",
+                                color = TextSecondary,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
                             )
-                            Spacer(modifier = Modifier.height(16.dp))
                             Button(
-                                onClick = { viewModel.startSeparation(video) },
-                                modifier = Modifier.testTag("btn_extract_vocals_in_player")
+                                onClick = onRetry,
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                                modifier = Modifier.testTag("retry_button")
                             ) {
-                                Icon(Icons.Default.GraphicEq, contentDescription = null)
+                                Icon(Icons.Default.Refresh, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Isolate with UVR Neural AI")
+                                Text("Retry Extraction", color = Color.Black)
                             }
                         }
                     }
-                } else {
-                    // Separated Audio Mixing Console
-                    Card(
+                } else if (video.status == VideoStatus.READY) {
+                    // Audio Mode Switcher: AI Isolated Vocals vs Original Audio
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = useIsolatedVocals,
+                            onClick = { useIsolatedVocals = true },
+                            label = { Text("AI Vocals Only") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.GraphicEq,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AccentTeal,
+                                selectedLabelColor = Color.Black,
+                                selectedLeadingIconColor = Color.Black,
+                                containerColor = DarkSurface,
+                                labelColor = TextSecondary
+                            ),
+                            modifier = Modifier.testTag("vocals_mode_chip")
+                        )
+
+                        FilterChip(
+                            selected = !useIsolatedVocals,
+                            onClick = { useIsolatedVocals = false },
+                            label = { Text("Original Audio") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.VolumeUp,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AccentTeal,
+                                selectedLabelColor = Color.Black,
+                                selectedLeadingIconColor = Color.Black,
+                                containerColor = DarkSurface,
+                                labelColor = TextSecondary
+                            ),
+                            modifier = Modifier.testTag("original_audio_chip")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Model: $activeModelName",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        TextButton(
+                            onClick = onReprocess,
+                            modifier = Modifier.testTag("reprocess_vocals_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = AccentTeal,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Re-extract Vocals",
+                                color = AccentTeal,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Progress Slider
+                    val effectivePosition = if (isSliderDragging) sliderPosition else (currentPosition.toFloat() / duration.coerceAtLeast(1L).toFloat())
+                    Slider(
+                        value = effectivePosition.coerceIn(0f, 1f),
+                        onValueChange = {
+                            isSliderDragging = true
+                            sliderPosition = it
+                        },
+                        onValueChangeFinished = {
+                            val seekTarget = (sliderPosition * duration).toLong()
+                            player.seekTo(seekTarget)
+                            isSliderDragging = false
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = AccentTeal,
+                            activeTrackColor = AccentTeal,
+                            inactiveTrackColor = Color(0xFF333333)
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                            .testTag("video_seek_slider")
+                    )
+
+                    // Timestamps
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "AI Audio Mixer Console",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "UVR MDX-Net Separated",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = InstrumentalTeal
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = formatTime(currentPosition),
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = formatTime(duration),
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
 
-                            // Quick Preset Buttons
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilterChip(
-                                    selected = (vocalVolume == 1f && instVolume == 1f),
-                                    onClick = { vocalVolume = 1f; instVolume = 1f },
-                                    label = { Text("Original Mix") },
-                                    modifier = Modifier.testTag("preset_both")
-                                )
-                                FilterChip(
-                                    selected = (vocalVolume == 1f && instVolume == 0f),
-                                    onClick = { vocalVolume = 1f; instVolume = 0f },
-                                    label = { Text("Vocals Solo") },
-                                    modifier = Modifier.testTag("preset_vocals_solo")
-                                )
-                                FilterChip(
-                                    selected = (vocalVolume == 0f && instVolume == 1f),
-                                    onClick = { vocalVolume = 0f; instVolume = 1f },
-                                    label = { Text("Karaoke (No Vocals)") },
-                                    modifier = Modifier.testTag("preset_karaoke")
-                                )
-                            }
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                            Spacer(modifier = Modifier.height(20.dp))
-
-                            // Vocal Stem Slider
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (vocalVolume > 0f) Icons.Default.Mic else Icons.Default.MicOff,
-                                    contentDescription = "Vocals",
-                                    tint = VocalPink,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "Vocals",
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = VocalPink
-                                        )
-                                        Text(
-                                            text = "${(vocalVolume * 100).toInt()}%",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Slider(
-                                        value = vocalVolume,
-                                        onValueChange = { vocalVolume = it },
-                                        modifier = Modifier.testTag("slider_vocal_volume"),
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = VocalPink,
-                                            activeTrackColor = VocalPink
-                                        )
-                                    )
+                    // Media Control Buttons (Play/Pause)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape),
+                            color = AccentTeal,
+                            onClick = {
+                                if (isPlaying) {
+                                    player.pause()
+                                } else {
+                                    player.play()
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // Instrumental Stem Slider
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("play_pause_button"),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.MusicNote,
-                                    contentDescription = "Instrumental",
-                                    tint = InstrumentalTeal,
-                                    modifier = Modifier.size(24.dp)
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(36.dp)
                                 )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "Instrumental / Accompaniment",
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = InstrumentalTeal
-                                        )
-                                        Text(
-                                            text = "${(instVolume * 100).toInt()}%",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Slider(
-                                        value = instVolume,
-                                        onValueChange = { instVolume = it },
-                                        modifier = Modifier.testTag("slider_inst_volume"),
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = InstrumentalTeal,
-                                            activeTrackColor = InstrumentalTeal
-                                        )
-                                    )
-                                }
                             }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    if (video.status == VideoStatus.READY) {
+                        Button(
+                            onClick = onExportVideo,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("export_video_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Export Video (Vocals Only)",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    // Model & Hardware Acceleration Badge
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = DarkSurface,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Speed,
+                                    contentDescription = null,
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "AI Acceleration: ${accelerationMode.displayName} (${accelerationMode.speedBadge})",
+                                    color = AccentTeal,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Hardware: $hardwareBackend • ONNX UVR MDX-Net 1",
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
                         }
                     }
                 }
             }
-
-            ProcessingOverlay(
-                isProcessing = isProcessing,
-                progress = progress,
-                statusMessage = statusMessage,
-                videoTitle = activeTitle,
-                elapsedSeconds = elapsedSeconds,
-                onCancel = { viewModel.cancelSeparation() }
-            )
         }
+
+        // Centered Processing Overlay if video is NEW or PROCESSING
+        ProcessingOverlay(
+            isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
+            progress = processingProgress,
+            message = "Extracting vocals with UVR AI ($activeModelName)…",
+            elapsedTime = elapsedTime,
+            estimatedRemaining = estimatedRemaining,
+            isBackgroundProtected = isBackgroundProtected,
+            onCancel = onCancelProcessing
+        )
     }
+}
+
+private fun formatTime(ms: Long): String {
+    val totalSec = (ms / 1000).coerceAtLeast(0)
+    val minutes = totalSec / 60
+    val seconds = totalSec % 60
+    return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
 }

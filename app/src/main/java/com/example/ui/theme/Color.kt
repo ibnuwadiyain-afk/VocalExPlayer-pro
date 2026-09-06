@@ -2,18 +2,24 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+val DarkBackground = Color(0xFF121212)
+val DarkSurface = Color(0xFF1E1E1E)
+val DarkSurfaceVariant = Color(0xFF282828)
+val DarkSurfaceContainer = Color(0xFF222222)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+val AccentTeal = Color(0xFF00D4AA)
+val AccentTealVariant = Color(0xFF00B38E)
+val TealDark = Color(0xFF00382B)
+val TealContainer = Color(0xFF004F3F)
+val OnTealContainer = Color(0xFF6DFBDB)
 
-val DarkSurface = Color(0xFF0F172A)
-val DarkSurfaceVariant = Color(0xFF1E293B)
-val DarkBackground = Color(0xFF020617)
-val AccentPurple = Color(0xFF818CF8)
-val AccentCyan = Color(0xFF38BDF8)
-val VocalPink = Color(0xFFF472B6)
-val InstrumentalTeal = Color(0xFF2DD4BF)
+val TextPrimary = Color(0xFFF1F1F1)
+val TextSecondary = Color(0xFFAAAAAA)
+val TextMuted = Color(0xFF757575)
+
+val StatusNew = Color(0xFF81D4FA)
+val StatusProcessing = Color(0xFFFFD54F)
+val StatusReady = Color(0xFF00D4AA)
+val StatusError = Color(0xFFFF5252)
+
+val CardBorder = Color(0xFF333333)

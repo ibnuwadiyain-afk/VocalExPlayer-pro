@@ -3,14 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"
@@ -20,37 +19,31 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.VocalExtractor"
-        android:largeHeap="true"
-        tools:targetApi="34">
-
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.MyApplication">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.VocalExtractor"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Accept shared text/links from social media or web -->
+
+            <!-- YouTube, TikTok, Instagram & Web Share Target -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- Accept shared video files -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="video/*" />
             </intent-filter>
         </activity>
-
-        <service
-            android:name=".service.VocalProcessingService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -62,6 +55,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Foreground Service ensuring uninterrupted AI separation in background with WakeLock -->
+        <service
+            android:name=".service.VocalProcessingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>
