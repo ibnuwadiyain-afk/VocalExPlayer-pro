@@ -15,13 +15,13 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
-        fun getInstance(context: Context): AppDatabase {
+        fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "uvr_vocal_player.db"
-                ).fallbackToDestructiveMigration().build()
+                    "uvr_vocal_extractor_db"
+                ).build()
                 INSTANCE = instance
                 instance
             }

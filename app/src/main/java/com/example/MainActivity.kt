@@ -1,147 +1,84 @@
 package com.example
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import com.example.ui.components.ExportProgressDialog
+import androidx.core.content.ContextCompat
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.ui.screens.VideoListScreen
 import com.example.ui.screens.VideoPlayerScreen
-import com.example.ui.theme.DarkBackground
-import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.VocalExtractorTheme
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
-    @OptIn(ExperimentalMaterial3Api::class)
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* Permission granted or denied handled gracefully */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Request POST_NOTIFICATIONS on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         handleIntent(intent)
-        enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
+            VocalExtractorTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = DarkBackground
+                    color = MaterialTheme.colorScheme.background
                 ) {
-                    val videos by viewModel.videoList.collectAsState()
-                    val selectedVideo by viewModel.selectedVideo.collectAsState()
-                    val isProcessing by viewModel.isProcessing.collectAsState()
-                    val progress by viewModel.processingProgress.collectAsState()
-                    val modelName by viewModel.customModelName.collectAsState()
-                    val customModelPath by viewModel.customModelPath.collectAsState()
-                    val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
-                    val accelerationMode by viewModel.accelerationMode.collectAsState()
-                    val hardwareBackend = viewModel.hardwareBackend
+                    val navController = rememberNavController()
 
-                    val processingElapsedFormatted by viewModel.processingElapsedTimeFormatted.collectAsState()
-                    val processingEstimatedRemaining by viewModel.processingEstimatedRemainingFormatted.collectAsState()
-                    val isBackgroundProtected by viewModel.isBackgroundProtected.collectAsState()
-                    val activeProcessingVideoId by viewModel.activeProcessingVideoId.collectAsState()
-                    val activeProcessingVideoTitle by viewModel.activeProcessingVideoTitle.collectAsState()
-
-                    val isExporting by viewModel.isExporting.collectAsState()
-                    val exportProgress by viewModel.exportProgress.collectAsState()
-                    val exportResult by viewModel.exportResult.collectAsState()
-                    val exportError by viewModel.exportError.collectAsState()
-
-                    val downloadProgressState by viewModel.downloadProgressState.collectAsState()
-                    val isDownloadingMedia by viewModel.isDownloadingMedia.collectAsState()
-                    val downloadElapsedFormatted by viewModel.downloadElapsedFormatted.collectAsState()
-                    val downloadErrorMessage by viewModel.downloadErrorMessage.collectAsState()
-                    val sharedMediaUrl by viewModel.sharedMediaUrl.collectAsState()
-
-                    // Android 13+ Notification permission request for foreground service
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-                            androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-                        ) {}
-                        LaunchedEffect(Unit) {
-                            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    NavHost(
+                        navController = navController,
+                        startDestination = "video_list"
+                    ) {
+                        composable("video_list") {
+                            VideoListScreen(
+                                viewModel = viewModel,
+                                onNavigateToPlayer = { videoId ->
+                                    navController.navigate("video_player/$videoId")
+                                }
+                            )
                         }
-                    }
-
-                    BackHandler(enabled = selectedVideo != null) {
-                        viewModel.clearSelectedVideo()
-                    }
-
-                    if (selectedVideo != null) {
-                        VideoPlayerScreen(
-                            video = selectedVideo!!,
-                            isProcessing = isProcessing,
-                            processingProgress = progress,
-                            activeModelName = modelName,
-                            accelerationMode = accelerationMode,
-                            hardwareBackend = hardwareBackend,
-                            elapsedTime = processingElapsedFormatted,
-                            estimatedRemaining = processingEstimatedRemaining,
-                            isBackgroundProtected = isBackgroundProtected,
-                            onBack = { viewModel.clearSelectedVideo() },
-                            onRetry = { viewModel.retrySeparation(selectedVideo!!) },
-                            onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
-                            onExportVideo = { viewModel.exportVideo(selectedVideo!!) },
-                            onCancelProcessing = { viewModel.cancelSeparation() }
-                        )
-                    } else {
-                        VideoListScreen(
-                            videos = videos,
-                            activeModelName = modelName,
-                            customModelPath = customModelPath,
-                            modelInfoMessage = modelInfoMessage,
-                            accelerationMode = accelerationMode,
-                            hardwareBackend = hardwareBackend,
-                            downloadProgressState = downloadProgressState,
-                            isDownloadingMedia = isDownloadingMedia,
-                            downloadErrorMessage = downloadErrorMessage,
-                            sharedMediaUrl = sharedMediaUrl,
-                            downloadElapsedFormatted = downloadElapsedFormatted,
-                            isProcessing = isProcessing,
-                            processingProgress = progress,
-                            processingElapsedFormatted = processingElapsedFormatted,
-                            processingEstimatedRemaining = processingEstimatedRemaining,
-                            activeProcessingVideoId = activeProcessingVideoId,
-                            activeProcessingVideoTitle = activeProcessingVideoTitle,
-                            isBackgroundProtected = isBackgroundProtected,
-                            onVideoSelected = { video -> viewModel.selectVideo(video) },
-                            onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
-                            onDeleteVideo = { video -> viewModel.deleteVideo(video) },
-                            onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
-                            onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
-                            onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
-                            onSubmitMediaUrl = { url -> viewModel.processSocialMediaUrl(url) },
-                            onClearDownloadError = { viewModel.clearDownloadError() },
-                            onDismissDownloadDialog = { viewModel.dismissDownloadDialog() },
-                            onClearModelMessage = { viewModel.clearModelInfoMessage() },
-                            onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
-                            onExportVideo = { video -> viewModel.exportVideo(video) },
-                            onCancelProcessing = { viewModel.cancelSeparation() }
-                        )
-                    }
-
-                    // Global Export Progress and Success Dialog
-                    if (isExporting || exportResult != null || exportError != null) {
-                        ExportProgressDialog(
-                            isExporting = isExporting,
-                            exportProgress = exportProgress,
-                            exportResult = exportResult,
-                            exportError = exportError,
-                            onDismiss = { viewModel.dismissExportDialog() }
-                        )
+                        composable(
+                            route = "video_player/{videoId}",
+                            arguments = listOf(navArgument("videoId") { type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val videoId = backStackEntry.arguments?.getLong("videoId") ?: -1L
+                            VideoPlayerScreen(
+                                videoId = videoId,
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
                     }
                 }
             }
@@ -150,36 +87,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
         if (intent.action == Intent.ACTION_SEND) {
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-            if (!text.isNullOrBlank()) {
-                viewModel.handleIncomingShareUrl(text)
-                return
-            }
-            val clipData = intent.clipData
-            if (clipData != null && clipData.itemCount > 0) {
-                val clipText = clipData.getItemAt(0).text?.toString()
-                if (!clipText.isNullOrBlank()) {
-                    viewModel.handleIncomingShareUrl(clipText)
-                    return
+            if (intent.type?.startsWith("video/") == true) {
+                val videoUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
                 }
-            }
-
-            // In case a video file was shared directly to the app
-            @Suppress("DEPRECATION")
-            val streamUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-            } else {
-                intent.getParcelableExtra(Intent.EXTRA_STREAM)
-            }
-            if (streamUri != null) {
-                viewModel.importVideoFromUri(streamUri)
+                videoUri?.let { viewModel.importVideoFromUri(it) }
+            } else if (intent.type == "text/plain") {
+                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                if (!sharedText.isNullOrBlank()) {
+                    val processor = com.example.media.SocialMediaVideoProcessor(this)
+                    val extractedUrl = processor.extractUrlFromText(sharedText) ?: sharedText.trim()
+                    if (extractedUrl.startsWith(prefix = "http://") || extractedUrl.startsWith(prefix = "https://")) {
+                        viewModel.processSocialMediaUrl(extractedUrl)
+                    }
+                }
             }
         }
     }

@@ -1,307 +1,144 @@
 package com.example.ui.components
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.RadioButtonChecked
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.onnx.AccelerationMode
-import com.example.ui.theme.AccentTeal
-import com.example.ui.theme.DarkBackground
-import com.example.ui.theme.DarkSurface
-import com.example.ui.theme.DarkSurfaceVariant
-import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 
 @Composable
 fun ModelSettingsDialog(
-    activeModelName: String,
-    customModelPath: String?,
-    accelerationMode: AccelerationMode,
-    hardwareBackend: String,
-    onDismiss: () -> Unit,
-    onSelectAccelerationMode: (AccelerationMode) -> Unit,
-    onImportCustomModel: (Uri) -> Unit,
-    onResetToBuiltIn: () -> Unit
+    currentMode: AccelerationMode,
+    customModelName: String?,
+    onPickCustomModel: () -> Unit,
+    onResetToBundledModel: () -> Unit,
+    onSave: (AccelerationMode) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let {
-            onImportCustomModel(it)
-        }
-    }
-
-    val isCustom = !customModelPath.isNullOrBlank()
+    var selectedMode by remember { mutableStateOf(currentMode) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Speed,
-                    contentDescription = null,
-                    tint = AccentTeal,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "AI Engine & Acceleration",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
-            }
-        },
+        title = { Text("Model & Acceleration Settings") },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("model_settings_dialog")
-            ) {
-                // Hardware Acceleration Status Badge
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = DarkSurface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+            Column {
+                Text(
+                    text = "Hardware Acceleration",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                AccelerationMode.entries.forEach { mode ->
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedMode = mode }
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Memory,
-                            contentDescription = null,
-                            tint = AccentTeal,
-                            modifier = Modifier.size(18.dp)
+                        RadioButton(
+                            selected = (selectedMode == mode),
+                            onClick = { selectedMode = mode },
+                            modifier = Modifier.testTag("radio_accel_${mode.name}")
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "ACTIVE HARDWARE ACCELERATION",
-                                color = AccentTeal,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
+                                text = mode.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = hardwareBackend,
-                                color = TextPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
+                                text = mode.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Processing Acceleration Modes
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "SEPARATION SPEED PROFILE",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
+                    text = "UVR / MDX-Net ONNX Model",
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-
                 Spacer(modifier = Modifier.height(8.dp))
 
-                AccelerationMode.entries.forEach { mode ->
-                    val isSelected = mode == accelerationMode
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) DarkSurfaceVariant else DarkSurface,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .then(
-                                if (isSelected) {
-                                    Modifier.border(1.dp, AccentTeal, RoundedCornerShape(12.dp))
-                                } else Modifier
-                            )
-                            .clickable { onSelectAccelerationMode(mode) }
-                            .testTag("accel_mode_${mode.id}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                                contentDescription = null,
-                                tint = if (isSelected) AccentTeal else TextSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = mode.displayName,
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = if (mode == AccelerationMode.TURBO) AccentTeal.copy(alpha = 0.2f) else DarkBackground
-                                    ) {
-                                        Text(
-                                            text = mode.speedBadge,
-                                            color = if (mode == AccelerationMode.TURBO) AccentTeal else TextSecondary,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(3.dp))
-                                Text(
-                                    text = mode.description,
-                                    color = TextSecondary,
-                                    fontSize = 11.sp,
-                                    lineHeight = 15.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Active Model Box
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = DarkSurface,
-                    modifier = Modifier.fillMaxWidth()
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Psychology,
-                                contentDescription = null,
-                                tint = AccentTeal,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isCustom) "CUSTOM MODEL" else "BUILT-IN NEURAL NETWORK",
-                                color = AccentTeal,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = activeModelName,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Import Custom Model Button
-                Button(
-                    onClick = {
-                        filePickerLauncher.launch(arrayOf("*/*"))
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("import_custom_model_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.FileUpload,
-                        contentDescription = null,
-                        tint = Color.Black,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Import Custom UVR Model (.onnx)",
-                        color = Color.Black,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                }
-
-                if (isCustom) {
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = onResetToBuiltIn,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("reset_model_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = null,
-                            tint = AccentTeal,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Reset to Built-in UVR-MDX-NET 1",
-                            fontSize = 12.sp,
+                            text = customModelName ?: "Bundled UVR MDX-Net v1 (Default)",
+                            style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row {
+                            OutlinedButton(
+                                onClick = onPickCustomModel,
+                                modifier = Modifier.testTag("btn_load_custom_onnx")
+                            ) {
+                                Text("Load .onnx", fontSize = 12.sp)
+                            }
+                            if (customModelName != null) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                TextButton(
+                                    onClick = onResetToBundledModel,
+                                    modifier = Modifier.testTag("btn_reset_model")
+                                ) {
+                                    Text("Reset", fontSize = 12.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("dismiss_model_dialog_button")
+            Button(
+                onClick = { onSave(selectedMode) },
+                modifier = Modifier.testTag("save_settings_button")
             ) {
-                Text("Close", color = AccentTeal, fontWeight = FontWeight.Bold)
+                Text("Save")
             }
         },
-        containerColor = DarkBackground,
-        shape = RoundedCornerShape(20.dp)
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
     )
 }

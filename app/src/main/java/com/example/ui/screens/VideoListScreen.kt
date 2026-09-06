@@ -1,12 +1,8 @@
 package com.example.ui.screens
 
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,26 +16,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoFixHigh
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
@@ -48,112 +32,66 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material.icons.filled.HourglassTop
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
+import com.example.MainViewModel
 import com.example.data.model.VideoItemEntity
-import com.example.data.model.VideoStatus
-import com.example.media.DownloadProgressState
-import com.example.onnx.AccelerationMode
+import com.example.ui.components.ExportAudioChoice
+import com.example.ui.components.ExportProgressDialog
 import com.example.ui.components.ModelSettingsDialog
+import com.example.ui.components.ProcessingOverlay
 import com.example.ui.components.UrlImportDialog
 import com.example.ui.components.VideoListItem
-import com.example.ui.theme.AccentTeal
-import com.example.ui.theme.DarkBackground
-import com.example.ui.theme.DarkSurface
-import com.example.ui.theme.DarkSurfaceVariant
-import com.example.ui.theme.StatusError
-import com.example.ui.theme.StatusProcessing
-import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.AccentPurple
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoListScreen(
-    videos: List<VideoItemEntity>,
-    activeModelName: String,
-    customModelPath: String?,
-    modelInfoMessage: String?,
-    accelerationMode: AccelerationMode = AccelerationMode.TURBO,
-    hardwareBackend: String = "Multi-Core CPU",
-    downloadProgressState: DownloadProgressState? = null,
-    isDownloadingMedia: Boolean = false,
-    downloadErrorMessage: String? = null,
-    sharedMediaUrl: String? = null,
-    downloadElapsedFormatted: String = "00:00",
-    isProcessing: Boolean = false,
-    processingProgress: Float = 0f,
-    processingElapsedFormatted: String = "00:00",
-    processingEstimatedRemaining: String? = null,
-    activeProcessingVideoId: String? = null,
-    activeProcessingVideoTitle: String? = null,
-    isBackgroundProtected: Boolean = true,
-    onVideoSelected: (VideoItemEntity) -> Unit,
-    onImportVideo: (Uri) -> Unit,
-    onDeleteVideo: (VideoItemEntity) -> Unit,
-    onImportCustomModel: (Uri) -> Unit,
-    onResetToBuiltInModel: () -> Unit,
-    onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
-    onSubmitMediaUrl: (String) -> Unit = {},
-    onClearDownloadError: () -> Unit = {},
-    onDismissDownloadDialog: () -> Unit = {},
-    onClearModelMessage: () -> Unit,
-    onReprocessVideo: (VideoItemEntity) -> Unit,
-    onExportVideo: (VideoItemEntity) -> Unit,
-    onCancelProcessing: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    viewModel: MainViewModel,
+    onNavigateToPlayer: (videoId: Long) -> Unit
 ) {
-    var videoForAction by remember { mutableStateOf<VideoItemEntity?>(null) }
-    var showModelDialog by remember { mutableStateOf(false) }
+    val videos by viewModel.videoList.collectAsState()
+    val isProcessing by viewModel.isProcessing.collectAsState()
+    val progress by viewModel.progress.collectAsState()
+    val statusMessage by viewModel.statusMessage.collectAsState()
+    val activeTitle by viewModel.activeVideoTitle.collectAsState()
+    val elapsedSeconds by viewModel.elapsedSeconds.collectAsState()
+    val accelerationMode by viewModel.accelerationMode.collectAsState()
+    val customModelPath by viewModel.customModelPath.collectAsState()
+    val isExporting by viewModel.isExporting.collectAsState()
+    val exportProgress by viewModel.exportProgress.collectAsState()
+
     var showUrlDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var videoToExport by remember { mutableStateOf<VideoItemEntity?>(null) }
 
-    LaunchedEffect(sharedMediaUrl) {
-        if (!sharedMediaUrl.isNullOrBlank()) {
-            showUrlDialog = true
-        }
-    }
-
-    // Video Picker via modern zero-permission Android Photo Picker
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        uri?.let { onImportVideo(it) }
+    ) { uri ->
+        uri?.let { viewModel.importVideoFromUri(it) }
     }
 
-    // Fallback OpenDocument launcher
-    val documentPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let { onImportVideo(it) }
+    val onnxFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { viewModel.importCustomModel(it) }
     }
 
     Scaffold(
-        modifier = modifier
-            .fillMaxSize()
-            .background(DarkBackground),
-        containerColor = DarkBackground,
         topBar = {
             TopAppBar(
                 title = {
@@ -161,578 +99,186 @@ fun VideoListScreen(
                         Icon(
                             imageVector = Icons.Default.GraphicEq,
                             contentDescription = null,
-                            tint = AccentTeal,
-                            modifier = Modifier.size(26.dp)
+                            tint = AccentPurple,
+                            modifier = Modifier.size(28.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "VocalExtractor",
-                            color = TextPrimary,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 },
                 actions = {
                     IconButton(
                         onClick = { showUrlDialog = true },
-                        modifier = Modifier.testTag("import_url_top_button")
+                        modifier = Modifier.testTag("btn_top_import_url")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CloudDownload,
-                            contentDescription = "Import from Web Video Link",
-                            tint = AccentTeal
+                            imageVector = Icons.Default.Link,
+                            contentDescription = "Import from Link",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                     IconButton(
-                        onClick = { showModelDialog = true },
-                        modifier = Modifier.testTag("model_settings_button")
+                        onClick = { showSettingsDialog = true },
+                        modifier = Modifier.testTag("btn_top_settings")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Psychology,
-                            contentDescription = "AI Model Settings",
-                            tint = AccentTeal
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkBackground
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             )
         },
         floatingActionButton = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ExtendedFloatingActionButton(
-                    onClick = { showUrlDialog = true },
-                    containerColor = DarkSurfaceVariant,
-                    contentColor = AccentTeal,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.testTag("import_url_fab")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Link,
-                        contentDescription = "From Link",
-                        modifier = Modifier.size(18.dp)
+            ExtendedFloatingActionButton(
+                onClick = {
+                    videoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Web Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
-
-                FloatingActionButton(
-                    onClick = {
-                        try {
-                            videoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                            )
-                        } catch (e: Exception) {
-                            documentPickerLauncher.launch(arrayOf("video/*"))
-                        }
-                    },
-                    containerColor = AccentTeal,
-                    contentColor = Color.Black,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.testTag("import_video_fab")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Import Video")
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    }
-                }
-            }
+                },
+                icon = { Icon(Icons.Default.Add, contentDescription = "Add Video") },
+                text = { Text("Import Video") },
+                modifier = Modifier.testTag("fab_import_video"),
+                containerColor = MaterialTheme.colorScheme.primary
+            )
         }
-    ) { innerPadding ->
+    ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(padding)
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-
-                // Model Message Toast / Notification Banner if present
-                if (!modelInfoMessage.isNullOrBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = DarkSurface,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = AccentTeal,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = modelInfoMessage,
-                                color = TextPrimary,
-                                fontSize = 12.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = onClearModelMessage,
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Dismiss",
-                                    tint = TextSecondary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // AI Model Status Bar Card
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = DarkSurfaceVariant,
+            if (videos.isEmpty()) {
+                // Empty state
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .clickable { showModelDialog = true }
-                        .testTag("ai_model_status_card")
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = AccentTeal.copy(alpha = 0.15f),
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Psychology,
-                                    contentDescription = null,
-                                    tint = AccentTeal,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "AI SEPARATION ENGINE",
-                                    color = AccentTeal,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.5.sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = AccentTeal.copy(alpha = 0.2f)
-                                ) {
-                                    Text(
-                                        text = "REAL ONNX",
-                                        color = AccentTeal,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = activeModelName,
-                                color = TextPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1
+                    Icon(
+                        imageVector = Icons.Default.VideoLibrary,
+                        contentDescription = null,
+                        modifier = Modifier.size(72.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No Videos in Library",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Import any video from your device or paste a web video link to isolate vocals with UVR MDX AI.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = {
+                            videoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                             )
-                        }
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            contentDescription = "Change Model",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        },
+                        modifier = Modifier.testTag("empty_state_import_btn")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Pick Video File")
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { showUrlDialog = true },
+                        modifier = Modifier.testTag("empty_state_url_btn")
+                    ) {
+                        Icon(Icons.Default.Link, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Import from URL")
                     }
                 }
-
-                // Active Processing Status Banner (survives background & shows timer/ETA)
-                if (isProcessing) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF132620),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal.copy(alpha = 0.4f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val target = videos.find { it.id == activeProcessingVideoId }
-                                if (target != null) {
-                                    onVideoSelected(target)
-                                }
-                            }
-                            .testTag("active_processing_banner")
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    CircularProgressIndicator(
-                                        color = AccentTeal,
-                                        strokeWidth = 2.5.dp,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = activeProcessingVideoTitle?.let { "Extracting: $it" } ?: "AI Vocal Extraction Active",
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Text(
-                                    text = "${(processingProgress * 100).toInt()}%",
-                                    color = AccentTeal,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            LinearProgressIndicator(
-                                progress = { processingProgress.coerceIn(0f, 1f) },
-                                color = AccentTeal,
-                                trackColor = Color(0xFF243B32),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(5.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.HourglassTop,
-                                        contentDescription = null,
-                                        tint = StatusProcessing,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Elapsed: $processingElapsedFormatted",
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 11.sp
-                                    )
-                                    if (!processingEstimatedRemaining.isNullOrBlank()) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "• $processingEstimatedRemaining",
-                                            color = AccentTeal,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Security,
-                                        contentDescription = null,
-                                        tint = AccentTeal,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "Background safe",
-                                        color = AccentTeal,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (videos.isEmpty()) {
-                    // Empty State
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp)
-                            .testTag("empty_state_view"),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            color = DarkSurface,
-                            modifier = Modifier.size(80.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.VideoLibrary,
-                                    contentDescription = null,
-                                    tint = AccentTeal,
-                                    modifier = Modifier.size(40.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        Text(
-                            text = "No Videos Added Yet",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+                ) {
+                    items(videos, key = { it.id }) { video ->
+                        VideoListItem(
+                            video = video,
+                            onClick = { onNavigateToPlayer(video.id) },
+                            onStartSeparation = { viewModel.startSeparation(video) },
+                            onExport = { videoToExport = video },
+                            onDelete = { viewModel.deleteVideo(video) }
                         )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "Import a music video to extract clean vocals using the built-in UVR MDX-Net ONNX neural model or your custom model.",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = TextSecondary,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 20.sp
-                            ),
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        Button(
-                            onClick = {
-                                try {
-                                    videoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                                    )
-                                } catch (e: Exception) {
-                                    documentPickerLauncher.launch(arrayOf("video/*"))
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth(0.85f)
-                                .height(50.dp)
-                                .testTag("import_gallery_button")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Import from Gallery", color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Button(
-                            onClick = { showUrlDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceVariant),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth(0.85f)
-                                .height(50.dp)
-                                .testTag("import_web_link_button")
-                        ) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = AccentTeal)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Paste Video Link", color = TextPrimary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("video_list"),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        item {
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = DarkSurface,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.GraphicEq,
-                                        contentDescription = null,
-                                        tint = AccentTeal,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Tap to play with vocal extractor. Long-press for options & re-extraction.",
-                                        color = TextSecondary,
-                                        fontSize = 12.sp
-                                    )
-                                }
-                            }
-                        }
-
-                        items(videos, key = { it.id }) { video ->
-                            val isActive = isProcessing && (video.id == activeProcessingVideoId)
-                            VideoListItem(
-                                video = video,
-                                onClick = { onVideoSelected(video) },
-                                onLongClick = { videoForAction = video },
-                                elapsedTime = if (isActive) processingElapsedFormatted else "",
-                                isActiveProcessing = isActive
-                            )
-                        }
-
-                        item {
-                            Spacer(modifier = Modifier.height(80.dp)) // Space for FAB
-                        }
                     }
                 }
             }
+
+            // Processing Overlay
+            ProcessingOverlay(
+                isProcessing = isProcessing,
+                progress = progress,
+                statusMessage = statusMessage,
+                videoTitle = activeTitle,
+                elapsedSeconds = elapsedSeconds,
+                onCancel = { viewModel.cancelSeparation() }
+            )
         }
     }
 
-    // Video Action Options Dialog (Re-extract or Delete)
-    videoForAction?.let { video ->
-        AlertDialog(
-            onDismissRequest = { videoForAction = null },
-            title = { Text(video.title, color = TextPrimary, fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                    Text(
-                        text = "Choose an action for this video track:",
-                        color = TextSecondary,
-                        fontSize = 14.sp
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    if (video.status == VideoStatus.READY) {
-                        Button(
-                            onClick = {
-                                onExportVideo(video)
-                                videoForAction = null
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("dialog_export_button")
-                        ) {
-                            Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color.Black)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Export Video (Vocals Only)", color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            onReprocessVideo(video)
-                            videoForAction = null
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth().testTag("dialog_reprocess_button")
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, tint = AccentTeal)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Re-extract Vocals with AI", color = AccentTeal, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            onDeleteVideo(video)
-                            videoForAction = null
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusError),
-                        modifier = Modifier.fillMaxWidth().testTag("dialog_delete_button")
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = null, tint = StatusError)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Delete Video", color = StatusError, fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { videoForAction = null }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            },
-            containerColor = DarkSurface,
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
-
-    // AI Model Settings & Custom Model Import Dialog
-    if (showModelDialog) {
-        ModelSettingsDialog(
-            activeModelName = activeModelName,
-            customModelPath = customModelPath,
-            accelerationMode = accelerationMode,
-            hardwareBackend = hardwareBackend,
-            onDismiss = { showModelDialog = false },
-            onSelectAccelerationMode = onSelectAccelerationMode,
-            onImportCustomModel = { uri ->
-                onImportCustomModel(uri)
-                showModelDialog = false
-            },
-            onResetToBuiltIn = {
-                onResetToBuiltInModel()
-                showModelDialog = false
+    if (showUrlDialog) {
+        UrlImportDialog(
+            onDismiss = { showUrlDialog = false },
+            onConfirm = { url ->
+                showUrlDialog = false
+                viewModel.processSocialMediaUrl(url)
             }
         )
     }
 
-    // Web Video & Stream Link Import Dialog
-    if (showUrlDialog || isDownloadingMedia || !sharedMediaUrl.isNullOrBlank()) {
-        UrlImportDialog(
-            initialUrl = sharedMediaUrl ?: "",
-            downloadState = downloadProgressState,
-            isDownloading = isDownloadingMedia,
-            errorMessage = downloadErrorMessage,
-            elapsedTime = downloadElapsedFormatted,
-            onDismiss = {
-                showUrlDialog = false
-                onDismissDownloadDialog()
+    if (showSettingsDialog) {
+        ModelSettingsDialog(
+            currentMode = accelerationMode,
+            customModelName = customModelPath?.substringAfterLast("/"),
+            onPickCustomModel = {
+                onnxFilePickerLauncher.launch("*/*")
             },
-            onSubmitUrl = { url ->
-                onSubmitMediaUrl(url)
+            onResetToBundledModel = {
+                viewModel.resetToBundledModel()
             },
-            onClearError = onClearDownloadError
+            onSave = { newMode ->
+                viewModel.updateAccelerationMode(newMode)
+                showSettingsDialog = false
+            },
+            onDismiss = { showSettingsDialog = false }
+        )
+    }
+
+    if (videoToExport != null) {
+        ExportProgressDialog(
+            isExporting = isExporting,
+            progress = exportProgress,
+            onStartExport = { choice ->
+                val targetVideo = videoToExport
+                if (targetVideo != null) {
+                    viewModel.exportVideo(targetVideo, choice) {
+                        videoToExport = null
+                    }
+                }
+            },
+            onDismiss = { videoToExport = null }
         )
     }
 }
