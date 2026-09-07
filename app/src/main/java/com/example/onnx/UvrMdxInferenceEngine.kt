@@ -92,24 +92,36 @@ class UvrMdxInferenceEngine(private val context: Context) {
         val availableProcessors = Runtime.getRuntime().availableProcessors()
         val numThreads = availableProcessors.coerceIn(4, 8)
 
-        val sessionOptions = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(numThreads)
-            setInterOpNumThreads(2)
-            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+        // Create ONNX session with fallback to safe CPU mode if NNAPI or graph transforms fail
+        val session = try {
+            val sessionOptions = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(numThreads)
+                setInterOpNumThreads(2)
+                // Use BASIC_OPT to avoid experimental ConvInteger quantization rewrite nodes missing in mobile ONNX
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
 
-            // Try hardware acceleration (NNAPI)
-            try {
-                addNnapi()
-                activeHardwareBackend = "NNAPI (NPU/GPU Accelerated)"
-                Log.i(TAG, "Hardware Acceleration enabled: NNAPI NPU/GPU")
-            } catch (e: Throwable) {
-                activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
-                Log.i(TAG, "NNAPI not active, fallback to optimized Multi-Core CPU ($numThreads threads): ${e.message}")
+                // Try hardware acceleration (NNAPI)
+                try {
+                    addNnapi()
+                    activeHardwareBackend = "NNAPI (NPU/GPU Accelerated)"
+                    Log.i(TAG, "Hardware Acceleration enabled: NNAPI NPU/GPU")
+                } catch (e: Throwable) {
+                    activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
+                    Log.i(TAG, "NNAPI not active, fallback to optimized Multi-Core CPU ($numThreads threads): ${e.message}")
+                }
             }
+            Log.i(TAG, "Opening ONNX Session for model: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
+            ortEnvironment.createSession(modelFile.absolutePath, sessionOptions)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Accelerated session initialization failed (${e.message}), falling back to safe CPU mode")
+            activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
+            val safeOptions = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(numThreads)
+                setInterOpNumThreads(2)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+            }
+            ortEnvironment.createSession(modelFile.absolutePath, safeOptions)
         }
-
-        Log.i(TAG, "Opening ONNX Session for model: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
-        val session = ortEnvironment.createSession(modelFile.absolutePath, sessionOptions)
 
         try {
             val inputNames = session.inputNames
@@ -161,7 +173,6 @@ class UvrMdxInferenceEngine(private val context: Context) {
             return outputWavFile
         } finally {
             session.close()
-            sessionOptions.close()
         }
     }
 

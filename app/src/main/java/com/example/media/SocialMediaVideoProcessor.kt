@@ -12,6 +12,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -198,12 +199,52 @@ class SocialMediaVideoProcessor(private val context: Context) {
         platform: String,
         onProgress: (DownloadProgressState) -> Unit
     ): StreamResolution {
-        // Direct media check
+        // 1. Direct media URL check (.mp4, .mkv, .webm, .mov, .m4a, .wav, .mp3)
         if (isDirectVideoUrl(url)) {
             return StreamResolution(url, extractFilenameFromUrl(url))
         }
 
-        // Try Cobalt API (supports YouTube, TikTok, Instagram, Twitter, etc.)
+        // 2. YouTube & YouTube Shorts direct extraction
+        val ytId = extractYouTubeId(url)
+        if (ytId != null) {
+            onProgress(DownloadProgressState.Resolving("Extracting YouTube stream ($ytId)…"))
+            try {
+                val directYt = queryYouTubeDirect(ytId)
+                if (directYt != null) {
+                    return directYt
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Direct YouTube extraction failed for $ytId", e)
+            }
+
+            // Fallback for YouTube: Invidious / Piped instances
+            for (endpoint in INVIDIOUS_ENDPOINTS) {
+                try {
+                    onProgress(DownloadProgressState.Resolving("Checking alternative stream server…"))
+                    val resolution = queryInvidiousApi(endpoint, ytId)
+                    if (resolution != null) {
+                        return resolution
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Invidious endpoint failed: $endpoint", e)
+                }
+            }
+        }
+
+        // 3. TikTok extraction via TikWM API
+        if (TIKTOK_REGEX.matcher(url).find()) {
+            onProgress(DownloadProgressState.Resolving("Extracting TikTok video stream…"))
+            try {
+                val tiktokRes = queryTikWm(url)
+                if (tiktokRes != null) {
+                    return tiktokRes
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "TikWM resolution failed for $url", e)
+            }
+        }
+
+        // 4. Cobalt API resolution for supported social networks
         for (endpoint in COBALT_ENDPOINTS) {
             try {
                 onProgress(DownloadProgressState.Resolving("Connecting to stream resolver ($platform)…"))
@@ -216,36 +257,125 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // Fallback for YouTube: Invidious / Piped public API
-        val ytId = extractYouTubeId(url)
-        if (ytId != null) {
-            for (endpoint in INVIDIOUS_ENDPOINTS) {
-                try {
-                    onProgress(DownloadProgressState.Resolving("Fetching YouTube stream ($ytId)…"))
-                    val resolution = queryInvidiousApi(endpoint, ytId)
-                    if (resolution != null) {
-                        return resolution
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Invidious endpoint failed: $endpoint", e)
-                }
-            }
-        }
-
-        // If all resolvers fail and URL looks like a direct link or stream, attempt direct fetch
+        // 5. Check if URL itself is a direct media stream (strictly checking Content-Type via HEAD)
         try {
-            val headRequest = Request.Builder().url(url).head().build()
+            val headRequest = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .head()
+                .build()
             httpClient.newCall(headRequest).execute().use { response ->
-                val contentType = response.header("Content-Type") ?: ""
-                if (contentType.startsWith("video/") || response.isSuccessful) {
+                val contentType = response.header("Content-Type")?.lowercase() ?: ""
+                if (contentType.startsWith("video/") || contentType.startsWith("audio/") || contentType.contains("octet-stream")) {
                     return StreamResolution(url, "$platform Video")
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Head request failed for $url", e)
+            Log.w(TAG, "Head request check failed for $url", e)
         }
 
-        throw IllegalStateException("Unable to resolve direct stream for $platform video. Please check the URL or try another link.")
+        throw IllegalStateException(
+            "Unable to extract a playable stream for this $platform link. " +
+            "The content may require sign-in, or the stream is currently restricted. " +
+            "Please try another link or import the video file directly."
+        )
+    }
+
+    private fun queryYouTubeDirect(videoId: String): StreamResolution? {
+        val payload = JSONObject().apply {
+            put("videoId", videoId)
+            put("context", JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("clientName", "ANDROID_VR")
+                    put("clientVersion", "1.61.48")
+                    put("deviceMake", "Oculus")
+                    put("deviceModel", "Quest 3")
+                    put("hl", "en")
+                    put("gl", "US")
+                })
+            })
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val request = Request.Builder()
+            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .post(payload.toString().toRequestBody(mediaType))
+            .addHeader("Content-Type", "application/json")
+            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val bodyStr = response.body?.string() ?: return null
+            val json = JSONObject(bodyStr)
+            val title = json.optJSONObject("videoDetails")?.optString("title") ?: "YouTube Video"
+            val streamingData = json.optJSONObject("streamingData") ?: return null
+
+            // 1. Check direct combined formats (video + audio)
+            val formats = streamingData.optJSONArray("formats")
+            if (formats != null && formats.length() > 0) {
+                for (i in 0 until formats.length()) {
+                    val fmt = formats.getJSONObject(i)
+                    val streamUrl = fmt.optString("url")
+                    val mime = fmt.optString("mimeType")
+                    if (streamUrl.isNotBlank() && mime.contains("mp4", ignoreCase = true)) {
+                        return StreamResolution(streamUrl, "YouTube - $title")
+                    }
+                }
+                val firstUrl = formats.getJSONObject(0).optString("url")
+                if (firstUrl.isNotBlank()) {
+                    return StreamResolution(firstUrl, "YouTube - $title")
+                }
+            }
+
+            // 2. Check adaptive audio formats (AAC / MP4 audio stream)
+            val adaptive = streamingData.optJSONArray("adaptiveFormats")
+            if (adaptive != null && adaptive.length() > 0) {
+                for (i in 0 until adaptive.length()) {
+                    val fmt = adaptive.getJSONObject(i)
+                    val streamUrl = fmt.optString("url")
+                    val mime = fmt.optString("mimeType")
+                    if (streamUrl.isNotBlank() && mime.startsWith("audio/mp4")) {
+                        return StreamResolution(streamUrl, "YouTube - $title")
+                    }
+                }
+                for (i in 0 until adaptive.length()) {
+                    val fmt = adaptive.getJSONObject(i)
+                    val streamUrl = fmt.optString("url")
+                    val mime = fmt.optString("mimeType")
+                    if (streamUrl.isNotBlank() && mime.startsWith("audio/")) {
+                        return StreamResolution(streamUrl, "YouTube - $title")
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun queryTikWm(url: String): StreamResolution? {
+        val encodedUrl = Uri.encode(url)
+        val apiUrl = "https://www.tikwm.com/api/?url=$encodedUrl"
+        val request = Request.Builder()
+            .url(apiUrl)
+            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val bodyStr = response.body?.string() ?: return null
+            val json = JSONObject(bodyStr)
+            if (json.optInt("code", -1) == 0) {
+                val data = json.optJSONObject("data") ?: return null
+                val playUrl = data.optString("play")
+                val title = data.optString("title", "TikTok Video")
+                if (playUrl.isNotBlank()) {
+                    val fullUrl = if (playUrl.startsWith("http")) playUrl else "https://www.tikwm.com$playUrl"
+                    return StreamResolution(fullUrl, "TikTok - $title")
+                }
+            }
+        }
+        return null
     }
 
     private fun queryCobaltApi(apiEndpoint: String, targetUrl: String): StreamResolution? {
@@ -261,7 +391,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             .url(apiEndpoint)
             .addHeader("Accept", "application/json")
             .addHeader("Content-Type", "application/json")
-            .addHeader("User-Agent", "VocalExtractor/1.0")
+            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
             .post(jsonPayload.toString().toRequestBody(mediaType))
             .build()
 
@@ -340,7 +470,10 @@ class SocialMediaVideoProcessor(private val context: Context) {
 
     private fun isDirectVideoUrl(url: String): Boolean {
         val clean = url.substringBefore('?').lowercase()
-        return clean.endsWith(".mp4") || clean.endsWith(".webm") || clean.endsWith(".mkv") || clean.endsWith(".mov")
+        return clean.endsWith(".mp4") || clean.endsWith(".webm") ||
+               clean.endsWith(".mkv") || clean.endsWith(".mov") ||
+               clean.endsWith(".m4a") || clean.endsWith(".wav") ||
+               clean.endsWith(".mp3")
     }
 
     private fun extractFilenameFromUrl(url: String): String {
@@ -368,6 +501,11 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 throw IllegalStateException("Failed to download video stream: HTTP ${response.code}")
             }
 
+            val contentType = response.header("Content-Type")?.lowercase() ?: ""
+            if (contentType.startsWith("text/") || contentType.contains("html") || contentType.contains("application/json")) {
+                throw IllegalStateException("Stream server returned an invalid web page ($contentType) instead of video data.")
+            }
+
             val body = response.body ?: throw IllegalStateException("Empty response body from media server")
             val totalBytes = body.contentLength()
             val inputStream = body.byteStream()
@@ -393,6 +531,28 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     }
                 }
                 outputStream.flush()
+            }
+        }
+
+        // Integrity check on downloaded file
+        if (!targetFile.exists() || targetFile.length() < 1000L) {
+            targetFile.delete()
+            throw IllegalStateException("Downloaded file is empty or incomplete.")
+        }
+
+        // Verify file is not HTML/text error response
+        val header = ByteArray(64)
+        var bytesRead = 0
+        FileInputStream(targetFile).use { fis ->
+            bytesRead = fis.read(header)
+        }
+        if (bytesRead > 0) {
+            val headerStr = String(header, 0, bytesRead, Charsets.US_ASCII).lowercase()
+            if (headerStr.contains("<!doctype") || headerStr.contains("<html") ||
+                headerStr.contains("{\"error") || headerStr.contains("{\"status")
+            ) {
+                targetFile.delete()
+                throw IllegalStateException("Downloaded stream contained web error text instead of valid video data.")
             }
         }
     }

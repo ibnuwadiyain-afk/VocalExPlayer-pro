@@ -144,7 +144,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val newVideo = VideoItemEntity(
                     id = videoId,
                     title = info.title,
-                    videoUri = info.file.toURI().toString(),
+                    videoUri = Uri.fromFile(info.file).toString(),
                     duration = info.durationMs,
                     status = VideoStatus.NEW,
                     dateAdded = System.currentTimeMillis()
