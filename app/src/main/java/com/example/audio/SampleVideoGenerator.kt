@@ -23,6 +23,21 @@ object SampleVideoGenerator {
             return sampleFile
         }
 
+        // Try extracting pre-bundled clean demo video from assets first
+        try {
+            context.assets.open("samples/demo_sample.mp4").use { input ->
+                java.io.FileOutputStream(sampleFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (sampleFile.exists() && sampleFile.length() > 5000) {
+                Log.i(TAG, "Copied bundled demo video from assets: ${sampleFile.length()} bytes")
+                return sampleFile
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Assets demo sample not found or failed, falling back to synthesis: ${e.message}")
+        }
+
         try {
             val width = 320
             val height = 240

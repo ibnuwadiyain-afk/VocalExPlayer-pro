@@ -40,20 +40,12 @@ object AudioExtractor {
                 val path = videoUri.path ?: videoUri.toString().removePrefix("file://")
                 val file = java.io.File(path)
                 if (file.exists()) {
-                    java.io.FileInputStream(file).use { fis ->
-                        extractor.setDataSource(fis.fd)
-                    }
+                    extractor.setDataSource(file.absolutePath)
                 } else {
                     extractor.setDataSource(context, videoUri, null)
                 }
             } else {
-                try {
-                    context.contentResolver.openFileDescriptor(videoUri, "r")?.use { pfd ->
-                        extractor.setDataSource(pfd.fileDescriptor)
-                    } ?: extractor.setDataSource(context, videoUri, null)
-                } catch (e: Exception) {
-                    extractor.setDataSource(context, videoUri, null)
-                }
+                extractor.setDataSource(context, videoUri, null)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set data source for extractor", e)

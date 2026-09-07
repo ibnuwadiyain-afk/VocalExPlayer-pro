@@ -749,6 +749,9 @@ fun VideoListScreen(
             onSubmitUrl = { url ->
                 onSubmitMediaUrl(url)
             },
+            onLoadOfflineDemo = {
+                onImportSampleVideo()
+            },
             onClearError = onClearDownloadError
         )
     }

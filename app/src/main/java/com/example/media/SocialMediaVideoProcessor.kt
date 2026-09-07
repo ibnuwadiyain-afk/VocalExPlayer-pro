@@ -62,17 +62,27 @@ class SocialMediaVideoProcessor(private val context: Context) {
             "https://pipedapi.kavin.rocks"
         )
 
-        // Curated royalty-free sample videos with rich vocal tracks for testing
+        // Curated, verified working sample media streams for instant testing
         val SAMPLE_PRESETS = listOf(
             SamplePreset(
-                title = "Acoustic Vocal Performance (Royalty-Free)",
-                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-                platform = "Web Direct (Test Sample)"
+                title = "Big Buck Bunny (Direct MP4 Clip)",
+                url = "https://www.w3schools.com/html/mov_bbb.mp4",
+                platform = "Direct MP4 Stream"
             ),
             SamplePreset(
-                title = "Royalty-Free Vocal & Melody Sample",
-                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-                platform = "Web Direct (Test Sample)"
+                title = "VidLii Showcase Video",
+                url = "https://www.vidlii.com/watch?v=4fEcsaOOBGe",
+                platform = "VidLii Web Link"
+            ),
+            SamplePreset(
+                title = "Vocal Song Melody (Direct MP3)",
+                url = "https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3",
+                platform = "Direct Audio Track"
+            ),
+            SamplePreset(
+                title = "Flower Nature Clip (Direct MP4)",
+                url = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+                platform = "Direct MP4 Stream"
             )
         )
     }
@@ -159,7 +169,16 @@ class SocialMediaVideoProcessor(private val context: Context) {
             // 2. Download the video stream to app storage
             val downloadsDir = File(context.filesDir, "downloads").apply { if (!exists()) mkdirs() }
             val videoId = UUID.randomUUID().toString().substring(0, 8)
-            val targetFile = File(downloadsDir, "video_${platform.lowercase().replace(" ", "_")}_$videoId.mp4")
+            val cleanStream = streamUrl.substringBefore('?').lowercase()
+            val fileExt = when {
+                cleanStream.endsWith(".mp3") -> ".mp3"
+                cleanStream.endsWith(".m4a") -> ".m4a"
+                cleanStream.endsWith(".webm") -> ".webm"
+                cleanStream.endsWith(".wav") -> ".wav"
+                else -> ".mp4"
+            }
+            val cleanPlatformTag = platform.lowercase().replace(Regex("[^a-z0-9_]"), "_")
+            val targetFile = File(downloadsDir, "media_${cleanPlatformTag}_$videoId$fileExt")
 
             onProgress(DownloadProgressState.Downloading(0.01f))
             downloadFile(streamUrl, targetFile, referer) { percent, speed ->
@@ -176,7 +195,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             var resolvedTitle = titleCandidate
 
             try {
-                retriever.setDataSource(context, Uri.fromFile(targetFile))
+                retriever.setDataSource(targetFile.absolutePath)
                 val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 if (durStr != null) {
                     durationMs = durStr.toLongOrNull() ?: 30_000L
@@ -186,9 +205,11 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     resolvedTitle = "$platform - $metaTitle"
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Could not extract metadata from downloaded video", e)
+                Log.w(TAG, "Could not extract metadata from downloaded media", e)
             } finally {
-                retriever.release()
+                try {
+                    retriever.release()
+                } catch (_: Exception) {}
             }
 
             val finalInfo = ExtractedVideoInfo(
@@ -306,10 +327,16 @@ class SocialMediaVideoProcessor(private val context: Context) {
             Log.w(TAG, "Head request check failed for $url", e)
         }
 
+        val lowerUrl = url.lowercase()
+        val customHint = when {
+            lowerUrl.contains("vidlii.com") && url.contains("watch?v=") && url.substringAfter("watch?v=").substringBefore('&').length < 8 ->
+                " Note: VidLii video IDs are typically 11 characters (e.g. watch?v=4fEcsaOOBGe); the entered ID appears truncated."
+            else -> ""
+        }
+
         throw IllegalStateException(
-            "Unable to extract a playable stream for this $platform link. " +
-            "The content may require sign-in, or the stream is currently restricted. " +
-            "Please try another link or import the video file directly."
+            "Unable to extract a playable stream for this $platform link.$customHint " +
+            "Please try one of the verified test presets below or import a media file directly."
         )
     }
 

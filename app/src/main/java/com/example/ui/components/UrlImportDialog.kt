@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -76,6 +78,7 @@ fun UrlImportDialog(
     elapsedTime: String = "00:00",
     onDismiss: () -> Unit,
     onSubmitUrl: (String) -> Unit,
+    onLoadOfflineDemo: (() -> Unit)? = null,
     onClearError: () -> Unit
 ) {
     var urlText by remember(initialUrl) { mutableStateOf(initialUrl) }
@@ -267,9 +270,52 @@ fun UrlImportDialog(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // Instant Offline Demo (Guaranteed 100% Offline)
+                    if (onLoadOfflineDemo != null) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = AccentTeal.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, AccentTeal.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onDismiss()
+                                    onLoadOfflineDemo()
+                                }
+                                .testTag("offline_demo_preset_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "⚡ Instant Demo (100% Offline Guaranteed)",
+                                        color = AccentTeal,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Test UVR AI separation instantly with built-in media (no network required).",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                    }
+
                     // Quick Sample Links
                     Text(
-                        text = "TEST PRESETS (INSTANT DEMO)",
+                        text = "TEST PRESETS (VERIFIED WEB STREAMS)",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextSecondary
@@ -307,7 +353,7 @@ fun UrlImportDialog(
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = preset.platform,
+                                        text = "${preset.platform} • Click to test",
                                         color = TextSecondary,
                                         fontSize = 10.sp
                                     )
