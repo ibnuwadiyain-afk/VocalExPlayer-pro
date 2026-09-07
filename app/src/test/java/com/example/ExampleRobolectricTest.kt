@@ -106,7 +106,11 @@ class ExampleRobolectricTest {
     assertEquals("TikTok", processor.detectPlatform("https://www.tiktok.com/@user/video/123456"))
     assertEquals("Instagram Reel", processor.detectPlatform("https://www.instagram.com/reel/12345/"))
     assertEquals("X (Twitter)", processor.detectPlatform("https://twitter.com/user/status/12345"))
+    assertEquals("VidLii", processor.detectPlatform("https://www.vidlii.com/watch?v=abcdef123"))
+    assertEquals("Dailymotion", processor.detectPlatform("https://www.dailymotion.com/video/x89123"))
+    assertEquals("Vimeo", processor.detectPlatform("https://vimeo.com/12345678"))
     assertEquals("Direct Video Link", processor.detectPlatform("https://example.com/audio/test.mp4"))
+    assertEquals("Example", processor.detectPlatform("https://example.com/watch?v=999"))
 
     // Presets verification
     org.junit.Assert.assertFalse(com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.isEmpty())

@@ -92,6 +92,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
         .build()
 
     fun detectPlatform(url: String): String {
+        val lower = url.lowercase()
         return when {
             YOUTUBE_REGEX.matcher(url).find() -> {
                 if (url.contains("/shorts/")) "YouTube Shorts" else "YouTube"
@@ -99,8 +100,26 @@ class SocialMediaVideoProcessor(private val context: Context) {
             TIKTOK_REGEX.matcher(url).find() -> "TikTok"
             INSTAGRAM_REGEX.matcher(url).find() -> "Instagram Reel"
             TWITTER_REGEX.matcher(url).find() -> "X (Twitter)"
-            url.contains(".mp4", ignoreCase = true) || url.contains(".webm", ignoreCase = true) -> "Direct Video Link"
-            else -> "Web Video"
+            lower.contains("vidlii.com") -> "VidLii"
+            lower.contains("dailymotion.com") -> "Dailymotion"
+            lower.contains("vimeo.com") -> "Vimeo"
+            lower.contains("rumble.com") -> "Rumble"
+            lower.contains("reddit.com") -> "Reddit"
+            lower.contains("archive.org") -> "Internet Archive"
+            isDirectVideoUrl(url) -> "Direct Video Link"
+            else -> {
+                try {
+                    val host = Uri.parse(url).host?.removePrefix("www.")
+                    if (!host.isNullOrBlank()) {
+                        val simpleName = host.substringBefore('.').replaceFirstChar { it.uppercase() }
+                        if (simpleName.isNotBlank() && simpleName.length > 2) simpleName else "Web Video"
+                    } else {
+                        "Web Video"
+                    }
+                } catch (e: Exception) {
+                    "Web Video"
+                }
+            }
         }
     }
 
@@ -133,8 +152,9 @@ class SocialMediaVideoProcessor(private val context: Context) {
             val streamResult = resolveMediaStream(cleanUrl, platform, onProgress)
             val streamUrl = streamResult.url
             val titleCandidate = streamResult.title ?: "$platform Video"
+            val referer = streamResult.referer ?: cleanUrl
 
-            Log.i(TAG, "Resolved stream URL: $streamUrl, Title: $titleCandidate")
+            Log.i(TAG, "Resolved stream URL: $streamUrl, Title: $titleCandidate, Referer: $referer")
 
             // 2. Download the video stream to app storage
             val downloadsDir = File(context.filesDir, "downloads").apply { if (!exists()) mkdirs() }
@@ -142,7 +162,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             val targetFile = File(downloadsDir, "video_${platform.lowercase().replace(" ", "_")}_$videoId.mp4")
 
             onProgress(DownloadProgressState.Downloading(0.01f))
-            downloadFile(streamUrl, targetFile) { percent, speed ->
+            downloadFile(streamUrl, targetFile, referer) { percent, speed ->
                 onProgress(DownloadProgressState.Downloading(percent, speed))
             }
 
@@ -191,7 +211,8 @@ class SocialMediaVideoProcessor(private val context: Context) {
 
     private data class StreamResolution(
         val url: String,
-        val title: String?
+        val title: String?,
+        val referer: String? = null
     )
 
     private suspend fun resolveMediaStream(
@@ -201,7 +222,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
     ): StreamResolution {
         // 1. Direct media URL check (.mp4, .mkv, .webm, .mov, .m4a, .wav, .mp3)
         if (isDirectVideoUrl(url)) {
-            return StreamResolution(url, extractFilenameFromUrl(url))
+            return StreamResolution(url, extractFilenameFromUrl(url), referer = url)
         }
 
         // 2. YouTube & YouTube Shorts direct extraction
@@ -244,7 +265,18 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // 4. Cobalt API resolution for supported social networks
+        // 4. Universal HTML5 Web Scraper & Stream Resolver
+        // (Supports VidLii, Dailymotion, Vimeo, Rumble, Internet Archive, Reddit, blogs, news, and HTML5 video sites)
+        try {
+            val webMedia = extractWebPageMedia(url, platform, onProgress)
+            if (webMedia != null) {
+                return webMedia
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "HTML5 web media extraction failed for $url", e)
+        }
+
+        // 5. Cobalt API resolution for supported social networks (Instagram, Twitter, etc.)
         for (endpoint in COBALT_ENDPOINTS) {
             try {
                 onProgress(DownloadProgressState.Resolving("Connecting to stream resolver ($platform)…"))
@@ -257,17 +289,17 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // 5. Check if URL itself is a direct media stream (strictly checking Content-Type via HEAD)
+        // 6. Check if URL itself is a direct media stream (strictly checking Content-Type via HEAD)
         try {
             val headRequest = Request.Builder()
                 .url(url)
-                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .head()
                 .build()
             httpClient.newCall(headRequest).execute().use { response ->
                 val contentType = response.header("Content-Type")?.lowercase() ?: ""
                 if (contentType.startsWith("video/") || contentType.startsWith("audio/") || contentType.contains("octet-stream")) {
-                    return StreamResolution(url, "$platform Video")
+                    return StreamResolution(url, "$platform Video", referer = url)
                 }
             }
         } catch (e: Exception) {
@@ -468,6 +500,261 @@ class SocialMediaVideoProcessor(private val context: Context) {
         return null
     }
 
+    private fun extractWebPageMedia(
+        pageUrl: String,
+        platform: String,
+        onProgress: (DownloadProgressState) -> Unit
+    ): StreamResolution? {
+        onProgress(DownloadProgressState.Resolving("Analyzing $platform web page for streams…"))
+        val request = Request.Builder()
+            .url(pageUrl)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,video/*,*/*;q=0.8")
+            .get()
+            .build()
+
+        val html: String
+        val finalUrl: String
+        try {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val contentType = response.header("Content-Type")?.lowercase() ?: ""
+                finalUrl = response.request.url.toString()
+
+                // If direct stream returned or redirected to media
+                if (contentType.startsWith("video/") || contentType.startsWith("audio/") || contentType.contains("octet-stream")) {
+                    return StreamResolution(finalUrl, "$platform Video", referer = pageUrl)
+                }
+
+                val body = response.body ?: return null
+                html = body.string()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load web page $pageUrl", e)
+            return null
+        }
+
+        // 1. Extract title
+        val title = extractTitleFromHtml(html) ?: "$platform Video"
+
+        // 2. Gather stream candidates
+        val candidates = mutableListOf<String>()
+
+        // HTML5 <video src="...">
+        val videoSrcPattern = Pattern.compile("""<video[^>]*\ssrc=["']([^"']+)["']""", Pattern.CASE_INSENSITIVE)
+        val vMatcher = videoSrcPattern.matcher(html)
+        while (vMatcher.find()) {
+            candidates.add(vMatcher.group(1))
+        }
+
+        // HTML5 <source src="...">
+        val sourceSrcPattern = Pattern.compile("""<source[^>]*\ssrc=["']([^"']+)["']""", Pattern.CASE_INSENSITIVE)
+        val sMatcher = sourceSrcPattern.matcher(html)
+        while (sMatcher.find()) {
+            candidates.add(sMatcher.group(1))
+        }
+
+        // OpenGraph & Twitter player meta tags
+        val ogPattern = Pattern.compile(
+            """<meta[^>]+(?:property|name)=["'](?:og:video|og:video:url|og:video:secure_url|twitter:player:stream)["'][^>]+content=["']([^"']+)["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val ogMatcher = ogPattern.matcher(html)
+        while (ogMatcher.find()) {
+            candidates.add(ogMatcher.group(1))
+        }
+
+        // Reversed attribute order: content="..." property="og:video"
+        val ogRevPattern = Pattern.compile(
+            """<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:video|og:video:url|og:video:secure_url|twitter:player:stream)["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val ogRevMatcher = ogRevPattern.matcher(html)
+        while (ogRevMatcher.find()) {
+            candidates.add(ogRevMatcher.group(1))
+        }
+
+        // JavaScript / JSON config parameters commonly found in video players:
+        // contentUrl, videoUrl, video_url, file, videoSrc
+        val jsonMediaPattern = Pattern.compile(
+            """["'](?:contentUrl|videoUrl|video_url|file|videoSrc|src)["']\s*:\s*["']([^"']+\.(?:mp4|webm|mkv|m4a|mp3)[^"']*)["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val jMatcher = jsonMediaPattern.matcher(html)
+        while (jMatcher.find()) {
+            candidates.add(jMatcher.group(1))
+        }
+
+        // Relative media paths: "/usfi/v/....mp4"
+        val relMediaPattern = Pattern.compile(
+            """["'](\/[^"'<>\s]+\.(?:mp4|webm|mkv|m4a|mp3)[^"'<>\s]*)["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val relMatcher = relMediaPattern.matcher(html)
+        while (relMatcher.find()) {
+            candidates.add(relMatcher.group(1))
+        }
+
+        // Absolute media URLs in page HTML: "https://...mp4"
+        val absMediaPattern = Pattern.compile(
+            """(https?:\/\/[^"'<>\s]+\.(?:mp4|webm|mkv|m4a|mp3)[^"'<>\s]*)""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val absMatcher = absMediaPattern.matcher(html)
+        while (absMatcher.find()) {
+            candidates.add(absMatcher.group(1))
+        }
+
+        // Resolve, clean, and deduplicate candidates
+        val resolvedCandidates = candidates
+            .map { it.trim().replace("&amp;", "&") }
+            .filter { raw ->
+                raw.isNotBlank() &&
+                !raw.endsWith(".html", ignoreCase = true) &&
+                !raw.endsWith(".php", ignoreCase = true) &&
+                !raw.contains("/embed?", ignoreCase = true)
+            }
+            .map { raw ->
+                resolveRelativeUrl(finalUrl, raw)
+            }
+            .distinct()
+
+        Log.i(TAG, "Found ${resolvedCandidates.size} candidate streams on $pageUrl")
+
+        // Probe candidates to find playable stream
+        for (candidate in resolvedCandidates) {
+            onProgress(DownloadProgressState.Resolving("Validating video stream…"))
+            if (verifyCandidateStream(candidate, finalUrl)) {
+                Log.i(TAG, "Successfully validated web stream: $candidate")
+                return StreamResolution(candidate, title, referer = finalUrl)
+            }
+        }
+
+        // If none probed with 200/206/video-type, fallback to direct .mp4 candidate if available
+        val bestDirectCandidate = resolvedCandidates.firstOrNull {
+            val clean = it.substringBefore('?').lowercase()
+            clean.endsWith(".mp4") || clean.endsWith(".webm") || clean.endsWith(".m4a")
+        }
+        if (bestDirectCandidate != null) {
+            Log.i(TAG, "Falling back to best direct candidate: $bestDirectCandidate")
+            return StreamResolution(bestDirectCandidate, title, referer = finalUrl)
+        }
+
+        return null
+    }
+
+    private fun resolveRelativeUrl(baseUrl: String, relativeOrAbsolute: String): String {
+        return try {
+            val baseUri = java.net.URI(baseUrl)
+            baseUri.resolve(relativeOrAbsolute.trim()).toString()
+        } catch (e: Exception) {
+            if (relativeOrAbsolute.startsWith("/")) {
+                try {
+                    val baseUri = java.net.URI(baseUrl)
+                    "${baseUri.scheme}://${baseUri.host}$relativeOrAbsolute"
+                } catch (ex: Exception) {
+                    relativeOrAbsolute
+                }
+            } else {
+                relativeOrAbsolute
+            }
+        }
+    }
+
+    private fun extractTitleFromHtml(html: String): String? {
+        val ogTitlePattern = Pattern.compile(
+            """<meta[^>]+(?:property|name)=["']og:title["'][^>]+content=["']([^"']+)["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val ogM = ogTitlePattern.matcher(html)
+        if (ogM.find()) {
+            val t = cleanHtmlEntities(ogM.group(1).trim())
+            if (t.isNotBlank()) return t
+        }
+
+        val titlePattern = Pattern.compile("""<title>([^<]+)</title>""", Pattern.CASE_INSENSITIVE)
+        val tM = titlePattern.matcher(html)
+        if (tM.find()) {
+            val raw = cleanHtmlEntities(tM.group(1).trim())
+            val cleaned = raw
+                .replace(Regex("""\s*[-|–—]\s*(?:VidLii|YouTube|Vimeo|Dailymotion|TikTok).*$""", RegexOption.IGNORE_CASE), "")
+                .trim()
+            if (cleaned.isNotBlank()) return cleaned
+        }
+        return null
+    }
+
+    private fun cleanHtmlEntities(text: String): String {
+        return text
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+    }
+
+    private fun verifyCandidateStream(streamUrl: String, referer: String): Boolean {
+        val clean = streamUrl.substringBefore('?').lowercase()
+        val isMediaExt = clean.endsWith(".mp4") || clean.endsWith(".webm") ||
+                         clean.endsWith(".mkv") || clean.endsWith(".mov") ||
+                         clean.endsWith(".m4a") || clean.endsWith(".wav") ||
+                         clean.endsWith(".mp3")
+
+        try {
+            val rangeRequest = Request.Builder()
+                .url(streamUrl)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .addHeader("Referer", referer)
+                .addHeader("Range", "bytes=0-1024")
+                .get()
+                .build()
+
+            httpClient.newCall(rangeRequest).execute().use { response ->
+                val ct = response.header("Content-Type")?.lowercase() ?: ""
+                if (response.isSuccessful || response.code == 206) {
+                    if (ct.startsWith("video/") || ct.startsWith("audio/") || ct.contains("octet-stream")) {
+                        return true
+                    }
+                    val body = response.body ?: return isMediaExt
+                    val buffer = ByteArray(32)
+                    val readBytes = body.byteStream().read(buffer)
+                    if (readBytes >= 8) {
+                        val headerStr = String(buffer, 0, readBytes, Charsets.US_ASCII)
+                        if (headerStr.contains("ftyp") || headerStr.contains("moov") || headerStr.contains("ID3")) {
+                            return true
+                        }
+                    }
+                    if (!ct.contains("html") && !ct.contains("json") && (response.code == 206 || isMediaExt)) {
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Range probe failed for $streamUrl: ${e.message}")
+        }
+
+        try {
+            val headRequest = Request.Builder()
+                .url(streamUrl)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .addHeader("Referer", referer)
+                .head()
+                .build()
+
+            httpClient.newCall(headRequest).execute().use { response ->
+                val ct = response.header("Content-Type")?.lowercase() ?: ""
+                if (response.isSuccessful && (ct.startsWith("video/") || ct.startsWith("audio/") || ct.contains("octet-stream") || isMediaExt)) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Head probe failed for $streamUrl: ${e.message}")
+        }
+
+        return isMediaExt
+    }
+
     private fun isDirectVideoUrl(url: String): Boolean {
         val clean = url.substringBefore('?').lowercase()
         return clean.endsWith(".mp4") || clean.endsWith(".webm") ||
@@ -488,13 +775,19 @@ class SocialMediaVideoProcessor(private val context: Context) {
     private fun downloadFile(
         url: String,
         targetFile: File,
+        referer: String? = null,
         onProgress: (percent: Float, speedKbps: Long) -> Unit
     ) {
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url)
-            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-            .get()
-            .build()
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .addHeader("Accept", "*/*")
+
+        if (!referer.isNullOrBlank()) {
+            requestBuilder.addHeader("Referer", referer)
+        }
+
+        val request = requestBuilder.get().build()
 
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
