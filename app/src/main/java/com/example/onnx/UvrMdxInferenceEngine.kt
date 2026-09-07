@@ -29,7 +29,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
         const val COMPENSATION = 1.035f // Official UVR compensation for UVR-MDX-NET 1
     }
 
-    private val ortEnvironment: OrtEnvironment by lazy { OrtEnvironment.getEnvironment() }
+    private val ortEnvironment: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val processor = MdxSpectrogramProcessor(
         nFft = N_FFT,
         dimF = DIM_F,

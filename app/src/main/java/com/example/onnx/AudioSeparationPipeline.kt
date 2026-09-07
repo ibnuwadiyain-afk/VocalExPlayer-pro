@@ -21,7 +21,7 @@ class AudioSeparationPipeline(
         private const val WAKELOCK_TAG = "AudioSeparationPipeline:CPU"
     }
 
-    private val inferenceEngine by lazy { UvrMdxInferenceEngine(context) }
+    private val inferenceEngine = UvrMdxInferenceEngine(context)
 
     val activeHardwareBackend: String
         get() = inferenceEngine.activeHardwareBackend

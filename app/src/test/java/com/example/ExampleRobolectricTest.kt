@@ -113,30 +113,4 @@ class ExampleRobolectricTest {
     val firstPreset = com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.first()
     org.junit.Assert.assertTrue(firstPreset.url.startsWith("http"))
   }
-
-  @Test
-  fun `verify VocalProcessingService creates notification channel and promotes to foreground immediately`() {
-    val serviceController = org.robolectric.Robolectric.buildService(com.example.service.VocalProcessingService::class.java)
-    val service = serviceController.create().get()
-
-    val notificationManager = service.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-    val channel = notificationManager.getNotificationChannel(com.example.service.VocalProcessingService.CHANNEL_ID)
-    org.junit.Assert.assertNotNull("Notification channel should be created in onCreate", channel)
-    assertEquals("AI Vocal Separation", channel.name)
-
-    // Test onStartCommand with null intent exits cleanly
-    val startResult = service.onStartCommand(null, 0, 1)
-    assertEquals(android.app.Service.START_NOT_STICKY, startResult)
-  }
-
-  @Test
-  fun `verify VocalProcessingService handles missing configuration without crashing`() {
-    val serviceController = org.robolectric.Robolectric.buildService(com.example.service.VocalProcessingService::class.java)
-    val service = serviceController.create().get()
-    val intent = android.content.Intent(com.example.service.VocalProcessingService.ACTION_START_PROCESSING)
-    // videoId missing intentionally
-    val startResult = service.onStartCommand(intent, 0, 1)
-    assertEquals(android.app.Service.START_NOT_STICKY, startResult)
-  }
 }
-

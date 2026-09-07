@@ -1,14 +1,17 @@
 package com.example.service
 
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import com.example.data.db.AppDatabase
 import com.example.data.model.VideoItemEntity
+import com.example.data.model.VideoStatus
 import com.example.onnx.AccelerationMode
-import kotlinx.coroutines.CancellationException
+import com.example.onnx.AudioSeparationPipeline
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,9 +35,9 @@ object VocalProcessingManager {
     private const val WAKELOCK_TAG = "VocalExtractor:ProcessingWakeLock"
 
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var activeProcessingJob: Job? = null
     private var timerJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var currentOnComplete: ((Result<File>) -> Unit)? = null
 
     // Reactive StateFlows for UI observation
     private val _isProcessing = MutableStateFlow(false)
@@ -86,7 +89,6 @@ object VocalProcessingManager {
 
     /**
      * Starts AI vocal separation with active elapsed timer and background stability service.
-     * Service is immediately promoted to foreground before running heavy operations.
      */
     fun startSeparation(
         context: Context,
@@ -107,7 +109,6 @@ object VocalProcessingManager {
         // Cancel previous if any
         cancelActiveProcessing(appContext)
 
-        currentOnComplete = onComplete
         _isProcessing.value = true
         _activeVideoId.value = video.id
         _activeVideoTitle.value = video.title
@@ -122,66 +123,55 @@ object VocalProcessingManager {
         // 1. Acquire Partial WakeLock to prevent CPU sleep during inference
         acquireWakeLock(appContext)
 
-        // 2. Start high-frequency ticker for elapsed time & ETA calculation
+        // 2. Start Foreground Service to elevate process priority and show ongoing notification
+        startForegroundService(appContext, video.id, video.title)
+
+        // 3. Start high-frequency ticker for elapsed time & ETA calculation
         startTimerTicker()
 
-        // 3. Start Foreground Service to elevate process priority and enter foreground immediately
-        startForegroundService(
-            context = appContext,
-            videoId = video.id,
-            videoTitle = video.title,
-            customModelPath = customModelPath,
-            accelerationMode = accelerationMode.id,
-            forceRecompute = forceRecompute
-        )
-    }
+        // 4. Run audio separation pipeline in background coroutine
+        activeProcessingJob = applicationScope.launch(Dispatchers.IO) {
+            val db = AppDatabase.getInstance(appContext)
+            val pipeline = AudioSeparationPipeline(appContext, db.videoDao())
 
-    /**
-     * Called by VocalProcessingService as progress advances.
-     */
-    fun updateProgress(currentProgress: Float, accelerationMode: AccelerationMode) {
-        _progress.value = currentProgress
-        val pct = (currentProgress * 100).toInt().coerceIn(0, 100)
-        _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})… $pct%"
-        notifyServiceProgress()
-    }
+            val result = pipeline.processVideo(
+                video = video,
+                customModelPath = customModelPath,
+                accelerationMode = accelerationMode,
+                forceRecompute = forceRecompute,
+                onProgress = { currentProgress ->
+                    _progress.value = currentProgress
+                    val pct = (currentProgress * 100).toInt()
+                    _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})… $pct%"
+                    notifyServiceProgress()
+                }
+            )
 
-    /**
-     * Called by VocalProcessingService when separation succeeds.
-     */
-    fun onProcessingSuccess(video: VideoItemEntity, wavFile: File) {
-        _progress.value = 1.0f
-        _isProcessing.value = false
-        _isBackgroundProtected.value = false
-        stopTimerTicker()
-        releaseWakeLock()
+            // Finalize processing state
+            _progress.value = if (result.isSuccess) 1.0f else 0f
+            _isProcessing.value = false
+            _isBackgroundProtected.value = false
 
-        val cb = currentOnComplete
-        currentOnComplete = null
-        cb?.invoke(Result.success(wavFile))
-    }
+            // Stop timer & release wakelock
+            timerJob?.cancel()
+            releaseWakeLock()
 
-    /**
-     * Called by VocalProcessingService when separation fails.
-     */
-    fun onProcessingError(videoId: String?, errorMessage: String) {
-        _progress.value = 0f
-        _isProcessing.value = false
-        _isBackgroundProtected.value = false
-        _message.value = "Processing failed: $errorMessage"
-        stopTimerTicker()
-        releaseWakeLock()
+            // Notify Foreground Service to show completion or stop
+            stopForegroundService(appContext, video.title, result.isSuccess)
 
-        val cb = currentOnComplete
-        currentOnComplete = null
-        cb?.invoke(Result.failure(Exception(errorMessage)))
+            onComplete?.invoke(result)
+        }
     }
 
     /**
      * Cancels active processing, terminates jobs, releases wakelock and stops service.
      */
     fun cancelActiveProcessing(context: Context) {
-        stopTimerTicker()
+        activeProcessingJob?.cancel()
+        activeProcessingJob = null
+        timerJob?.cancel()
+        timerJob = null
+
         releaseWakeLock()
         _isProcessing.value = false
         _isBackgroundProtected.value = false
@@ -189,11 +179,7 @@ object VocalProcessingManager {
         _activeVideoTitle.value = null
         _estimatedRemainingFormatted.value = null
 
-        val cb = currentOnComplete
-        currentOnComplete = null
-
         stopForegroundService(context, null, false)
-        cb?.invoke(Result.failure(CancellationException("Separation cancelled by user")))
     }
 
     private fun startTimerTicker() {
@@ -221,11 +207,6 @@ object VocalProcessingManager {
                 delay(500)
             }
         }
-    }
-
-    private fun stopTimerTicker() {
-        timerJob?.cancel()
-        timerJob = null
     }
 
     private fun notifyServiceProgress() {
@@ -270,22 +251,12 @@ object VocalProcessingManager {
         }
     }
 
-    private fun startForegroundService(
-        context: Context,
-        videoId: String,
-        videoTitle: String,
-        customModelPath: String?,
-        accelerationMode: String?,
-        forceRecompute: Boolean
-    ) {
+    private fun startForegroundService(context: Context, videoId: String, videoTitle: String) {
         try {
             val intent = Intent(context, VocalProcessingService::class.java).apply {
                 action = VocalProcessingService.ACTION_START_PROCESSING
                 putExtra(VocalProcessingService.EXTRA_VIDEO_ID, videoId)
                 putExtra(VocalProcessingService.EXTRA_VIDEO_TITLE, videoTitle)
-                putExtra(VocalProcessingService.EXTRA_CUSTOM_MODEL_PATH, customModelPath)
-                putExtra(VocalProcessingService.EXTRA_ACCELERATION_MODE, accelerationMode)
-                putExtra(VocalProcessingService.EXTRA_FORCE_RECOMPUTE, forceRecompute)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -293,8 +264,7 @@ object VocalProcessingManager {
                 context.startService(intent)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Could not start VocalProcessingService: ${e.message}", e)
-            onProcessingError(videoId, "Failed to start processing service: ${e.message}")
+            Log.w(TAG, "Could not start VocalProcessingService: ${e.message}")
         }
     }
 
