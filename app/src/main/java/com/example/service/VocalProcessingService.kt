@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.example.MainActivity
 
 /**
@@ -26,6 +27,9 @@ class VocalProcessingService : Service() {
         private const val NOTIFICATION_ID = 2001
         private const val COMPLETION_NOTIFICATION_ID = 2002
 
+        @Volatile
+        var isServiceRunning = false
+
         const val ACTION_START_PROCESSING = "com.example.service.ACTION_START_PROCESSING"
         const val ACTION_STOP_PROCESSING = "com.example.service.ACTION_STOP_PROCESSING"
 
@@ -39,7 +43,11 @@ class VocalProcessingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isServiceRunning = true
         createNotificationChannel()
+
+        // ALWAYS satisfy the startForegroundService contract immediately in onCreate()
+        promoteToForeground(currentVideoTitle, 0.05f, "00:00", "Starting…")
 
         // Hook into VocalProcessingManager's updates
         VocalProcessingManager.onNotificationUpdateRequested = { progress, elapsedText, remainingText ->
@@ -53,30 +61,14 @@ class VocalProcessingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Guarantee foreground state is satisfied on every start command
+        promoteToForeground(currentVideoTitle, 0.05f, "00:00", "Estimating…")
+
         when (intent?.action) {
             ACTION_START_PROCESSING -> {
                 currentVideoTitle = intent.getStringExtra(EXTRA_VIDEO_TITLE) ?: "Video Track"
-                val initialNotification = buildNotification(
-                    progress = 0.05f,
-                    elapsedText = "00:00",
-                    remainingText = "Estimating…"
-                )
-
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                        } else {
-                            0
-                        }
-                        startForeground(NOTIFICATION_ID, initialNotification, serviceType)
-                    } else {
-                        startForeground(NOTIFICATION_ID, initialNotification)
-                    }
-                    Log.i(TAG, "Foreground service started for $currentVideoTitle")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error starting foreground service: ${e.message}")
-                }
+                promoteToForeground(currentVideoTitle, 0.05f, "00:00", "Estimating…")
+                Log.i(TAG, "Foreground service started for $currentVideoTitle")
             }
 
             ACTION_STOP_PROCESSING -> {
@@ -88,7 +80,13 @@ class VocalProcessingService : Service() {
                     showCompletionNotification(title)
                 }
 
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+
+            else -> {
+                // If started with null or unexpected action, stop cleanly
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
@@ -96,11 +94,44 @@ class VocalProcessingService : Service() {
     }
 
     override fun onDestroy() {
+        isServiceRunning = false
         VocalProcessingManager.onNotificationUpdateRequested = null
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun promoteToForeground(
+        title: String,
+        progress: Float,
+        elapsedText: String,
+        remainingText: String?
+    ) {
+        val initialNotification = buildNotification(
+            title = title,
+            progress = progress,
+            elapsedText = elapsedText,
+            remainingText = remainingText
+        )
+
+        try {
+            val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            } else {
+                0
+            }
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                initialNotification,
+                serviceType
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Error starting foreground service: ${e.message}")
+        }
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -120,6 +151,7 @@ class VocalProcessingService : Service() {
     }
 
     private fun buildNotification(
+        title: String = currentVideoTitle,
         progress: Float,
         elapsedText: String,
         remainingText: String?
@@ -135,10 +167,10 @@ class VocalProcessingService : Service() {
 
         val progressPct = (progress * 100).toInt().coerceIn(0, 100)
         val etaPart = if (!remainingText.isNullOrBlank()) " • $remainingText" else ""
-        val contentText = "$currentVideoTitle\n$progressPct% • ⏱ Elapsed: $elapsedText$etaPart"
+        val contentText = "$title\n$progressPct% • ⏱ Elapsed: $elapsedText$etaPart"
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("Extracting Vocals with UVR AI")
             .setContentText("$progressPct% • ⏱ Elapsed: $elapsedText$etaPart")
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
@@ -158,7 +190,12 @@ class VocalProcessingService : Service() {
         remainingText: String?
     ) {
         try {
-            val notification = buildNotification(progress, elapsedText, remainingText)
+            val notification = buildNotification(
+                title = currentVideoTitle,
+                progress = progress,
+                elapsedText = elapsedText,
+                remainingText = remainingText
+            )
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             manager?.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
@@ -178,7 +215,7 @@ class VocalProcessingService : Service() {
             )
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("Vocal Separation Complete!")
                 .setContentText("Vocals & accompaniment are ready for $title")
                 .setContentIntent(pendingIntent)

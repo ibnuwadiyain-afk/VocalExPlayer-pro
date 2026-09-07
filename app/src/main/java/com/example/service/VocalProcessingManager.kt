@@ -106,8 +106,10 @@ object VocalProcessingManager {
             return
         }
 
-        // Cancel previous if any
-        cancelActiveProcessing(appContext)
+        // Cancel previous if actively running
+        if (_isProcessing.value) {
+            cancelActiveProcessing(appContext)
+        }
 
         _isProcessing.value = true
         _activeVideoId.value = video.id
@@ -270,14 +272,19 @@ object VocalProcessingManager {
 
     private fun stopForegroundService(context: Context, videoTitle: String?, isSuccess: Boolean) {
         try {
-            val intent = Intent(context, VocalProcessingService::class.java).apply {
-                action = VocalProcessingService.ACTION_STOP_PROCESSING
-                putExtra(VocalProcessingService.EXTRA_VIDEO_TITLE, videoTitle)
-                putExtra(VocalProcessingService.EXTRA_IS_SUCCESS, isSuccess)
+            if (VocalProcessingService.isServiceRunning) {
+                val intent = Intent(context, VocalProcessingService::class.java).apply {
+                    action = VocalProcessingService.ACTION_STOP_PROCESSING
+                    putExtra(VocalProcessingService.EXTRA_VIDEO_TITLE, videoTitle)
+                    putExtra(VocalProcessingService.EXTRA_IS_SUCCESS, isSuccess)
+                }
+                context.startService(intent)
             }
-            context.startService(intent)
         } catch (e: Exception) {
             Log.w(TAG, "Could not stop VocalProcessingService: ${e.message}")
+            try {
+                context.stopService(Intent(context, VocalProcessingService::class.java))
+            } catch (_: Exception) {}
         }
     }
 }

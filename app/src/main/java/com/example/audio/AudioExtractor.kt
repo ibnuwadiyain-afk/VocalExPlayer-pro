@@ -6,6 +6,9 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -22,6 +25,8 @@ object AudioExtractor {
 
     /**
      * Extracts and decodes the audio track of the given video into stereo Float32 arrays.
+     * Uses zero-allocation stream-to-disk buffering to prevent Dalvik heap OutOfMemoryError
+     * on large audio/video files.
      */
     fun extractAudioFromVideo(
         context: Context,
@@ -78,7 +83,10 @@ object AudioExtractor {
         var actualSampleRate = sampleRate
         var actualChannelCount = channelCount
 
-        val rawPcmSamples = ArrayList<Short>(sampleRate * channelCount * 10)
+        val tempPcmFile = File.createTempFile("extracted_pcm_", ".raw", context.cacheDir)
+        val fos = FileOutputStream(tempPcmFile)
+        val fileChannel = fos.channel
+
         val bufferInfo = MediaCodec.BufferInfo()
         var sawInputEOS = false
         var sawOutputEOS = false
@@ -127,10 +135,7 @@ object AudioExtractor {
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                        val shortBuffer = outputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                        while (shortBuffer.hasRemaining()) {
-                            rawPcmSamples.add(shortBuffer.get())
-                        }
+                        fileChannel.write(outputBuffer)
                     }
                     codec.releaseOutputBuffer(outputBufferIndex, false)
                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
@@ -139,6 +144,12 @@ object AudioExtractor {
                 }
             }
         } finally {
+            try {
+                fileChannel.close()
+                fos.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing temp PCM file output stream", e)
+            }
             try {
                 codec.stop()
                 codec.release()
@@ -152,39 +163,58 @@ object AudioExtractor {
             }
         }
 
-        // Convert interleaved Short samples to stereo Float32 arrays [-1.0f, 1.0f]
-        val totalShorts = rawPcmSamples.size
+        // Convert streamed PCM 16-bit to stereo Float32 arrays [-1.0f, 1.0f]
+        val totalBytes = tempPcmFile.length()
+        val totalShorts = (totalBytes / 2L).toInt()
         val channels = actualChannelCount.coerceAtLeast(1)
         val numFrames = totalShorts / channels
         val left = FloatArray(numFrames)
         val right = FloatArray(numFrames)
 
-        if (channels == 1) {
-            // Mono: duplicate to both channels
-            for (i in 0 until numFrames) {
-                val mono = rawPcmSamples[i] / 32768.0f
-                left[i] = mono
-                right[i] = mono
+        try {
+            FileInputStream(tempPcmFile).use { fis ->
+                val inChannel = fis.channel
+                val readBuffer = ByteBuffer.allocateDirect(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
+                var frameIdx = 0
+
+                while (inChannel.read(readBuffer) > 0 && frameIdx < numFrames) {
+                    readBuffer.flip()
+                    val shortBuf = readBuffer.asShortBuffer()
+
+                    if (channels == 1) {
+                        while (shortBuf.hasRemaining() && frameIdx < numFrames) {
+                            val mono = shortBuf.get() / 32768.0f
+                            left[frameIdx] = mono
+                            right[frameIdx] = mono
+                            frameIdx++
+                        }
+                    } else if (channels == 2) {
+                        while (shortBuf.remaining() >= 2 && frameIdx < numFrames) {
+                            left[frameIdx] = shortBuf.get() / 32768.0f
+                            right[frameIdx] = shortBuf.get() / 32768.0f
+                            frameIdx++
+                        }
+                    } else {
+                        // Multi-channel downmix: L, R, C
+                        while (shortBuf.remaining() >= channels && frameIdx < numFrames) {
+                            val l = shortBuf.get() / 32768.0f
+                            val r = shortBuf.get() / 32768.0f
+                            val c = (shortBuf.get() / 32768.0f) * 0.707f
+                            for (ch in 3 until channels) {
+                                shortBuf.get()
+                            }
+                            left[frameIdx] = (l + c).coerceIn(-1.0f, 1.0f)
+                            right[frameIdx] = (r + c).coerceIn(-1.0f, 1.0f)
+                            frameIdx++
+                        }
+                    }
+                    readBuffer.clear()
+                }
             }
-        } else if (channels == 2) {
-            // Stereo
-            for (i in 0 until numFrames) {
-                val lShort = rawPcmSamples[i * 2]
-                val rShort = rawPcmSamples[i * 2 + 1]
-                left[i] = lShort / 32768.0f
-                right[i] = rShort / 32768.0f
-            }
-        } else {
-            // Multi-channel (> 2 channels, e.g. 5.1 surround sound)
-            // Downmix standard 5.1 layout: L, R, C, LFE, Ls, Rs
-            for (i in 0 until numFrames) {
-                val base = i * channels
-                val l = rawPcmSamples[base] / 32768.0f
-                val r = rawPcmSamples[base + 1] / 32768.0f
-                val c = if (channels > 2) (rawPcmSamples[base + 2] / 32768.0f) * 0.707f else 0f
-                left[i] = (l + c).coerceIn(-1.0f, 1.0f)
-                right[i] = (r + c).coerceIn(-1.0f, 1.0f)
-            }
+        } finally {
+            try {
+                tempPcmFile.delete()
+            } catch (_: Exception) {}
         }
 
         val calculatedDurationMs = if (actualSampleRate > 0) {

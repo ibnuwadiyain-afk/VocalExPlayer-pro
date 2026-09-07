@@ -184,15 +184,8 @@ class UvrMdxInferenceEngine(private val context: Context) {
         val genSize = processor.genSize // 254976
         val chunkSize = processor.chunkSize // 261120
 
-        // Pad signal with trim zeros on left and right, aligned to genSize
+        // Pad signal alignment to genSize
         val pad = genSize - (totalSamples % genSize)
-        val paddedLen = trim + totalSamples + pad + trim
-
-        val leftPadded = FloatArray(paddedLen)
-        val rightPadded = FloatArray(paddedLen)
-
-        System.arraycopy(leftIn, 0, leftPadded, trim, totalSamples)
-        System.arraycopy(rightIn, 0, rightPadded, trim, totalSamples)
 
         val totalChunks = (totalSamples + pad) / genSize
         Log.i(TAG, "Running UVR MDX-Net [${accelerationMode.displayName}]: $totalSamples samples, $totalChunks chunks (genSize=$genSize)")
@@ -232,12 +225,22 @@ class UvrMdxInferenceEngine(private val context: Context) {
             val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks) * 0.70f
             onProgress(progressStart)
 
-            // 1. Copy chunk waveform
+            // 1. Copy chunk waveform directly from source audio without allocating padded buffers
             java.util.Arrays.fill(chunkL, 0f)
             java.util.Arrays.fill(chunkR, 0f)
-            val copyLen = minOf(chunkSize, paddedLen - samplePos)
-            System.arraycopy(leftPadded, samplePos, chunkL, 0, copyLen)
-            System.arraycopy(rightPadded, samplePos, chunkR, 0, copyLen)
+
+            val audioStart = samplePos - trim
+            val srcStart = maxOf(0, audioStart)
+            val srcEnd = minOf(totalSamples, audioStart + chunkSize)
+            val activeLen = if (srcEnd > srcStart) {
+                val destStart = srcStart - audioStart
+                val count = srcEnd - srcStart
+                System.arraycopy(leftIn, srcStart, chunkL, destStart, count)
+                System.arraycopy(rightIn, srcStart, chunkR, destStart, count)
+                destStart + count
+            } else {
+                0
+            }
 
             // Turbo Optimization: Check if chunk is silence/background pause
             if (accelerationMode.silenceSkipThreshold > 0f) {
@@ -245,7 +248,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
                 val step = 8
                 var sampleCount = 0
                 var i = 0
-                while (i < copyLen) {
+                while (i < activeLen) {
                     val sL = chunkL[i]
                     val sR = chunkR[i]
                     sumSq += (sL * sL + sR * sR)
@@ -334,6 +337,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
         onProgress(0.97f)
         Log.i(TAG, "Writing separated vocal WAV: ${outputWavFile.absolutePath} ($totalSamples samples at $sampleRate Hz)")
         WavWriter.writeWavFile(outFinalLeft, outFinalRight, sampleRate, outputWavFile)
+        System.gc()
         onProgress(1.0f)
     }
 
