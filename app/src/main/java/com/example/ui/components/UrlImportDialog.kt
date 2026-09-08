@@ -252,7 +252,7 @@ fun UrlImportDialog(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        listOf("YouTube", "Shorts", "TikTok", "Instagram", "X (Twitter)", "VidLii", "Web Video", "Direct MP4").forEach { tag ->
+                        listOf("YouTube", "Shorts", "Facebook", "Dailymotion", "TikTok", "Instagram", "X (Twitter)", "VidLii", "Web Video").forEach { tag ->
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
                                 color = DarkSurface

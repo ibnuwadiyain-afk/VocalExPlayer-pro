@@ -5,6 +5,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -14,6 +15,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
@@ -45,6 +47,11 @@ class SocialMediaVideoProcessor(private val context: Context) {
         private val TIKTOK_REGEX = Pattern.compile("""(?:tiktok\.com)""", Pattern.CASE_INSENSITIVE)
         private val INSTAGRAM_REGEX = Pattern.compile("""(?:instagram\.com\/(?:p|reel|tv))""", Pattern.CASE_INSENSITIVE)
         private val TWITTER_REGEX = Pattern.compile("""(?:twitter\.com|x\.com)""", Pattern.CASE_INSENSITIVE)
+        private val FACEBOOK_REGEX = Pattern.compile("""(?:facebook\.com|fb\.watch)""", Pattern.CASE_INSENSITIVE)
+        private val DAILYMOTION_REGEX = Pattern.compile(
+            """(?:dailymotion\.com\/(?:video|embed\/video)\/|dai\.ly\/)([a-zA-Z0-9]+)""",
+            Pattern.CASE_INSENSITIVE
+        )
         private val URL_FINDER_REGEX = Pattern.compile("""https?:\/\/[^\s]+""", Pattern.CASE_INSENSITIVE)
 
         // Known public Cobalt / Video extraction instances
@@ -73,6 +80,11 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 title = "VidLii Showcase Video",
                 url = "https://www.vidlii.com/watch?v=4fEcsaOOBGe",
                 platform = "VidLii Web Link"
+            ),
+            SamplePreset(
+                title = "Dailymotion Video Clip",
+                url = "https://www.dailymotion.com/video/x8o0ocx",
+                platform = "Dailymotion Link"
             ),
             SamplePreset(
                 title = "Vocal Song Melody (Direct MP3)",
@@ -110,6 +122,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             TIKTOK_REGEX.matcher(url).find() -> "TikTok"
             INSTAGRAM_REGEX.matcher(url).find() -> "Instagram Reel"
             TWITTER_REGEX.matcher(url).find() -> "X (Twitter)"
+            FACEBOOK_REGEX.matcher(url).find() -> "Facebook"
             lower.contains("vidlii.com") -> "VidLii"
             lower.contains("dailymotion.com") -> "Dailymotion"
             lower.contains("vimeo.com") -> "Vimeo"
@@ -181,8 +194,14 @@ class SocialMediaVideoProcessor(private val context: Context) {
             val targetFile = File(downloadsDir, "media_${cleanPlatformTag}_$videoId$fileExt")
 
             onProgress(DownloadProgressState.Downloading(0.01f))
-            downloadFile(streamUrl, targetFile, referer) { percent, speed ->
-                onProgress(DownloadProgressState.Downloading(percent, speed))
+            if (streamUrl.contains(".m3u8")) {
+                downloadDailymotionHls(streamUrl, targetFile, referer) { percent ->
+                    onProgress(DownloadProgressState.Downloading(percent))
+                }
+            } else {
+                downloadFile(streamUrl, targetFile, referer) { percent, speed ->
+                    onProgress(DownloadProgressState.Downloading(percent, speed))
+                }
             }
 
             if (!targetFile.exists() || targetFile.length() < 1000) {
@@ -271,9 +290,50 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     Log.w(TAG, "Invidious endpoint failed: $endpoint", e)
                 }
             }
+
+            // Fallback for YouTube: loader.to polling extractor
+            try {
+                onProgress(DownloadProgressState.Resolving("Requesting stream converter for YouTube…"))
+                val loaderRes = queryLoaderTo(ytId, onProgress)
+                if (loaderRes != null) {
+                    return loaderRes
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Loader.to resolution failed for $ytId", e)
+            }
         }
 
-        // 3. TikTok extraction via TikWM API
+        // 3. Dailymotion metadata extraction (official HLS stream)
+        val dmMatcher = DAILYMOTION_REGEX.matcher(url)
+        if (dmMatcher.find()) {
+            val dmId = dmMatcher.group(1)
+            if (!dmId.isNullOrBlank()) {
+                onProgress(DownloadProgressState.Resolving("Resolving Dailymotion video stream ($dmId)…"))
+                try {
+                    val dmRes = queryDailymotionHls(dmId)
+                    if (dmRes != null) {
+                        return dmRes
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Dailymotion HLS resolution failed for $dmId", e)
+                }
+            }
+        }
+
+        // 4. Facebook video resolution (embed player page scraper)
+        if (FACEBOOK_REGEX.matcher(url).find()) {
+            onProgress(DownloadProgressState.Resolving("Extracting Facebook video stream…"))
+            try {
+                val fbRes = queryFacebookEmbed(url)
+                if (fbRes != null) {
+                    return fbRes
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Facebook embed resolution failed for $url", e)
+            }
+        }
+
+        // 5. TikTok extraction via TikWM API
         if (TIKTOK_REGEX.matcher(url).find()) {
             onProgress(DownloadProgressState.Resolving("Extracting TikTok video stream…"))
             try {
@@ -404,6 +464,157 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     val mime = fmt.optString("mimeType")
                     if (streamUrl.isNotBlank() && mime.startsWith("audio/")) {
                         return StreamResolution(streamUrl, "YouTube - $title")
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private suspend fun queryLoaderTo(
+        videoId: String,
+        onProgress: (DownloadProgressState) -> Unit
+    ): StreamResolution? = withContext(Dispatchers.IO) {
+        val ytUrl = "https://www.youtube.com/watch?v=$videoId"
+        val encodedYtUrl = URLEncoder.encode(ytUrl, "UTF-8")
+        val formats = listOf("1080", "720", "480", "360", "mp3")
+
+        for (fmt in formats) {
+            try {
+                val initUrl = "https://loader.to/ajax/download.php?format=$fmt&url=$encodedYtUrl"
+                val initReq = Request.Builder()
+                    .url(initUrl)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .addHeader("Referer", "https://en.loader.to/")
+                    .get()
+                    .build()
+
+                val initRespStr = httpClient.newCall(initReq).execute().use { resp ->
+                    if (!resp.isSuccessful) null else resp.body?.string()
+                } ?: continue
+
+                val initJson = JSONObject(initRespStr)
+                if (!initJson.optBoolean("success", false)) continue
+
+                val downloadId = initJson.optString("id")
+                val title = initJson.optString("title").ifBlank { "YouTube Video" }
+                if (downloadId.isBlank()) continue
+
+                // Poll progress URL up to 20 times (total ~25-30s max)
+                var downloadUrl: String? = null
+                for (pollCount in 1..20) {
+                    delay(1500)
+                    val progressUrl = "https://p.oceansaver.net/ajax/progress.php?id=$downloadId"
+                    val progReq = Request.Builder()
+                        .url(progressUrl)
+                        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                        .addHeader("Referer", "https://en.loader.to/")
+                        .get()
+                        .build()
+
+                    val progRespStr = httpClient.newCall(progReq).execute().use { resp ->
+                        if (!resp.isSuccessful) null else resp.body?.string()
+                    } ?: continue
+
+                    val progJson = JSONObject(progRespStr)
+                    val progressVal = progJson.optInt("progress", 0)
+                    val textMsg = progJson.optString("text", "")
+                    if (textMsg.isNotBlank()) {
+                        onProgress(DownloadProgressState.Resolving("Converting YouTube stream: $textMsg ($progressVal%)…"))
+                    }
+
+                    val candidate = progJson.optString("download_url")
+                    if (!candidate.isNullOrBlank() && candidate != "null") {
+                        downloadUrl = candidate
+                        break
+                    }
+
+                    if (progJson.optInt("success", 0) == 1 && candidate.isNotBlank()) {
+                        downloadUrl = candidate
+                        break
+                    }
+                }
+
+                if (!downloadUrl.isNullOrBlank()) {
+                    Log.i(TAG, "Loader.to successfully resolved YouTube download URL: $downloadUrl")
+                    return@withContext StreamResolution(downloadUrl, "YouTube - $title", referer = "https://en.loader.to/")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Loader.to format $fmt failed for $videoId", e)
+            }
+        }
+        null
+    }
+
+    private fun queryDailymotionHls(videoId: String): StreamResolution? {
+        val metaUrl = "https://www.dailymotion.com/player/metadata/video/$videoId"
+        val request = Request.Builder()
+            .url(metaUrl)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .addHeader("Referer", "https://www.dailymotion.com/video/$videoId")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val bodyStr = response.body?.string() ?: return null
+            val json = JSONObject(bodyStr)
+            val title = json.optString("title").ifBlank { "Dailymotion Video" }
+            val qualities = json.optJSONObject("qualities") ?: return null
+
+            val autoArr = qualities.optJSONArray("auto")
+            if (autoArr != null && autoArr.length() > 0) {
+                val streamUrl = autoArr.getJSONObject(0).optString("url")
+                if (streamUrl.isNotBlank()) {
+                    return StreamResolution(streamUrl, "Dailymotion - $title", referer = "https://www.dailymotion.com/video/$videoId")
+                }
+            }
+
+            // Check specific quality entries (1080, 720, 480, 380, etc.)
+            val keys = qualities.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val qArr = qualities.optJSONArray(k)
+                if (qArr != null && qArr.length() > 0) {
+                    val streamUrl = qArr.getJSONObject(0).optString("url")
+                    if (streamUrl.isNotBlank()) {
+                        return StreamResolution(streamUrl, "Dailymotion - $title", referer = "https://www.dailymotion.com/video/$videoId")
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun queryFacebookEmbed(videoUrl: String): StreamResolution? {
+        val encodedUrl = URLEncoder.encode(videoUrl, "UTF-8")
+        val embedUrl = "https://www.facebook.com/plugins/video.php?href=$encodedUrl"
+        val request = Request.Builder()
+            .url(embedUrl)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val html = response.body?.string() ?: return null
+            val title = extractTitleFromHtml(html) ?: "Facebook Video"
+
+            // Look for HD or SD playable URLs in embed markup / JSON scripts
+            val patterns = listOf(
+                Pattern.compile("""["'](?:playable_url_quality_hd|hd_src|hd_src_no_ratelimit)["']\s*:\s*["']([^"']+)["']""", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("""["'](?:playable_url|sd_src|sd_src_no_ratelimit)["']\s*:\s*["']([^"']+)["']""", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("""(https?:\\\/\\\/video[^"'<>\s]+\.mp4[^"'<>\s]*)""", Pattern.CASE_INSENSITIVE)
+            )
+
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(html)
+                if (matcher.find()) {
+                    val rawUrl = matcher.group(1).replace("\\/", "/")
+                    val cleaned = cleanHtmlEntities(rawUrl)
+                    if (cleaned.isNotBlank()) {
+                        return StreamResolution(cleaned, "Facebook - $title", referer = "https://www.facebook.com/")
                     }
                 }
             }
@@ -874,6 +1085,125 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 targetFile.delete()
                 throw IllegalStateException("Downloaded stream contained web error text instead of valid video data.")
             }
+        }
+    }
+
+    private fun downloadDailymotionHls(
+        m3u8Url: String,
+        targetFile: File,
+        referer: String,
+        onProgress: (Float) -> Unit
+    ) {
+        // Step 1: Fetch playlist/manifest
+        val req = Request.Builder()
+            .url(m3u8Url)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .addHeader("Referer", referer)
+            .get()
+            .build()
+
+        val manifestContent: String
+        val manifestFinalUrl: String
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IllegalStateException("Failed to load HLS playlist: HTTP ${resp.code}")
+            manifestFinalUrl = resp.request.url.toString()
+            manifestContent = resp.body?.string() ?: throw IllegalStateException("Empty HLS playlist")
+        }
+
+        // Check if master playlist or media playlist
+        var mediaPlaylistContent = manifestContent
+        var mediaPlaylistUrl = manifestFinalUrl
+
+        if (manifestContent.contains("#EXT-X-STREAM-INF")) {
+            // Master playlist: pick best variant URL
+            val lines = manifestContent.lines()
+            var bestVariantUrl: String? = null
+            for (i in lines.indices) {
+                if (lines[i].startsWith("#EXT-X-STREAM-INF") && i + 1 < lines.size) {
+                    val lineNext = lines[i + 1].trim()
+                    if (!lineNext.startsWith("#") && lineNext.isNotBlank()) {
+                        bestVariantUrl = resolveRelativeUrl(manifestFinalUrl, lineNext)
+                    }
+                }
+            }
+            if (bestVariantUrl != null) {
+                mediaPlaylistUrl = bestVariantUrl
+                val variantReq = Request.Builder()
+                    .url(bestVariantUrl)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .addHeader("Referer", referer)
+                    .get()
+                    .build()
+                httpClient.newCall(variantReq).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        mediaPlaylistContent = resp.body?.string() ?: manifestContent
+                    }
+                }
+            }
+        }
+
+        // Parse segment URLs and optional init segment (#EXT-X-MAP:URI="...")
+        var initSegmentUrl: String? = null
+        val mapMatcher = Pattern.compile("""#EXT-X-MAP:URI=["']([^"']+)["']""").matcher(mediaPlaylistContent)
+        if (mapMatcher.find()) {
+            initSegmentUrl = resolveRelativeUrl(mediaPlaylistUrl, mapMatcher.group(1))
+        }
+
+        val segmentUrls = mutableListOf<String>()
+        val mediaLines = mediaPlaylistContent.lines()
+        for (line in mediaLines) {
+            val trimmed = line.trim()
+            if (trimmed.isNotBlank() && !trimmed.startsWith("#")) {
+                segmentUrls.add(resolveRelativeUrl(mediaPlaylistUrl, trimmed))
+            }
+        }
+
+        if (segmentUrls.isEmpty()) {
+            throw IllegalStateException("No media segments found in HLS playlist.")
+        }
+
+        // Download init segment (if present) + media segments sequentially
+        val totalSegments = segmentUrls.size + (if (initSegmentUrl != null) 1 else 0)
+        var downloadedCount = 0
+
+        FileOutputStream(targetFile).use { out ->
+            if (initSegmentUrl != null) {
+                val initReq = Request.Builder()
+                    .url(initSegmentUrl)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .addHeader("Referer", referer)
+                    .get()
+                    .build()
+                httpClient.newCall(initReq).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        resp.body?.byteStream()?.copyTo(out)
+                    }
+                }
+                downloadedCount++
+                onProgress((downloadedCount.toFloat() / totalSegments).coerceIn(0f, 1f))
+            }
+
+            for (segUrl in segmentUrls) {
+                val segReq = Request.Builder()
+                    .url(segUrl)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .addHeader("Referer", referer)
+                    .get()
+                    .build()
+                httpClient.newCall(segReq).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        resp.body?.byteStream()?.copyTo(out)
+                    }
+                }
+                downloadedCount++
+                onProgress((downloadedCount.toFloat() / totalSegments).coerceIn(0f, 1f))
+            }
+            out.flush()
+        }
+
+        if (!targetFile.exists() || targetFile.length() < 1000L) {
+            targetFile.delete()
+            throw IllegalStateException("HLS download produced empty file.")
         }
     }
 }
