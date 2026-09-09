@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { viewModel.clearSelectedVideo() },
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
-                            onExportVideo = { viewModel.exportVideo(selectedVideo!!) },
+                            onExportVideo = { deleteOriginal -> viewModel.exportVideo(selectedVideo!!, deleteOriginal) },
                             onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     } else {
@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
                             onDismissDownloadDialog = { viewModel.dismissDownloadDialog() },
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },
                             onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
-                            onExportVideo = { video -> viewModel.exportVideo(video) },
+                            onExportVideo = { video, deleteOriginal -> viewModel.exportVideo(video, deleteOriginal) },
                             onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     }

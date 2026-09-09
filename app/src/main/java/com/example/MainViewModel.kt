@@ -175,7 +175,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _downloadErrorMessage.value = null
     }
 
-    fun exportVideo(video: VideoItemEntity) {
+    fun exportVideo(video: VideoItemEntity, deleteOriginalAfterExport: Boolean = false) {
         val vocalPath = video.vocalUri
         if (vocalPath.isNullOrBlank() || !java.io.File(vocalPath).exists()) {
             _exportError.value = "Vocal track is not ready yet. Please ensure vocal separation finishes first."
@@ -202,6 +202,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             result.onSuccess { res ->
                 _exportResult.value = res
                 _isExporting.value = false
+                if (deleteOriginalAfterExport) {
+                    deleteVideo(video)
+                }
             }.onFailure { err ->
                 _exportError.value = err.localizedMessage ?: "Video export failed"
                 _isExporting.value = false

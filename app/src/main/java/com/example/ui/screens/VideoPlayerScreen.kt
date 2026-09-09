@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.example.ui.components.ExportConfirmDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -105,7 +106,7 @@ fun VideoPlayerScreen(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
-    onExportVideo: () -> Unit,
+    onExportVideo: (deleteOriginal: Boolean) -> Unit,
     onCancelProcessing: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -116,6 +117,7 @@ fun VideoPlayerScreen(
     var isSliderDragging by remember { mutableStateOf(false) }
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var useIsolatedVocals by remember { mutableStateOf(true) }
+    var showExportConfirmDialog by remember { mutableStateOf(false) }
 
     // Single unified ExoPlayer instance for frame-accurate, sample-synced video and audio playback
     val player = remember {
@@ -239,7 +241,7 @@ fun VideoPlayerScreen(
                 actions = {
                     if (video.status == VideoStatus.READY) {
                         IconButton(
-                            onClick = onExportVideo,
+                            onClick = { showExportConfirmDialog = true },
                             modifier = Modifier.testTag("export_video_top_bar_button")
                         ) {
                             Icon(
@@ -504,7 +506,7 @@ fun VideoPlayerScreen(
 
                     if (video.status == VideoStatus.READY) {
                         Button(
-                            onClick = onExportVideo,
+                            onClick = { showExportConfirmDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
@@ -574,6 +576,18 @@ fun VideoPlayerScreen(
             isBackgroundProtected = isBackgroundProtected,
             onCancel = onCancelProcessing
         )
+
+        // Export Confirmation Dialog with Delete Original Option
+        if (showExportConfirmDialog) {
+            ExportConfirmDialog(
+                video = video,
+                onDismiss = { showExportConfirmDialog = false },
+                onConfirmExport = { deleteOriginal ->
+                    showExportConfirmDialog = false
+                    onExportVideo(deleteOriginal)
+                }
+            )
+        }
     }
 }
 

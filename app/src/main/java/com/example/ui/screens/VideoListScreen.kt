@@ -77,6 +77,7 @@ import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import com.example.media.DownloadProgressState
 import com.example.onnx.AccelerationMode
+import com.example.ui.components.ExportConfirmDialog
 import com.example.ui.components.ModelSettingsDialog
 import com.example.ui.components.UrlImportDialog
 import com.example.ui.components.VideoListItem
@@ -122,11 +123,12 @@ fun VideoListScreen(
     onDismissDownloadDialog: () -> Unit = {},
     onClearModelMessage: () -> Unit,
     onReprocessVideo: (VideoItemEntity) -> Unit,
-    onExportVideo: (VideoItemEntity) -> Unit,
+    onExportVideo: (VideoItemEntity, Boolean) -> Unit,
     onCancelProcessing: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var videoForAction by remember { mutableStateOf<VideoItemEntity?>(null) }
+    var videoToExport by remember { mutableStateOf<VideoItemEntity?>(null) }
     var showModelDialog by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
 
@@ -657,7 +659,7 @@ fun VideoListScreen(
                     if (video.status == VideoStatus.READY) {
                         Button(
                             onClick = {
-                                onExportVideo(video)
+                                videoToExport = video
                                 videoForAction = null
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
@@ -753,6 +755,21 @@ fun VideoListScreen(
                 onImportSampleVideo()
             },
             onClearError = onClearDownloadError
+        )
+    }
+
+    // Export Confirmation Dialog with Delete Original Option
+    videoToExport?.let { video ->
+        ExportConfirmDialog(
+            video = video,
+            onDismiss = { videoToExport = null },
+            onConfirmExport = { deleteOriginal ->
+                val target = videoToExport
+                videoToExport = null
+                if (target != null) {
+                    onExportVideo(target, deleteOriginal)
+                }
+            }
         )
     }
 }
