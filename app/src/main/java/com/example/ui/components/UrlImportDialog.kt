@@ -78,6 +78,7 @@ fun UrlImportDialog(
     elapsedTime: String = "00:00",
     onDismiss: () -> Unit,
     onSubmitUrl: (String) -> Unit,
+    onCancelDownload: () -> Unit = {},
     onLoadOfflineDemo: (() -> Unit)? = null,
     onClearError: () -> Unit
 ) {
@@ -85,11 +86,7 @@ fun UrlImportDialog(
     val clipboardManager = LocalClipboardManager.current
 
     AlertDialog(
-        onDismissRequest = {
-            if (!isDownloading) {
-                onDismiss()
-            }
-        },
+        onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
@@ -393,7 +390,28 @@ fun UrlImportDialog(
             }
         },
         confirmButton = {
-            if (!isDownloading) {
+            if (isDownloading) {
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("run_in_background_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudDownload,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "Run in Background",
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+            } else {
                 Button(
                     onClick = {
                         if (urlText.isNotBlank()) {
@@ -425,7 +443,14 @@ fun UrlImportDialog(
             }
         },
         dismissButton = {
-            if (!isDownloading) {
+            if (isDownloading) {
+                TextButton(
+                    onClick = onCancelDownload,
+                    modifier = Modifier.testTag("cancel_active_download_button")
+                ) {
+                    Text("Cancel Download", color = StatusError)
+                }
+            } else {
                 TextButton(
                     onClick = onDismiss,
                     modifier = Modifier.testTag("cancel_url_dialog_button")
@@ -550,6 +575,20 @@ private fun ActiveDownloadProgressView(
                     fontSize = 13.sp
                 )
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = AccentTeal.copy(alpha = 0.08f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "💡 Tap \"Run in Background\" to continue using the app while downloading.",
+                color = AccentTeal,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(8.dp)
+            )
         }
     }
 }

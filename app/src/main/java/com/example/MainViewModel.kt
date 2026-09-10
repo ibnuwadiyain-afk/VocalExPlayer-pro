@@ -89,6 +89,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
 
     private val socialMediaProcessor = SocialMediaVideoProcessor(application)
+    private var mediaDownloadJob: kotlinx.coroutines.Job? = null
+    private var downloadTimerJob: kotlinx.coroutines.Job? = null
 
     private val _downloadProgressState = MutableStateFlow<DownloadProgressState?>(null)
     val downloadProgressState: StateFlow<DownloadProgressState?> = _downloadProgressState.asStateFlow()
@@ -118,14 +120,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun processSocialMediaUrl(url: String) {
         if (url.isBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
+        mediaDownloadJob?.cancel()
+        downloadTimerJob?.cancel()
+
+        mediaDownloadJob = viewModelScope.launch(Dispatchers.IO) {
             _isDownloadingMedia.value = true
             _downloadErrorMessage.value = null
             _downloadProgressState.value = DownloadProgressState.Resolving("Analyzing link…")
             _downloadElapsedFormatted.value = "00:00"
 
             val startDownloadTime = android.os.SystemClock.elapsedRealtime()
-            val downloadTimerJob = viewModelScope.launch(Dispatchers.Default) {
+            downloadTimerJob = viewModelScope.launch(Dispatchers.Default) {
                 while (_isDownloadingMedia.value) {
                     val elapsed = (android.os.SystemClock.elapsedRealtime() - startDownloadTime) / 1000
                     _downloadElapsedFormatted.value = com.example.service.VocalProcessingManager.formatSeconds(elapsed)
@@ -133,42 +138,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            val result = socialMediaProcessor.processAndDownload(url) { state ->
-                _downloadProgressState.value = state
-            }
+            try {
+                val result = socialMediaProcessor.processAndDownload(url) { state ->
+                    _downloadProgressState.value = state
+                }
 
-            downloadTimerJob.cancel()
+                downloadTimerJob?.cancel()
 
-            result.onSuccess { info ->
-                val videoId = UUID.randomUUID().toString().substring(0, 8)
-                val newVideo = VideoItemEntity(
-                    id = videoId,
-                    title = info.title,
-                    videoUri = Uri.fromFile(info.file).toString(),
-                    duration = info.durationMs,
-                    status = VideoStatus.NEW,
-                    dateAdded = System.currentTimeMillis()
-                )
-                videoDao.insertVideo(newVideo)
+                result.onSuccess { info ->
+                    val videoId = UUID.randomUUID().toString().substring(0, 8)
+                    val newVideo = VideoItemEntity(
+                        id = videoId,
+                        title = info.title,
+                        videoUri = Uri.fromFile(info.file).toString(),
+                        duration = info.durationMs,
+                        status = VideoStatus.NEW,
+                        dateAdded = System.currentTimeMillis()
+                    )
+                    videoDao.insertVideo(newVideo)
+                    _isDownloadingMedia.value = false
+                    _downloadProgressState.value = null
+                    _sharedMediaUrl.value = null
+                    _modelInfoMessage.value = "Downloaded \"${info.title}\" successfully! Ready for separation."
+                    withContext(Dispatchers.Main) {
+                        selectVideo(newVideo)
+                    }
+                }.onFailure { error ->
+                    _isDownloadingMedia.value = false
+                    _downloadErrorMessage.value = error.localizedMessage ?: "Failed to process video from link."
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                downloadTimerJob?.cancel()
                 _isDownloadingMedia.value = false
                 _downloadProgressState.value = null
-                _sharedMediaUrl.value = null
-                withContext(Dispatchers.Main) {
-                    selectVideo(newVideo)
-                }
-            }.onFailure { error ->
+                android.util.Log.i("MainViewModel", "Media download cancelled by user")
+            } catch (e: Exception) {
+                downloadTimerJob?.cancel()
                 _isDownloadingMedia.value = false
-                _downloadErrorMessage.value = error.localizedMessage ?: "Failed to process video from link."
+                _downloadErrorMessage.value = e.localizedMessage ?: "Failed to process video from link."
             }
         }
     }
 
+    fun cancelMediaDownload() {
+        mediaDownloadJob?.cancel()
+        downloadTimerJob?.cancel()
+        mediaDownloadJob = null
+        downloadTimerJob = null
+        _isDownloadingMedia.value = false
+        _downloadProgressState.value = null
+        _downloadErrorMessage.value = null
+        _sharedMediaUrl.value = null
+    }
+
     fun dismissDownloadDialog() {
-        if (!_isDownloadingMedia.value) {
-            _downloadProgressState.value = null
-            _downloadErrorMessage.value = null
-            _sharedMediaUrl.value = null
-        }
+        // Dismissing the dialog view lets the download continue running seamlessly in the background!
+        _downloadErrorMessage.value = null
+        _sharedMediaUrl.value = null
     }
 
     fun clearDownloadError() {

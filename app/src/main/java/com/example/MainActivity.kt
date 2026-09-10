@@ -125,6 +125,7 @@ class MainActivity : ComponentActivity() {
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
                             onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
                             onSubmitMediaUrl = { url -> viewModel.processSocialMediaUrl(url) },
+                            onCancelDownload = { viewModel.cancelMediaDownload() },
                             onClearDownloadError = { viewModel.clearDownloadError() },
                             onDismissDownloadDialog = { viewModel.dismissDownloadDialog() },
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },

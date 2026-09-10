@@ -81,24 +81,19 @@ class SocialMediaVideoProcessor(private val context: Context) {
         // Curated, verified working sample media streams for instant testing
         val SAMPLE_PRESETS = listOf(
             SamplePreset(
-                title = "Big Buck Bunny (Direct MP4 Clip)",
-                url = "https://www.w3schools.com/html/mov_bbb.mp4",
-                platform = "Direct MP4 Stream"
-            ),
-            SamplePreset(
-                title = "Vimeo Creative Showcase",
-                url = "https://vimeo.com/76979871",
+                title = "The Learning Pit (Vimeo)",
+                url = "https://vimeo.com/792271600",
                 platform = "Vimeo Video"
             ),
             SamplePreset(
-                title = "VidLii Showcase Video",
-                url = "https://www.vidlii.com/watch?v=4fEcsaOOBGe",
-                platform = "VidLii Web Link"
+                title = "Acoustic Guitar Track (YouTube)",
+                url = "https://www.youtube.com/watch?v=HndV87XpkWg",
+                platform = "YouTube Video"
             ),
             SamplePreset(
-                title = "Dailymotion Video Clip",
-                url = "https://www.dailymotion.com/video/x8o0ocx",
-                platform = "Dailymotion Link"
+                title = "Big Buck Bunny (Direct MP4 Clip)",
+                url = "https://www.w3schools.com/html/mov_bbb.mp4",
+                platform = "Direct MP4 Stream"
             ),
             SamplePreset(
                 title = "Vocal Song Melody (Direct MP3)",
@@ -106,9 +101,9 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 platform = "Direct Audio Track"
             ),
             SamplePreset(
-                title = "Flower Nature Clip (Direct MP4)",
-                url = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
-                platform = "Direct MP4 Stream"
+                title = "Dailymotion Video Clip",
+                url = "https://www.dailymotion.com/video/x8o0ocx",
+                platform = "Dailymotion Link"
             )
         )
     }
@@ -279,33 +274,10 @@ class SocialMediaVideoProcessor(private val context: Context) {
             return StreamResolution(url, extractFilenameFromUrl(url), referer = url)
         }
 
-        // 2. YouTube & YouTube Shorts direct extraction
+        // 2. YouTube & YouTube Shorts extraction
         val ytId = extractYouTubeId(url)
         if (ytId != null) {
-            onProgress(DownloadProgressState.Resolving("Extracting YouTube stream ($ytId)…"))
-            try {
-                val directYt = queryYouTubeDirect(ytId)
-                if (directYt != null) {
-                    return directYt
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Direct YouTube extraction failed for $ytId", e)
-            }
-
-            // Fallback for YouTube: Invidious / Piped instances
-            for (endpoint in INVIDIOUS_ENDPOINTS) {
-                try {
-                    onProgress(DownloadProgressState.Resolving("Checking alternative stream server…"))
-                    val resolution = queryInvidiousApi(endpoint, ytId)
-                    if (resolution != null) {
-                        return resolution
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Invidious endpoint failed: $endpoint", e)
-                }
-            }
-
-            // Fallback for YouTube: loader.to polling extractor
+            // Strategy A (Primary & Verified): loader.to stream converter
             try {
                 onProgress(DownloadProgressState.Resolving("Requesting stream converter for YouTube…"))
                 val loaderRes = queryLoaderTo(ytId, onProgress)
@@ -316,7 +288,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 Log.w(TAG, "Loader.to resolution failed for $ytId", e)
             }
 
-            // Fallback for YouTube: Y2Mate high-speed stream converter
+            // Strategy B: Y2Mate high-speed stream converter
             try {
                 onProgress(DownloadProgressState.Resolving("Requesting alternate stream converter for YouTube…"))
                 val y2Res = queryY2Mate(ytId, onProgress)
@@ -325,6 +297,30 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Y2Mate resolution failed for $ytId", e)
+            }
+
+            // Strategy C: Direct YouTube InnerTube client extraction
+            try {
+                onProgress(DownloadProgressState.Resolving("Extracting direct YouTube stream…"))
+                val directYt = queryYouTubeDirect(ytId)
+                if (directYt != null) {
+                    return directYt
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Direct YouTube extraction failed for $ytId", e)
+            }
+
+            // Strategy D: Invidious / Piped public instances
+            for (endpoint in INVIDIOUS_ENDPOINTS) {
+                try {
+                    onProgress(DownloadProgressState.Resolving("Checking alternative stream server…"))
+                    val resolution = queryInvidiousApi(endpoint, ytId)
+                    if (resolution != null) {
+                        return resolution
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Invidious endpoint failed: $endpoint", e)
+                }
             }
 
             // Fallback for YouTube: Cobalt APIs
@@ -544,14 +540,15 @@ class SocialMediaVideoProcessor(private val context: Context) {
     ): StreamResolution? = withContext(Dispatchers.IO) {
         val ytUrl = "https://www.youtube.com/watch?v=$videoId"
         val encodedYtUrl = URLEncoder.encode(ytUrl, "UTF-8")
-        val formats = listOf("1080", "720", "480", "360", "mp3")
+        // Prioritize 720p, 360p and MP3 audio stream for fastest, most reliable conversion
+        val formats = listOf("720", "360", "mp3", "1080", "480")
 
         for (fmt in formats) {
             try {
                 val initUrl = "https://loader.to/ajax/download.php?format=$fmt&url=$encodedYtUrl"
                 val initReq = Request.Builder()
                     .url(initUrl)
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
                     .addHeader("Referer", "https://en.loader.to/")
                     .get()
                     .build()
@@ -567,13 +564,20 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 val title = initJson.optString("title").ifBlank { "YouTube Video" }
                 if (downloadId.isBlank()) continue
 
-                // Poll progress URL up to 20 times (total ~25-30s max)
+                // Retrieve progress endpoint from init response or fallback to active domain
+                val rawProgressUrl = initJson.optString("progress_url")
+                val baseProgressUrl = if (rawProgressUrl.isNotBlank() && rawProgressUrl != "null") {
+                    rawProgressUrl
+                } else {
+                    "https://lto2.affadaffa.com/api/progress?id=$downloadId"
+                }
+
+                // Poll progress URL up to 25 times (~35s max)
                 var downloadUrl: String? = null
-                for (pollCount in 1..20) {
+                for (pollCount in 1..25) {
                     delay(1500)
-                    val progressUrl = "https://p.oceansaver.net/ajax/progress.php?id=$downloadId"
                     val progReq = Request.Builder()
-                        .url(progressUrl)
+                        .url(baseProgressUrl)
                         .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                         .addHeader("Referer", "https://en.loader.to/")
                         .get()
@@ -584,7 +588,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     } ?: continue
 
                     val progJson = JSONObject(progRespStr)
-                    val progressVal = progJson.optInt("progress", 0)
+                    val progressVal = (progJson.optInt("progress", 0) / 10).coerceIn(0, 100)
                     val textMsg = progJson.optString("text", "")
                     if (textMsg.isNotBlank()) {
                         onProgress(DownloadProgressState.Resolving("Converting YouTube stream: $textMsg ($progressVal%)…"))
@@ -758,14 +762,14 @@ class SocialMediaVideoProcessor(private val context: Context) {
     }
 
     private fun queryVimeoStream(videoId: String): StreamResolution? {
-        val embedUrl = "https://player.vimeo.com/video/$videoId"
+        val embedUrl = "https://player.vimeo.com/video/$videoId?app_id=122963"
 
         // Strategy 1: Fetch title and thumbnail from public Vimeo oEmbed API
         var oembedTitle: String? = null
         try {
             val oembedReq = Request.Builder()
                 .url("https://vimeo.com/api/oembed.json?url=https%3A%2F%2Fvimeo.com%2F$videoId")
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .get()
                 .build()
             httpClient.newCall(oembedReq).execute().use { resp ->
@@ -782,93 +786,105 @@ class SocialMediaVideoProcessor(private val context: Context) {
             Log.w(TAG, "Vimeo oembed query failed for $videoId", e)
         }
 
-        // Strategy 2: Vimeo player config endpoint with proper browser headers
-        val configUrl = "https://player.vimeo.com/video/$videoId/config"
-        try {
-            val req = Request.Builder()
-                .url(configUrl)
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .addHeader("Referer", embedUrl)
-                .addHeader("Origin", "https://player.vimeo.com")
-                .get()
-                .build()
-
-            httpClient.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string()
-                    if (!body.isNullOrBlank()) {
-                        val json = JSONObject(body)
-                        val videoObj = json.optJSONObject("video")
-                        val title = oembedTitle ?: videoObj?.optString("title") ?: "Vimeo Video"
-                        val files = json.optJSONObject("request")?.optJSONObject("files")
-
-                        // 1. Check progressive MP4 files (highest quality first)
-                        val progressive = files?.optJSONArray("progressive")
-                        if (progressive != null && progressive.length() > 0) {
-                            var bestUrl: String? = null
-                            var bestWidth = 0
-                            for (i in 0 until progressive.length()) {
-                                val item = progressive.getJSONObject(i)
-                                val streamUrl = item.optString("url")
-                                val width = item.optInt("width", 0)
-                                if (streamUrl.isNotBlank() && width >= bestWidth) {
-                                    bestWidth = width
-                                    bestUrl = streamUrl
-                                }
-                            }
-                            if (bestUrl != null) {
-                                return StreamResolution(bestUrl, "Vimeo - $title", referer = embedUrl)
-                            }
-                        }
-
-                        // 2. Check HLS stream
-                        val hls = files?.optJSONObject("hls")
-                        val defaultCdn = hls?.optJSONObject("cdns")
-                        if (defaultCdn != null) {
-                            val cdnKeys = defaultCdn.keys()
-                            while (cdnKeys.hasNext()) {
-                                val cdnObj = defaultCdn.optJSONObject(cdnKeys.next())
-                                val hlsUrl = cdnObj?.optString("url")
-                                if (!hlsUrl.isNullOrBlank()) {
-                                    return StreamResolution(hlsUrl, "Vimeo - $title", referer = embedUrl)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Vimeo config endpoint query failed for $videoId", e)
-        }
-
-        // Strategy 3: Vimeo embed page scraping
+        // Strategy 2: Vimeo player embed page scraping with iframe navigation headers (Bypasses Cloudflare block)
         try {
             val req = Request.Builder()
                 .url(embedUrl)
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
                 .addHeader("Referer", "https://vimeo.com/")
+                .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .addHeader("Sec-Fetch-Dest", "iframe")
+                .addHeader("Sec-Fetch-Mode", "navigate")
+                .addHeader("Sec-Fetch-Site", "cross-site")
                 .get()
                 .build()
 
             httpClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val html = resp.body?.string() ?: ""
-                    val title = oembedTitle ?: extractTitleFromHtml(html) ?: "Vimeo Video"
 
-                    // Look for progressive MP4 links inside embedded script
+                    // Extract window.playerConfig = { ... }
+                    val configPrefix = when {
+                        html.contains("window.playerConfig = ") -> "window.playerConfig = "
+                        html.contains("var config = ") -> "var config = "
+                        else -> null
+                    }
+
+                    if (configPrefix != null) {
+                        val startIndex = html.indexOf(configPrefix) + configPrefix.length
+                        val endIndex = html.indexOf("</script>", startIndex)
+                        if (startIndex > 0 && endIndex > startIndex) {
+                            val configJsonStr = html.substring(startIndex, endIndex).trim().removeSuffix(";")
+                            try {
+                                val json = JSONObject(configJsonStr)
+                                val videoObj = json.optJSONObject("video")
+                                val title = oembedTitle ?: videoObj?.optString("title") ?: "Vimeo Video"
+                                val files = json.optJSONObject("request")?.optJSONObject("files")
+
+                                // 1. Check progressive MP4 files (highest quality first)
+                                val progressive = files?.optJSONArray("progressive")
+                                if (progressive != null && progressive.length() > 0) {
+                                    var bestUrl: String? = null
+                                    var bestWidth = 0
+                                    for (i in 0 until progressive.length()) {
+                                        val item = progressive.getJSONObject(i)
+                                        val streamUrl = item.optString("url")
+                                        val width = item.optInt("width", 0)
+                                        if (streamUrl.isNotBlank() && width >= bestWidth) {
+                                            bestWidth = width
+                                            bestUrl = streamUrl
+                                        }
+                                    }
+                                    if (bestUrl != null) {
+                                        return StreamResolution(bestUrl, "Vimeo - $title", referer = "https://player.vimeo.com/")
+                                    }
+                                }
+
+                                // 2. Check HLS stream
+                                val hls = files?.optJSONObject("hls")
+                                val defaultCdn = hls?.optString("default_cdn")
+                                val cdns = hls?.optJSONObject("cdns")
+                                var m3u8Url: String? = null
+                                if (cdns != null) {
+                                    if (!defaultCdn.isNullOrBlank() && cdns.has(defaultCdn)) {
+                                        m3u8Url = cdns.optJSONObject(defaultCdn)?.optString("url")
+                                    }
+                                    if (m3u8Url.isNullOrBlank()) {
+                                        val keys = cdns.keys()
+                                        while (keys.hasNext()) {
+                                            val cdn = cdns.optJSONObject(keys.next())
+                                            val u = cdn?.optString("url")
+                                            if (!u.isNullOrBlank()) {
+                                                m3u8Url = u
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (!m3u8Url.isNullOrBlank()) {
+                                    return StreamResolution(m3u8Url, "Vimeo - $title", referer = "https://player.vimeo.com/")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to parse playerConfig JSON for Vimeo $videoId", e)
+                            }
+                        }
+                    }
+
+                    // Fallback pattern matching on embed HTML
+                    val title = oembedTitle ?: extractTitleFromHtml(html) ?: "Vimeo Video"
                     val mp4Matcher = Pattern.compile("""["'](https?:\/\/[^"']+\.mp4[^"']*)["']""").matcher(html)
                     while (mp4Matcher.find()) {
                         val candidate = mp4Matcher.group(1).replace("\\/", "/")
                         if (candidate.contains("vod-progressive") || candidate.contains("vimeo") || candidate.contains("akamaized")) {
-                            return StreamResolution(candidate, "Vimeo - $title", referer = embedUrl)
+                            return StreamResolution(candidate, "Vimeo - $title", referer = "https://player.vimeo.com/")
                         }
                     }
 
-                    // Look for master.json or master.m3u8
                     val hlsMatcher = Pattern.compile("""["'](https?:\/\/[^"']+\.m3u8[^"']*)["']""").matcher(html)
                     if (hlsMatcher.find()) {
                         val hlsUrl = hlsMatcher.group(1).replace("\\/", "/")
-                        return StreamResolution(hlsUrl, "Vimeo - $title", referer = embedUrl)
+                        return StreamResolution(hlsUrl, "Vimeo - $title", referer = "https://player.vimeo.com/")
                     }
                 }
             }
@@ -1392,8 +1408,9 @@ class SocialMediaVideoProcessor(private val context: Context) {
         // Step 1: Fetch playlist/manifest
         val reqBuilder = Request.Builder()
             .url(m3u8Url)
-            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .addHeader("Referer", referer)
+            .addHeader("Accept", "*/*")
         if (origin != null) reqBuilder.addHeader("Origin", origin)
         val req = reqBuilder.get().build()
 
@@ -1409,24 +1426,32 @@ class SocialMediaVideoProcessor(private val context: Context) {
         var mediaPlaylistContent = manifestContent
         var mediaPlaylistUrl = manifestFinalUrl
 
-        if (manifestContent.contains("#EXT-X-STREAM-INF")) {
-            // Master playlist: pick best variant URL
-            val lines = manifestContent.lines()
-            var bestVariantUrl: String? = null
-            for (i in lines.indices) {
-                if (lines[i].startsWith("#EXT-X-STREAM-INF") && i + 1 < lines.size) {
-                    val lineNext = lines[i + 1].trim()
-                    if (!lineNext.startsWith("#") && lineNext.isNotBlank()) {
-                        bestVariantUrl = resolveRelativeUrl(manifestFinalUrl, lineNext)
+        if (manifestContent.contains("#EXT-X-STREAM-INF") || manifestContent.contains("#EXT-X-MEDIA:TYPE=AUDIO")) {
+            // For audio extraction/vocal separation, an audio track is ideal if available
+            val audioMatcher = Pattern.compile("""#EXT-X-MEDIA:TYPE=AUDIO.*?URI=["']([^"']+)["']""").matcher(manifestContent)
+            var chosenVariantUrl: String? = null
+            if (audioMatcher.find()) {
+                chosenVariantUrl = resolveRelativeUrl(manifestFinalUrl, audioMatcher.group(1))
+            } else {
+                // Otherwise pick best video variant URL
+                val lines = manifestContent.lines()
+                for (i in lines.indices) {
+                    if (lines[i].startsWith("#EXT-X-STREAM-INF") && i + 1 < lines.size) {
+                        val lineNext = lines[i + 1].trim()
+                        if (!lineNext.startsWith("#") && lineNext.isNotBlank()) {
+                            chosenVariantUrl = resolveRelativeUrl(manifestFinalUrl, lineNext)
+                        }
                     }
                 }
             }
-            if (bestVariantUrl != null) {
-                mediaPlaylistUrl = bestVariantUrl
+
+            if (chosenVariantUrl != null) {
+                mediaPlaylistUrl = chosenVariantUrl
                 val variantReqBuilder = Request.Builder()
-                    .url(bestVariantUrl)
+                    .url(chosenVariantUrl)
                     .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .addHeader("Referer", referer)
+                    .addHeader("Accept", "*/*")
                 if (origin != null) variantReqBuilder.addHeader("Origin", origin)
                 val variantReq = variantReqBuilder.get().build()
 
@@ -1438,28 +1463,57 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // Parse segment URLs and optional init segment (#EXT-X-MAP:URI="...")
+        // Parse optional init segment (#EXT-X-MAP:URI="...",[BYTERANGE="..."])
         var initSegmentUrl: String? = null
-        val mapMatcher = Pattern.compile("""#EXT-X-MAP:URI=["']([^"']+)["']""").matcher(mediaPlaylistContent)
+        var initSegmentRange: String? = null
+        val mapMatcher = Pattern.compile("""#EXT-X-MAP:URI=["']([^"']+)["'](?:,BYTERANGE=["']?(\d+)(?:@(\d+))?["']?)?""").matcher(mediaPlaylistContent)
         if (mapMatcher.find()) {
             initSegmentUrl = resolveRelativeUrl(mediaPlaylistUrl, mapMatcher.group(1))
-        }
-
-        val segmentUrls = mutableListOf<String>()
-        val mediaLines = mediaPlaylistContent.lines()
-        for (line in mediaLines) {
-            val trimmed = line.trim()
-            if (trimmed.isNotBlank() && !trimmed.startsWith("#")) {
-                segmentUrls.add(resolveRelativeUrl(mediaPlaylistUrl, trimmed))
+            val lengthStr = mapMatcher.group(2)
+            val offsetStr = mapMatcher.group(3)
+            if (!lengthStr.isNullOrBlank()) {
+                val len = lengthStr.toLong()
+                val off = offsetStr?.toLongOrNull() ?: 0L
+                initSegmentRange = "bytes=$off-${off + len - 1}"
             }
         }
 
-        if (segmentUrls.isEmpty()) {
+        // Parse segment URLs and byte ranges (#EXT-X-BYTERANGE:len[@offset])
+        data class HlsSegmentItem(val url: String, val rangeHeader: String?)
+        val segments = mutableListOf<HlsSegmentItem>()
+        val mediaLines = mediaPlaylistContent.lines()
+        var lastByteOffset = 0L
+        var pendingRange: String? = null
+
+        for (line in mediaLines) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("#EXT-X-BYTERANGE:")) {
+                val brStr = trimmed.substringAfter(":").trim()
+                if (brStr.contains("@")) {
+                    val parts = brStr.split("@")
+                    val len = parts[0].toLongOrNull() ?: 0L
+                    val off = parts[1].toLongOrNull() ?: 0L
+                    lastByteOffset = off + len
+                    pendingRange = "bytes=$off-${off + len - 1}"
+                } else {
+                    val len = brStr.toLongOrNull() ?: 0L
+                    val off = lastByteOffset
+                    lastByteOffset = off + len
+                    pendingRange = "bytes=$off-${off + len - 1}"
+                }
+            } else if (trimmed.isNotBlank() && !trimmed.startsWith("#")) {
+                val segUrl = resolveRelativeUrl(mediaPlaylistUrl, trimmed)
+                segments.add(HlsSegmentItem(segUrl, pendingRange))
+                pendingRange = null
+            }
+        }
+
+        if (segments.isEmpty() && initSegmentUrl == null) {
             throw IllegalStateException("No media segments found in HLS playlist.")
         }
 
         // Download init segment (if present) + media segments sequentially
-        val totalSegments = segmentUrls.size + (if (initSegmentUrl != null) 1 else 0)
+        val totalSegments = segments.size + (if (initSegmentUrl != null) 1 else 0)
         var downloadedCount = 0
 
         FileOutputStream(targetFile).use { out ->
@@ -1468,7 +1522,9 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     .url(initSegmentUrl)
                     .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .addHeader("Referer", referer)
+                    .addHeader("Accept", "*/*")
                 if (origin != null) initReqBuilder.addHeader("Origin", origin)
+                if (initSegmentRange != null) initReqBuilder.addHeader("Range", initSegmentRange)
                 val initReq = initReqBuilder.get().build()
 
                 httpClient.newCall(initReq).execute().use { resp ->
@@ -1480,17 +1536,28 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 onProgress((downloadedCount.toFloat() / totalSegments).coerceIn(0f, 1f))
             }
 
-            for (segUrl in segmentUrls) {
+            for (seg in segments) {
                 val segReqBuilder = Request.Builder()
-                    .url(segUrl)
+                    .url(seg.url)
                     .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .addHeader("Referer", referer)
+                    .addHeader("Accept", "*/*")
                 if (origin != null) segReqBuilder.addHeader("Origin", origin)
+                if (seg.rangeHeader != null) segReqBuilder.addHeader("Range", seg.rangeHeader)
                 val segReq = segReqBuilder.get().build()
 
-                httpClient.newCall(segReq).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        resp.body?.byteStream()?.copyTo(out)
+                var success = false
+                for (retry in 0..1) {
+                    try {
+                        httpClient.newCall(segReq).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                resp.body?.byteStream()?.copyTo(out)
+                                success = true
+                            }
+                        }
+                        if (success) break
+                    } catch (e: Exception) {
+                        if (retry == 1) Log.w(TAG, "Failed downloading segment ${seg.url}", e)
                     }
                 }
                 downloadedCount++

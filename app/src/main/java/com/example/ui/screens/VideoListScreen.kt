@@ -119,6 +119,7 @@ fun VideoListScreen(
     onResetToBuiltInModel: () -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
     onSubmitMediaUrl: (String) -> Unit = {},
+    onCancelDownload: () -> Unit = {},
     onClearDownloadError: () -> Unit = {},
     onDismissDownloadDialog: () -> Unit = {},
     onClearModelMessage: () -> Unit,
@@ -365,6 +366,93 @@ fun VideoListScreen(
                             tint = TextSecondary,
                             modifier = Modifier.size(18.dp)
                         )
+                    }
+                }
+
+                // Active Background Download Banner (when dialog is dismissed to background)
+                if (isDownloadingMedia && !showUrlDialog) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF16253B),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .clickable { showUrlDialog = true }
+                            .testTag("active_background_download_banner")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = AccentTeal,
+                                        strokeWidth = 2.5.dp,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = when (downloadProgressState) {
+                                                is DownloadProgressState.Downloading -> "Downloading Web Media (${(downloadProgressState.progress * 100).toInt()}%)"
+                                                is DownloadProgressState.Resolving -> downloadProgressState.message
+                                                else -> "Downloading in Background…"
+                                            },
+                                            color = TextPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "⏱ Elapsed: $downloadElapsedFormatted • Tap to view details",
+                                            color = TextSecondary,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(
+                                        onClick = { showUrlDialog = true },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("View", color = AccentTeal, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    IconButton(
+                                        onClick = onCancelDownload,
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Cancel Download",
+                                            tint = StatusError,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (downloadProgressState is DownloadProgressState.Downloading) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { downloadProgressState.progress },
+                                    color = AccentTeal,
+                                    trackColor = DarkSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -737,7 +825,7 @@ fun VideoListScreen(
     }
 
     // YouTube & Social Media URL Import Dialog
-    if (showUrlDialog || isDownloadingMedia || !sharedMediaUrl.isNullOrBlank()) {
+    if (showUrlDialog || (!sharedMediaUrl.isNullOrBlank() && !isDownloadingMedia)) {
         UrlImportDialog(
             initialUrl = sharedMediaUrl ?: "",
             downloadState = downloadProgressState,
@@ -750,6 +838,10 @@ fun VideoListScreen(
             },
             onSubmitUrl = { url ->
                 onSubmitMediaUrl(url)
+            },
+            onCancelDownload = {
+                showUrlDialog = false
+                onCancelDownload()
             },
             onLoadOfflineDemo = {
                 onImportSampleVideo()
