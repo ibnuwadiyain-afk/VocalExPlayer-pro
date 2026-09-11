@@ -33,6 +33,18 @@ object AudioExtractor {
         videoUri: Uri,
         onProgress: (Float) -> Unit = {}
     ): DecodedAudio {
+        // Fast-path for uncompressed WAV audio files
+        try {
+            val directWav = readWavDirectly(context, videoUri)
+            if (directWav != null) {
+                Log.i(TAG, "Successfully extracted audio via direct WAV decoder: ${directWav.sampleRate}Hz, ${directWav.durationMs}ms")
+                onProgress(0.25f)
+                return directWav
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Direct WAV check bypassed, proceeding with MediaExtractor: ${e.message}")
+        }
+
         val extractor = MediaExtractor()
         try {
             val scheme = videoUri.scheme
@@ -87,9 +99,18 @@ object AudioExtractor {
             10_000_000L
         }
 
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(audioFormat, null, null, 0)
-        codec.start()
+        val codec = try {
+            MediaCodec.createDecoderByType(mime).apply {
+                configure(audioFormat, null, null, 0)
+                start()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Standard codec creation failed for $mime: ${e.message}. Attempting direct WAV/PCM fallback.")
+            extractor.release()
+            val fallbackWav = readWavDirectly(context, videoUri)
+            if (fallbackWav != null) return fallbackWav
+            throw IllegalStateException("Cannot decode audio stream with format $mime", e)
+        }
 
         var actualSampleRate = sampleRate
         var actualChannelCount = channelCount
@@ -242,5 +263,95 @@ object AudioExtractor {
             sampleRate = actualSampleRate,
             durationMs = calculatedDurationMs
         )
+    }
+
+    /**
+     * Directly decodes uncompressed 16-bit PCM WAV audio from a file or content URI
+     * without needing MediaCodec. Returns null if the source is not a standard PCM WAV.
+     */
+    fun readWavDirectly(context: Context, uri: Uri): DecodedAudio? {
+        val inputStream = try {
+            val scheme = uri.scheme
+            if (scheme == null || scheme == "file") {
+                val path = uri.path ?: uri.toString().removePrefix("file://")
+                val f = File(path)
+                if (f.exists()) FileInputStream(f) else context.contentResolver.openInputStream(uri)
+            } else {
+                context.contentResolver.openInputStream(uri)
+            }
+        } catch (e: Exception) {
+            return null
+        } ?: return null
+
+        try {
+            inputStream.use { stream ->
+                val header = ByteArray(44)
+                var bytesRead = 0
+                while (bytesRead < 44) {
+                    val r = stream.read(header, bytesRead, 44 - bytesRead)
+                    if (r == -1) return null
+                    bytesRead += r
+                }
+
+                // Verify RIFF and WAVE magic
+                val riff = String(header, 0, 4)
+                val wave = String(header, 8, 4)
+                if (riff != "RIFF" || wave != "WAVE") {
+                    return null
+                }
+
+                val buffer = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+                buffer.position(20)
+                val audioFormat = buffer.short.toInt() // 1 = PCM
+                val numChannels = buffer.short.toInt().coerceAtLeast(1)
+                val sampleRate = buffer.int.coerceAtLeast(8000)
+                buffer.position(34)
+                val bitsPerSample = buffer.short.toInt()
+
+                if (audioFormat != 1 || bitsPerSample != 16) {
+                    // Non-PCM or 24/32 bit, let MediaCodec try
+                    return null
+                }
+
+                buffer.position(40)
+                var dataSize = buffer.int.toLong() and 0xFFFFFFFFL
+
+                val pcmData = stream.readBytes()
+                val totalShorts = pcmData.size / 2
+                val numFrames = totalShorts / numChannels
+                if (numFrames <= 0) return null
+
+                val left = FloatArray(numFrames)
+                val right = FloatArray(numFrames)
+                val sBuf = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+
+                if (numChannels == 1) {
+                    for (i in 0 until numFrames) {
+                        val mono = sBuf.get() / 32768.0f
+                        left[i] = mono
+                        right[i] = mono
+                    }
+                } else {
+                    for (i in 0 until numFrames) {
+                        left[i] = sBuf.get() / 32768.0f
+                        right[i] = sBuf.get() / 32768.0f
+                        for (ch in 2 until numChannels) {
+                            sBuf.get()
+                        }
+                    }
+                }
+
+                val durationMs = (numFrames.toLong() * 1000L) / sampleRate
+                return DecodedAudio(
+                    leftChannel = left,
+                    rightChannel = right,
+                    sampleRate = sampleRate,
+                    durationMs = durationMs
+                )
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Direct WAV decoding failed: ${e.message}")
+            return null
+        }
     }
 }

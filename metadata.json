@@ -1,6 +1,6 @@
 {
   "name": "VocalExtractor",
-  "description": "Video player with AI vocal extraction using UVR/MDX-Net ONNX models.",
+  "description": "AI vocal and instrumental isolation for audio and video files with internal storage folder browsing and multi-format audio/video export.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

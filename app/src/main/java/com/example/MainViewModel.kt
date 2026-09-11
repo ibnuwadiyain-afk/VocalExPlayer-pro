@@ -107,6 +107,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _sharedMediaUrl = MutableStateFlow<String?>(null)
     val sharedMediaUrl: StateFlow<String?> = _sharedMediaUrl.asStateFlow()
 
+    // Internal Storage Folders access state
+    private val _savedFolders = MutableStateFlow<List<com.example.storage.GrantedFolder>>(emptyList())
+    val savedFolders: StateFlow<List<com.example.storage.GrantedFolder>> = _savedFolders.asStateFlow()
+
+    private val _selectedFolder = MutableStateFlow<com.example.storage.GrantedFolder?>(null)
+    val selectedFolder: StateFlow<com.example.storage.GrantedFolder?> = _selectedFolder.asStateFlow()
+
+    private val _activeFolderMediaItems = MutableStateFlow<List<com.example.storage.StorageMediaItem>>(emptyList())
+    val activeFolderMediaItems: StateFlow<List<com.example.storage.StorageMediaItem>> = _activeFolderMediaItems.asStateFlow()
+
+    private val _isScanningFolder = MutableStateFlow(false)
+    val isScanningFolder: StateFlow<Boolean> = _isScanningFolder.asStateFlow()
+
+    init {
+        loadSavedFolders()
+    }
+
+    fun loadSavedFolders() {
+        val context = getApplication<Application>()
+        val folders = com.example.storage.StorageFolderManager.getSavedFolders(context)
+        _savedFolders.value = folders
+        if (_selectedFolder.value == null && folders.isNotEmpty()) {
+            selectAndScanFolder(folders.first())
+        }
+    }
+
+    fun registerAndScanFolder(treeUri: Uri) {
+        val context = getApplication<Application>()
+        val folder = com.example.storage.StorageFolderManager.registerGrantedFolder(context, treeUri)
+        _savedFolders.value = com.example.storage.StorageFolderManager.getSavedFolders(context)
+        selectAndScanFolder(folder)
+    }
+
+    fun selectAndScanFolder(folder: com.example.storage.GrantedFolder) {
+        _selectedFolder.value = folder
+        viewModelScope.launch(Dispatchers.IO) {
+            _isScanningFolder.value = true
+            val items = com.example.storage.StorageFolderManager.scanFolderForMedia(getApplication(), folder.uri)
+            _activeFolderMediaItems.value = items
+            _isScanningFolder.value = false
+        }
+    }
+
+    fun refreshActiveFolder() {
+        val current = _selectedFolder.value ?: return
+        selectAndScanFolder(current)
+    }
+
+    fun removeSavedFolder(uriString: String) {
+        val context = getApplication<Application>()
+        com.example.storage.StorageFolderManager.removeSavedFolder(context, uriString)
+        val updated = com.example.storage.StorageFolderManager.getSavedFolders(context)
+        _savedFolders.value = updated
+        if (_selectedFolder.value?.uriString == uriString) {
+            val next = updated.firstOrNull()
+            _selectedFolder.value = next
+            if (next != null) {
+                selectAndScanFolder(next)
+            } else {
+                _activeFolderMediaItems.value = emptyList()
+            }
+        }
+    }
+
     fun handleIncomingShareUrl(rawText: String) {
         val extractedUrl = socialMediaProcessor.extractUrlFromText(rawText) ?: rawText.trim()
         if (extractedUrl.isNotBlank()) {
@@ -201,7 +265,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _downloadErrorMessage.value = null
     }
 
-    fun exportVideo(video: VideoItemEntity, deleteOriginalAfterExport: Boolean = false) {
+    fun exportMedia(
+        video: VideoItemEntity,
+        format: com.example.export.ExportFormat,
+        deleteOriginalAfterExport: Boolean = false
+    ) {
         val vocalPath = video.vocalUri
         if (vocalPath.isNullOrBlank() || !java.io.File(vocalPath).exists()) {
             _exportError.value = "Vocal track is not ready yet. Please ensure vocal separation finishes first."
@@ -215,11 +283,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _exportResult.value = null
 
             val context = getApplication<Application>()
-            val result = com.example.export.VideoVocalsExporter.exportVideoWithVocals(
+            val result = com.example.export.AudioExporter.exportMedia(
                 context = context,
-                videoUriString = video.videoUri,
-                vocalWavPath = vocalPath,
-                outputTitle = video.title,
+                video = video,
+                format = format,
                 onProgress = { progress ->
                     _exportProgress.value = progress
                 }
@@ -232,10 +299,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     deleteVideo(video)
                 }
             }.onFailure { err ->
-                _exportError.value = err.localizedMessage ?: "Video export failed"
+                _exportError.value = err.localizedMessage ?: "Export failed"
                 _isExporting.value = false
             }
         }
+    }
+
+    fun exportVideo(video: VideoItemEntity, deleteOriginalAfterExport: Boolean = false) {
+        exportMedia(video, com.example.export.ExportFormat.VIDEO_VOCALS_MP4, deleteOriginalAfterExport)
+    }
+
+    fun shareExportResult(exportResult: com.example.export.ExportResult) {
+        val context = getApplication<Application>()
+        val fileName = exportResult.internalFile.name.lowercase()
+        val mimeType = when {
+            fileName.endsWith(".wav") -> "audio/wav"
+            fileName.endsWith(".m4a") -> "audio/mp4"
+            fileName.endsWith(".mp3") -> "audio/mpeg"
+            else -> "video/mp4"
+        }
+        com.example.export.AudioExporter.shareFile(
+            context = context,
+            file = exportResult.internalFile,
+            mimeType = mimeType,
+            title = exportResult.internalFile.nameWithoutExtension
+        )
     }
 
     fun dismissExportDialog() {
@@ -308,21 +396,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importVideoFromUri(uri: Uri) {
+        importMediaFromUri(uri)
+    }
+
+    fun importMediaFromUri(uri: Uri, customTitle: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
                 val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, uri)
+                var hasVideo = false
+                var durationMs = 15_000L
+                var titleMeta: String? = null
+                var artistMeta: String? = null
 
-                val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                val durationMs = durationStr?.toLongOrNull() ?: 15_000L
-                val titleMeta = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                try {
+                    retriever.setDataSource(context, uri)
+                    val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    durationMs = durationStr?.toLongOrNull() ?: 15_000L
+                    titleMeta = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                    artistMeta = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                    hasVideo = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) != null
+                } catch (e: Exception) {
+                    Log.w("MainViewModel", "Retriever inspection skipped for $uri: ${e.message}")
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
+                }
 
-                // Copy video to app internal storage for reliable access
-                val videoDir = File(context.filesDir, "videos")
-                if (!videoDir.exists()) videoDir.mkdirs()
-                val videoId = UUID.randomUUID().toString().substring(0, 8)
-                val localFile = File(videoDir, "video_$videoId.mp4")
+                // Determine file extension
+                val mimeType = try { context.contentResolver.getType(uri) ?: "" } catch (_: Exception) { "" }
+                val extFromUri = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""
+                val resolvedExt = when {
+                    extFromUri.isNotBlank() && extFromUri.length in 2..4 -> extFromUri
+                    mimeType.contains("wav") -> "wav"
+                    mimeType.contains("mpeg") || mimeType.contains("mp3") -> "mp3"
+                    mimeType.contains("flac") -> "flac"
+                    mimeType.contains("ogg") -> "ogg"
+                    mimeType.contains("aac") -> "aac"
+                    mimeType.contains("audio/mp4") || mimeType.contains("m4a") -> "m4a"
+                    mimeType.startsWith("audio/") -> "m4a"
+                    hasVideo -> "mp4"
+                    else -> "mp4"
+                }
+
+                val mediaDir = File(context.filesDir, "media")
+                if (!mediaDir.exists()) mediaDir.mkdirs()
+                val mediaId = UUID.randomUUID().toString().substring(0, 8)
+                val localFile = File(mediaDir, "media_${mediaId}.$resolvedExt")
 
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(localFile).use { output ->
@@ -330,26 +449,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val title = if (!titleMeta.isNullOrBlank()) {
-                    titleMeta
-                } else {
-                    uri.lastPathSegment?.substringAfterLast('/') ?: "Imported Video $videoId"
+                val resolvedTitle = when {
+                    !customTitle.isNullOrBlank() -> customTitle.substringBeforeLast('.')
+                    !titleMeta.isNullOrBlank() && !artistMeta.isNullOrBlank() -> "$artistMeta - $titleMeta"
+                    !titleMeta.isNullOrBlank() -> titleMeta
+                    else -> uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "Imported Media $mediaId"
                 }
 
-                retriever.release()
-
-                val newVideo = VideoItemEntity(
-                    id = videoId,
+                val newMedia = VideoItemEntity(
+                    id = mediaId,
                     videoUri = localFile.absolutePath,
-                    title = title,
+                    title = resolvedTitle,
                     duration = durationMs,
                     status = VideoStatus.NEW
                 )
 
-                videoDao.insertVideo(newVideo)
-                Log.i("MainViewModel", "Imported video $videoId: $title")
+                videoDao.insertVideo(newMedia)
+                Log.i("MainViewModel", "Imported media $mediaId: $resolvedTitle (hasVideo=$hasVideo, ext=$resolvedExt)")
+
+                withContext(Dispatchers.Main) {
+                    _selectedVideo.value = newMedia
+                }
             } catch (e: Exception) {
-                Log.e("MainViewModel", "Error importing video", e)
+                Log.e("MainViewModel", "Error importing media from $uri", e)
             }
         }
     }

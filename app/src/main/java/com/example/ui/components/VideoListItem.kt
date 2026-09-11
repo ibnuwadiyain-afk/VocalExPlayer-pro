@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassTop
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +60,12 @@ fun VideoListItem(
     isActiveProcessing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val isAudio = remember(video) {
+        val path = video.videoUri.lowercase()
+        path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".m4a") ||
+                path.endsWith(".flac") || path.endsWith(".ogg") || path.endsWith(".aac")
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -77,18 +85,18 @@ fun VideoListItem(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Video Thumbnail / Icon Placeholder
+            // Media Thumbnail / Icon Placeholder
             Box(
                 modifier = Modifier
                     .size(68.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF262626)),
+                    .background(if (isAudio) Color(0xFF1E293B) else Color(0xFF262626)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Videocam,
-                    contentDescription = "Video Thumbnail",
-                    tint = AccentTeal.copy(alpha = 0.8f),
+                    imageVector = if (isAudio) Icons.Default.Audiotrack else Icons.Default.Videocam,
+                    contentDescription = if (isAudio) "Audio Track" else "Video",
+                    tint = if (isAudio) Color(0xFF38BDF8) else AccentTeal.copy(alpha = 0.8f),
                     modifier = Modifier.size(32.dp)
                 )
 
@@ -129,13 +137,28 @@ fun VideoListItem(
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                Text(
-                    text = formatDuration(video.duration),
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = TextSecondary,
-                        fontSize = 13.sp
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(3.dp),
+                        color = if (isAudio) Color(0xFF38BDF8).copy(alpha = 0.15f) else AccentTeal.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = if (isAudio) "AUDIO" else "VIDEO",
+                            color = if (isAudio) Color(0xFF38BDF8) else AccentTeal,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = formatDuration(video.duration),
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = TextSecondary,
+                            fontSize = 13.sp
+                        )
                     )
-                )
+                }
             }
 
             Spacer(modifier = Modifier.width(10.dp))

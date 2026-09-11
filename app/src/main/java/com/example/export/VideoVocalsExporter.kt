@@ -82,7 +82,14 @@ object VideoVocalsExporter {
             }
 
             if (videoTrackIndexInExtractor == -1 || videoFormat == null) {
-                return@withContext Result.failure(IllegalStateException("No video track found in source video"))
+                // The source is an audio-only file (e.g. MP3, WAV, M4A, FLAC)
+                Log.i(TAG, "Source media has no video track; exporting as lossless WAV audio")
+                val audioExportFile = File(exportDir, "${sanitizedTitle}_vocals_$timestamp.wav")
+                File(vocalWavPath).copyTo(audioExportFile, overwrite = true)
+                onProgress(0.8f)
+                val mediaStore = saveAudioToMediaStore(context, audioExportFile, "${sanitizedTitle}_vocals")
+                onProgress(1.0f)
+                return@withContext Result.success(ExportResult(audioExportFile, mediaStore.first, mediaStore.second))
             }
 
             // Check video orientation
@@ -375,6 +382,51 @@ object VideoVocalsExporter {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not write to MediaStore directly, using internal storage path", e)
+        }
+
+        return Pair(null, sourceFile.name)
+    }
+
+    private fun saveAudioToMediaStore(
+        context: Context,
+        sourceFile: File,
+        baseName: String
+    ): Pair<Uri?, String> {
+        val fileName = "${baseName}.wav"
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/VocalExtractor")
+                    put(MediaStore.Audio.Media.IS_PENDING, 1)
+                }
+            }
+
+            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            }
+
+            val itemUri = context.contentResolver.insert(collection, values)
+            if (itemUri != null) {
+                context.contentResolver.openOutputStream(itemUri)?.use { outStream ->
+                    FileInputStream(sourceFile).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear()
+                    values.put(MediaStore.Audio.Media.IS_PENDING, 0)
+                    context.contentResolver.update(itemUri, values, null, null)
+                }
+
+                return Pair(itemUri, "Music/VocalExtractor/$fileName")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not write audio to MediaStore directly, using internal storage path", e)
         }
 
         return Pair(null, sourceFile.name)

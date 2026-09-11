@@ -31,8 +31,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
@@ -75,10 +78,15 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.export.ExportFormat
 import com.example.media.DownloadProgressState
 import com.example.onnx.AccelerationMode
+import com.example.storage.GrantedFolder
+import com.example.storage.StorageMediaItem
 import com.example.ui.components.ExportConfirmDialog
+import com.example.ui.components.ExportOptionsDialog
 import com.example.ui.components.ModelSettingsDialog
+import com.example.ui.components.StorageFolderBrowserSheet
 import com.example.ui.components.UrlImportDialog
 import com.example.ui.components.VideoListItem
 import com.example.ui.theme.AccentTeal
@@ -111,6 +119,15 @@ fun VideoListScreen(
     activeProcessingVideoId: String? = null,
     activeProcessingVideoTitle: String? = null,
     isBackgroundProtected: Boolean = true,
+    savedFolders: List<GrantedFolder> = emptyList(),
+    selectedFolder: GrantedFolder? = null,
+    folderMediaItems: List<StorageMediaItem> = emptyList(),
+    isScanningFolder: Boolean = false,
+    onFolderGranted: (Uri) -> Unit = {},
+    onFolderSelected: (GrantedFolder) -> Unit = {},
+    onFolderRemoved: (String) -> Unit = {},
+    onRefreshFolder: () -> Unit = {},
+    onImportStorageItem: (StorageMediaItem) -> Unit = {},
     onVideoSelected: (VideoItemEntity) -> Unit,
     onImportVideo: (Uri) -> Unit,
     onImportSampleVideo: () -> Unit,
@@ -125,6 +142,7 @@ fun VideoListScreen(
     onClearModelMessage: () -> Unit,
     onReprocessVideo: (VideoItemEntity) -> Unit,
     onExportVideo: (VideoItemEntity, Boolean) -> Unit,
+    onExportMedia: ((VideoItemEntity, ExportFormat, Boolean) -> Unit)? = null,
     onCancelProcessing: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -132,6 +150,7 @@ fun VideoListScreen(
     var videoToExport by remember { mutableStateOf<VideoItemEntity?>(null) }
     var showModelDialog by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
+    var showStorageFolderBrowser by remember { mutableStateOf(false) }
 
     LaunchedEffect(sharedMediaUrl) {
         if (!sharedMediaUrl.isNullOrBlank()) {
@@ -179,6 +198,16 @@ fun VideoListScreen(
                 },
                 actions = {
                     IconButton(
+                        onClick = { showStorageFolderBrowser = true },
+                        modifier = Modifier.testTag("storage_folders_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = "Storage Folders",
+                            tint = AccentTeal
+                        )
+                    }
+                    IconButton(
                         onClick = { showUrlDialog = true },
                         modifier = Modifier.testTag("import_url_top_button")
                     ) {
@@ -206,9 +235,25 @@ fun VideoListScreen(
         },
         floatingActionButton = {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                ExtendedFloatingActionButton(
+                    onClick = { showStorageFolderBrowser = true },
+                    containerColor = DarkSurfaceVariant,
+                    contentColor = AccentTeal,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.testTag("storage_folders_fab")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FolderOpen,
+                        contentDescription = "Folders",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Folders", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
                 ExtendedFloatingActionButton(
                     onClick = { showUrlDialog = true },
                     containerColor = DarkSurfaceVariant,
@@ -222,17 +267,17 @@ fun VideoListScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("YouTube / Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 FloatingActionButton(
                     onClick = {
                         try {
+                            documentPickerLauncher.launch(arrayOf("audio/*", "video/*"))
+                        } catch (e: Exception) {
                             videoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                             )
-                        } catch (e: Exception) {
-                            documentPickerLauncher.launch(arrayOf("video/*"))
                         }
                     },
                     containerColor = AccentTeal,
@@ -244,7 +289,7 @@ fun VideoListScreen(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Import Video")
+                        Icon(Icons.Default.Add, contentDescription = "Import Audio/Video")
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Import", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
@@ -598,7 +643,7 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         Text(
-                            text = "No Videos Added Yet",
+                            text = "No Audio or Video Added Yet",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
@@ -609,7 +654,7 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "Import a music video to extract clean vocals using the built-in UVR MDX-Net ONNX neural model or your custom model.",
+                            text = "Import audio tracks (MP3, WAV, FLAC, M4A) or music videos to isolate vocals or instrumental backings using AI neural separation.",
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
@@ -621,25 +666,35 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(24.dp))
 
                         Button(
-                            onClick = {
-                                try {
-                                    videoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                                    )
-                                } catch (e: Exception) {
-                                    documentPickerLauncher.launch(arrayOf("video/*"))
-                                }
-                            },
+                            onClick = { showStorageFolderBrowser = true },
                             colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .height(50.dp)
+                                .testTag("browse_storage_folders_button")
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color.Black)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Browse Storage Folders", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                documentPickerLauncher.launch(arrayOf("audio/*", "video/*"))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceVariant),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth(0.85f)
                                 .height(50.dp)
                                 .testTag("import_gallery_button")
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black)
+                            Icon(Icons.Default.Add, contentDescription = null, tint = AccentTeal)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Import from Gallery", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text("Import Audio or Video File", color = TextPrimary, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -850,16 +905,42 @@ fun VideoListScreen(
         )
     }
 
-    // Export Confirmation Dialog with Delete Original Option
+    // Storage Folder Browser Sheet
+    StorageFolderBrowserSheet(
+        isOpen = showStorageFolderBrowser,
+        savedFolders = savedFolders,
+        selectedFolder = selectedFolder,
+        mediaItems = folderMediaItems,
+        isScanning = isScanningFolder,
+        onDismiss = { showStorageFolderBrowser = false },
+        onFolderSelected = onFolderSelected,
+        onFolderGranted = onFolderGranted,
+        onFolderRemoved = onFolderRemoved,
+        onRefreshFolder = onRefreshFolder,
+        onMediaItemSelected = { item ->
+            showStorageFolderBrowser = false
+            onImportStorageItem(item)
+        },
+        onPickAnyFileDirectly = {
+            showStorageFolderBrowser = false
+            documentPickerLauncher.launch(arrayOf("audio/*", "video/*"))
+        }
+    )
+
+    // Export Confirmation Dialog with Audio and Video options
     videoToExport?.let { video ->
-        ExportConfirmDialog(
+        ExportOptionsDialog(
             video = video,
             onDismiss = { videoToExport = null },
-            onConfirmExport = { deleteOriginal ->
+            onConfirmExport = { format, deleteOriginal ->
                 val target = videoToExport
                 videoToExport = null
                 if (target != null) {
-                    onExportVideo(target, deleteOriginal)
+                    if (onExportMedia != null) {
+                        onExportMedia(target, format, deleteOriginal)
+                    } else {
+                        onExportVideo(target, deleteOriginal)
+                    }
                 }
             }
         )

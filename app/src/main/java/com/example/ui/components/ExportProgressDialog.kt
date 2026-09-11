@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Movie
@@ -67,14 +68,14 @@ fun ExportProgressDialog(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.Movie,
+                        imageVector = Icons.Default.Audiotrack,
                         contentDescription = null,
                         tint = AccentTeal,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Exporting Video (Vocals Only)",
+                        text = "Exporting Media…",
                         color = TextPrimary,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
@@ -88,7 +89,7 @@ fun ExportProgressDialog(
                         .testTag("export_progress_dialog")
                 ) {
                     Text(
-                        text = "Combining video stream with AI extracted vocal audio track…",
+                        text = "Processing audio stems and encoding output file…",
                         color = TextSecondary,
                         fontSize = 13.sp
                     )
@@ -120,19 +121,21 @@ fun ExportProgressDialog(
             shape = RoundedCornerShape(16.dp)
         )
     } else if (exportResult != null) {
+        val fileName = exportResult.internalFile.name.lowercase()
+        val isAudio = fileName.endsWith(".wav") || fileName.endsWith(".m4a") || fileName.endsWith(".mp3")
         AlertDialog(
             onDismissRequest = onDismiss,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.CheckCircle,
+                        imageVector = if (isAudio) Icons.Default.Audiotrack else Icons.Default.Movie,
                         contentDescription = null,
                         tint = AccentTeal,
                         modifier = Modifier.size(26.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Export Complete!",
+                        text = if (isAudio) "Audio Export Complete!" else "Video Export Complete!",
                         color = TextPrimary,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
@@ -146,7 +149,10 @@ fun ExportProgressDialog(
                         .testTag("export_success_dialog")
                 ) {
                     Text(
-                        text = "Your video with vocals-only has been successfully rendered and saved to internal storage.",
+                        text = if (isAudio)
+                            "Your extracted audio track has been saved and is ready for playback or sharing."
+                        else
+                            "Your video with vocals-only has been successfully rendered and saved.",
                         color = TextSecondary,
                         fontSize = 13.sp,
                         lineHeight = 18.sp
@@ -161,7 +167,7 @@ fun ExportProgressDialog(
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
-                                text = "LOCATION",
+                                text = "SAVED TO",
                                 color = AccentTeal,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -176,7 +182,7 @@ fun ExportProgressDialog(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Internal: ${exportResult.internalFile.name} (${exportResult.internalFile.length() / (1024 * 1024)} MB)",
+                                text = "File: ${exportResult.internalFile.name} (${(exportResult.internalFile.length() / 1024L)} KB)",
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
@@ -207,7 +213,12 @@ fun ExportProgressDialog(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Play Video", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                text = if (isAudio) "Play Audio" else "Play Video",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
                         }
 
                         OutlinedButton(
@@ -284,14 +295,22 @@ private fun openExportedVideo(context: Context, exportResult: ExportResult) {
             exportResult.internalFile
         )
 
+        val fileName = exportResult.internalFile.name.lowercase()
+        val mimeType = when {
+            fileName.endsWith(".wav") -> "audio/wav"
+            fileName.endsWith(".m4a") -> "audio/mp4"
+            fileName.endsWith(".mp3") -> "audio/mpeg"
+            else -> "video/mp4"
+        }
+
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "video/mp4")
+            setDataAndType(uri, mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(Intent.createChooser(intent, "Play Exported Video"))
+        context.startActivity(Intent.createChooser(intent, "Play Exported Media"))
     } catch (e: Exception) {
-        Toast.makeText(context, "No video player app found", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "No compatible media player found", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -303,13 +322,21 @@ private fun shareExportedVideo(context: Context, exportResult: ExportResult) {
             exportResult.internalFile
         )
 
+        val fileName = exportResult.internalFile.name.lowercase()
+        val mimeType = when {
+            fileName.endsWith(".wav") -> "audio/wav"
+            fileName.endsWith(".m4a") -> "audio/mp4"
+            fileName.endsWith(".mp3") -> "audio/mpeg"
+            else -> "video/mp4"
+        }
+
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "video/mp4"
+            type = mimeType
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Share Video with Vocals Only"))
+        context.startActivity(Intent.createChooser(intent, "Share Exported Track"))
     } catch (e: Exception) {
-        Toast.makeText(context, "Could not share video: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Could not share media: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
     }
 }

@@ -79,6 +79,9 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.export.ExportFormat
+import com.example.ui.components.ExportConfirmDialog
+import com.example.ui.components.ExportOptionsDialog
 import com.example.ui.components.ProcessingOverlay
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
@@ -107,6 +110,7 @@ fun VideoPlayerScreen(
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
     onExportVideo: (deleteOriginal: Boolean) -> Unit,
+    onExportMedia: ((format: ExportFormat, deleteOriginal: Boolean) -> Unit)? = null,
     onCancelProcessing: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -118,6 +122,12 @@ fun VideoPlayerScreen(
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var useIsolatedVocals by remember { mutableStateOf(true) }
     var showExportConfirmDialog by remember { mutableStateOf(false) }
+
+    val isAudioSource = remember(video) {
+        val path = video.videoUri.lowercase()
+        path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".m4a") ||
+                path.endsWith(".flac") || path.endsWith(".ogg") || path.endsWith(".aac")
+    }
 
     // Single unified ExoPlayer instance for frame-accurate, sample-synced video and audio playback
     val player = remember {
@@ -257,33 +267,72 @@ fun VideoPlayerScreen(
                 )
             )
 
-            // Video Player at Top
+            // Video / Audio Player Surface at Top
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .background(Color.Black),
+                    .background(if (isAudioSource) Color(0xFF0F172A) else Color.Black),
                 contentAlignment = Alignment.Center
             ) {
                 if (video.status == VideoStatus.READY) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                this.player = player
-                                useController = false // Custom minimal controls below
+                    if (isAudioSource) {
+                        // Polished Audio Track Visualization Card
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentTeal.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.GraphicEq,
+                                    contentDescription = "Audio Track",
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(38.dp)
+                                )
                             }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("video_player_view")
-                    )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = video.title,
+                                color = TextPrimary,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (useIsolatedVocals) "Playing: AI Isolated Vocals" else "Playing: Original Audio",
+                                color = AccentTeal,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    } else {
+                        AndroidView(
+                            factory = { ctx ->
+                                PlayerView(ctx).apply {
+                                    this.player = player
+                                    useController = false // Custom minimal controls below
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("video_player_view")
+                        )
+                    }
                 } else {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (video.status == VideoStatus.ERROR) "Playback unavailable" else "Preparing video…",
+                            text = if (video.status == VideoStatus.ERROR) "Playback unavailable" else "Preparing media…",
                             color = TextSecondary,
                             style = MaterialTheme.typography.bodyMedium
                         )
@@ -577,14 +626,18 @@ fun VideoPlayerScreen(
             onCancel = onCancelProcessing
         )
 
-        // Export Confirmation Dialog with Delete Original Option
+        // Export Confirmation Dialog with Audio and Video options
         if (showExportConfirmDialog) {
-            ExportConfirmDialog(
+            ExportOptionsDialog(
                 video = video,
                 onDismiss = { showExportConfirmDialog = false },
-                onConfirmExport = { deleteOriginal ->
+                onConfirmExport = { format, deleteOriginal ->
                     showExportConfirmDialog = false
-                    onExportVideo(deleteOriginal)
+                    if (onExportMedia != null) {
+                        onExportMedia(format, deleteOriginal)
+                    } else {
+                        onExportVideo(deleteOriginal)
+                    }
                 }
             )
         }

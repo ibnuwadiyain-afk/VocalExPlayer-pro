@@ -60,6 +60,11 @@ class MainActivity : ComponentActivity() {
                     val exportResult by viewModel.exportResult.collectAsState()
                     val exportError by viewModel.exportError.collectAsState()
 
+                    val savedFolders by viewModel.savedFolders.collectAsState()
+                    val selectedFolder by viewModel.selectedFolder.collectAsState()
+                    val folderMediaItems by viewModel.activeFolderMediaItems.collectAsState()
+                    val isScanningFolder by viewModel.isScanningFolder.collectAsState()
+
                     val downloadProgressState by viewModel.downloadProgressState.collectAsState()
                     val isDownloadingMedia by viewModel.isDownloadingMedia.collectAsState()
                     val downloadElapsedFormatted by viewModel.downloadElapsedFormatted.collectAsState()
@@ -95,6 +100,7 @@ class MainActivity : ComponentActivity() {
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
                             onExportVideo = { deleteOriginal -> viewModel.exportVideo(selectedVideo!!, deleteOriginal) },
+                            onExportMedia = { format, deleteOriginal -> viewModel.exportMedia(selectedVideo!!, format, deleteOriginal) },
                             onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     } else {
@@ -117,8 +123,17 @@ class MainActivity : ComponentActivity() {
                             activeProcessingVideoId = activeProcessingVideoId,
                             activeProcessingVideoTitle = activeProcessingVideoTitle,
                             isBackgroundProtected = isBackgroundProtected,
+                            savedFolders = savedFolders,
+                            selectedFolder = selectedFolder,
+                            folderMediaItems = folderMediaItems,
+                            isScanningFolder = isScanningFolder,
+                            onFolderGranted = { uri -> viewModel.registerAndScanFolder(uri) },
+                            onFolderSelected = { folder -> viewModel.selectAndScanFolder(folder) },
+                            onFolderRemoved = { uriStr -> viewModel.removeSavedFolder(uriStr) },
+                            onRefreshFolder = { viewModel.refreshActiveFolder() },
+                            onImportStorageItem = { item -> viewModel.importMediaFromUri(item.uri, item.name) },
                             onVideoSelected = { video -> viewModel.selectVideo(video) },
-                            onImportVideo = { uri -> viewModel.importVideoFromUri(uri) },
+                            onImportVideo = { uri -> viewModel.importMediaFromUri(uri) },
                             onImportSampleVideo = { viewModel.importSampleVideo() },
                             onDeleteVideo = { video -> viewModel.deleteVideo(video) },
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
@@ -131,6 +146,7 @@ class MainActivity : ComponentActivity() {
                             onClearModelMessage = { viewModel.clearModelInfoMessage() },
                             onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
                             onExportVideo = { video, deleteOriginal -> viewModel.exportVideo(video, deleteOriginal) },
+                            onExportMedia = { video, format, deleteOriginal -> viewModel.exportMedia(video, format, deleteOriginal) },
                             onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     }

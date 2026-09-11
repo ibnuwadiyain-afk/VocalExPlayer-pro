@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,11 +13,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -24,6 +31,8 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
+import com.example.export.ExportFormat
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -55,7 +65,32 @@ fun ExportConfirmDialog(
     onDismiss: () -> Unit,
     onConfirmExport: (deleteOriginalAfterExport: Boolean) -> Unit
 ) {
+    // Overload for backward compatibility, defaults to WAV or MP4
+    ExportOptionsDialog(
+        video = video,
+        onDismiss = onDismiss,
+        onConfirmExport = { _, deleteOriginal -> onConfirmExport(deleteOriginal) }
+    )
+}
+
+@Composable
+fun ExportOptionsDialog(
+    video: VideoItemEntity,
+    onDismiss: () -> Unit,
+    onConfirmExport: (format: ExportFormat, deleteOriginalAfterExport: Boolean) -> Unit
+) {
+    val isAudioSource = remember(video) {
+        val path = video.videoUri.lowercase()
+        path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".m4a") ||
+                path.endsWith(".aac") || path.endsWith(".flac") || path.endsWith(".ogg")
+    }
+
+    var selectedFormat by remember {
+        mutableStateOf(if (isAudioSource) ExportFormat.AUDIO_VOCALS_WAV else ExportFormat.AUDIO_VOCALS_WAV)
+    }
     var deleteOriginalAfterExport by remember { mutableStateOf(false) }
+
+    val scrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -63,7 +98,7 @@ fun ExportConfirmDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .background(AccentTeal.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
@@ -72,19 +107,19 @@ fun ExportConfirmDialog(
                         imageVector = Icons.Default.FileDownload,
                         contentDescription = null,
                         tint = AccentTeal,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Export Video",
+                        text = "Export Media",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
                     Text(
-                        text = "With Separated Vocals Only",
+                        text = "Audio & Video Extraction Formats",
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
@@ -95,45 +130,111 @@ fun ExportConfirmDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("export_confirm_dialog")
+                    .verticalScroll(scrollState)
+                    .testTag("export_options_dialog")
             ) {
-                Text(
-                    text = "A new MP4 video will be created by combining the original video stream with the AI-isolated vocal audio track.",
-                    color = TextSecondary,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Target video info card
+                // Source item info
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = DarkSurfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(10.dp)) {
                         Text(
-                            text = "SOURCE VIDEO",
+                            text = if (isAudioSource) "SOURCE AUDIO TRACK" else "SOURCE VIDEO",
                             color = AccentTeal,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = video.title,
                             color = TextPrimary,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            maxLines = 2
+                            maxLines = 1
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Checkbox option to delete original video upon successful export
+                Text(
+                    text = "AUDIO EXPORT FORMATS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AccentTeal,
+                    letterSpacing = 0.5.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                FormatOptionCard(
+                    format = ExportFormat.AUDIO_VOCALS_WAV,
+                    isSelected = selectedFormat == ExportFormat.AUDIO_VOCALS_WAV,
+                    onSelect = { selectedFormat = ExportFormat.AUDIO_VOCALS_WAV },
+                    icon = Icons.Default.Mic
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                FormatOptionCard(
+                    format = ExportFormat.AUDIO_VOCALS_M4A,
+                    isSelected = selectedFormat == ExportFormat.AUDIO_VOCALS_M4A,
+                    onSelect = { selectedFormat = ExportFormat.AUDIO_VOCALS_M4A },
+                    icon = Icons.Default.Audiotrack
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                FormatOptionCard(
+                    format = ExportFormat.AUDIO_INSTRUMENTAL_WAV,
+                    isSelected = selectedFormat == ExportFormat.AUDIO_INSTRUMENTAL_WAV,
+                    onSelect = { selectedFormat = ExportFormat.AUDIO_INSTRUMENTAL_WAV },
+                    icon = Icons.Default.MusicNote
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                FormatOptionCard(
+                    format = ExportFormat.AUDIO_INSTRUMENTAL_M4A,
+                    isSelected = selectedFormat == ExportFormat.AUDIO_INSTRUMENTAL_M4A,
+                    onSelect = { selectedFormat = ExportFormat.AUDIO_INSTRUMENTAL_M4A },
+                    icon = Icons.Default.MusicNote
+                )
+
+                // Video formats (if source is not strictly audio)
+                if (!isAudioSource) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "VIDEO EXPORT FORMATS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentTeal,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    FormatOptionCard(
+                        format = ExportFormat.VIDEO_VOCALS_MP4,
+                        isSelected = selectedFormat == ExportFormat.VIDEO_VOCALS_MP4,
+                        onSelect = { selectedFormat = ExportFormat.VIDEO_VOCALS_MP4 },
+                        icon = Icons.Default.Movie
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    FormatOptionCard(
+                        format = ExportFormat.VIDEO_INSTRUMENTAL_MP4,
+                        isSelected = selectedFormat == ExportFormat.VIDEO_INSTRUMENTAL_MP4,
+                        onSelect = { selectedFormat = ExportFormat.VIDEO_INSTRUMENTAL_MP4 },
+                        icon = Icons.Default.Movie
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Delete original option
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = if (deleteOriginalAfterExport) DarkSurfaceVariant else DarkSurface,
@@ -146,7 +247,7 @@ fun ExportConfirmDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
@@ -170,18 +271,16 @@ fun ExportConfirmDialog(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Delete original video after export",
+                                    text = "Delete original after export",
                                     color = TextPrimary,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp
+                                    fontSize = 12.sp
                                 )
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Safely deletes source video only after export is 100% verified & completed.",
+                                text = "Safely deletes source only after export succeeds.",
                                 color = TextSecondary,
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp
+                                fontSize = 10.sp
                             )
                         }
                     }
@@ -190,7 +289,7 @@ fun ExportConfirmDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onConfirmExport(deleteOriginalAfterExport) },
+                onClick = { onConfirmExport(selectedFormat, deleteOriginalAfterExport) },
                 colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.testTag("confirm_export_button")
@@ -203,7 +302,7 @@ fun ExportConfirmDialog(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Export Now",
+                    text = "Export ${selectedFormat.extension.uppercase()}",
                     color = Color.Black,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
@@ -221,4 +320,66 @@ fun ExportConfirmDialog(
         containerColor = DarkBackground,
         shape = RoundedCornerShape(18.dp)
     )
+}
+
+@Composable
+private fun FormatOptionCard(
+    format: ExportFormat,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = if (isSelected) DarkSurfaceVariant else DarkSurface,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .then(
+                if (isSelected) Modifier.border(1.5.dp, AccentTeal, RoundedCornerShape(10.dp))
+                else Modifier
+            )
+            .clickable(onClick = onSelect)
+            .testTag("format_option_${format.name}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = isSelected,
+                onClick = onSelect,
+                colors = RadioButtonDefaults.colors(
+                    selectedColor = AccentTeal,
+                    unselectedColor = TextSecondary
+                ),
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isSelected) AccentTeal else TextSecondary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = format.title,
+                    color = TextPrimary,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = format.subtitle,
+                    color = TextSecondary,
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp
+                )
+            }
+        }
+    }
 }
