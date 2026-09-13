@@ -9,24 +9,152 @@ import android.util.Log
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+/**
+ * Encapsulates decoded audio data.
+ * Supports both zero-memory-overhead disk-backed chunk streaming (for long videos/audio)
+ * and in-memory arrays (for short clips or unit tests).
+ */
 class DecodedAudio(
-    val leftChannel: FloatArray,
-    val rightChannel: FloatArray,
     val sampleRate: Int,
-    val durationMs: Long
-)
+    val durationMs: Long,
+    val totalFrames: Long,
+    private val inMemoryLeft: FloatArray? = null,
+    private val inMemoryRight: FloatArray? = null,
+    val pcmFile: File? = null,
+    private val autoDeletePcmFile: Boolean = true
+) : AutoCloseable {
+
+    constructor(
+        leftChannel: FloatArray,
+        rightChannel: FloatArray,
+        sampleRate: Int,
+        durationMs: Long
+    ) : this(
+        sampleRate = sampleRate,
+        durationMs = durationMs,
+        totalFrames = minOf(leftChannel.size, rightChannel.size).toLong(),
+        inMemoryLeft = leftChannel,
+        inMemoryRight = rightChannel,
+        pcmFile = null,
+        autoDeletePcmFile = false
+    )
+
+    val leftChannel: FloatArray by lazy {
+        inMemoryLeft ?: loadChannel(0)
+    }
+
+    val rightChannel: FloatArray by lazy {
+        inMemoryRight ?: loadChannel(1)
+    }
+
+    private var raf: RandomAccessFile? = null
+    private val readBuffer = ByteBuffer.allocate(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
+
+    /**
+     * Reads a chunk of stereo samples into the destination Float32 arrays.
+     * Each frame consists of 2 channels (Left, Right) in the range [-1.0f, 1.0f].
+     * Memory usage is strictly O(1) buffer-based.
+     */
+    @Synchronized
+    fun readStereoChunk(
+        startFrame: Long,
+        count: Int,
+        destL: FloatArray,
+        destR: FloatArray,
+        destOffset: Int
+    ): Int {
+        if (count <= 0) return 0
+
+        // If in-memory arrays are available, copy directly
+        if (inMemoryLeft != null && inMemoryRight != null) {
+            val validFrames = minOf(count.toLong(), totalFrames - startFrame).coerceAtLeast(0L).toInt()
+            if (validFrames > 0 && startFrame < totalFrames) {
+                System.arraycopy(inMemoryLeft, startFrame.toInt(), destL, destOffset, validFrames)
+                System.arraycopy(inMemoryRight, startFrame.toInt(), destR, destOffset, validFrames)
+            }
+            return validFrames
+        }
+
+        // Stream from disk PCM file (16-bit stereo: 4 bytes per frame)
+        val file = pcmFile ?: return 0
+        if (startFrame >= totalFrames) return 0
+
+        try {
+            if (raf == null) {
+                raf = RandomAccessFile(file, "r")
+            }
+            val currentRaf = raf ?: return 0
+            val validFrames = minOf(count.toLong(), totalFrames - startFrame).toInt()
+            val startByte = startFrame * 4L
+            currentRaf.seek(startByte)
+
+            var framesLoaded = 0
+            while (framesLoaded < validFrames) {
+                val framesToRead = minOf(validFrames - framesLoaded, readBuffer.capacity() / 4)
+                val bytesToRead = framesToRead * 4
+                readBuffer.clear()
+                val bytesRead = currentRaf.read(readBuffer.array(), 0, bytesToRead)
+                if (bytesRead <= 0) break
+                val framesRead = bytesRead / 4
+                readBuffer.position(0)
+                readBuffer.limit(bytesRead)
+                val sBuf = readBuffer.asShortBuffer()
+                for (f in 0 until framesRead) {
+                    val idx = destOffset + framesLoaded + f
+                    destL[idx] = sBuf.get() / 32768.0f
+                    destR[idx] = sBuf.get() / 32768.0f
+                }
+                framesLoaded += framesRead
+            }
+            return framesLoaded
+        } catch (e: Exception) {
+            Log.e("DecodedAudio", "Error reading chunk at frame $startFrame: ${e.message}", e)
+            return 0
+        }
+    }
+
+    private fun loadChannel(channelIndex: Int): FloatArray {
+        val size = totalFrames.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val channel = FloatArray(size)
+        val tempL = FloatArray(4096)
+        val tempR = FloatArray(4096)
+        var pos = 0L
+        while (pos < totalFrames) {
+            val chunk = minOf(4096L, totalFrames - pos).toInt()
+            val read = readStereoChunk(pos, chunk, tempL, tempR, 0)
+            if (read <= 0) break
+            val src = if (channelIndex == 0) tempL else tempR
+            System.arraycopy(src, 0, channel, pos.toInt(), read)
+            pos += read
+        }
+        return channel
+    }
+
+    override fun close() {
+        try {
+            raf?.close()
+            raf = null
+        } catch (_: Exception) {}
+        if (autoDeletePcmFile) {
+            try {
+                pcmFile?.delete()
+            } catch (_: Exception) {}
+        }
+    }
+}
 
 object AudioExtractor {
     private const val TAG = "AudioExtractor"
     private const val TIMEOUT_US = 5000L
 
     /**
-     * Extracts and decodes the audio track of the given video into stereo Float32 arrays.
-     * Uses zero-allocation stream-to-disk buffering to prevent Dalvik heap OutOfMemoryError
-     * on large audio/video files.
+     * Extracts and decodes the audio track of the given video into a streamable DecodedAudio.
+     * Uses zero-allocation stream-to-disk buffering to eliminate Dalvik heap OutOfMemoryError
+     * on long videos (from short clips to multi-hour recordings).
      */
     fun extractAudioFromVideo(
         context: Context,
@@ -37,7 +165,7 @@ object AudioExtractor {
         try {
             val directWav = readWavDirectly(context, videoUri)
             if (directWav != null) {
-                Log.i(TAG, "Successfully extracted audio via direct WAV decoder: ${directWav.sampleRate}Hz, ${directWav.durationMs}ms")
+                Log.i(TAG, "Successfully extracted audio via direct WAV decoder: ${directWav.sampleRate}Hz, ${directWav.durationMs}ms, frames=${directWav.totalFrames}")
                 onProgress(0.25f)
                 return directWav
             }
@@ -50,7 +178,7 @@ object AudioExtractor {
             val scheme = videoUri.scheme
             if (scheme == null || scheme == "file") {
                 val path = videoUri.path ?: videoUri.toString().removePrefix("file://")
-                val file = java.io.File(path)
+                val file = File(path)
                 if (file.exists()) {
                     extractor.setDataSource(file.absolutePath)
                 } else {
@@ -122,6 +250,10 @@ object AudioExtractor {
         val bufferInfo = MediaCodec.BufferInfo()
         var sawInputEOS = false
         var sawOutputEOS = false
+        var consecutiveTryAgainCount = 0
+
+        // Intermediate buffer for channel normalization (mono -> stereo, multi -> stereo)
+        val normBuffer = ByteBuffer.allocateDirect(32 * 1024).order(ByteOrder.LITTLE_ENDIAN)
 
         try {
             while (!sawOutputEOS) {
@@ -161,17 +293,80 @@ object AudioExtractor {
                     if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
                         actualChannelCount = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                     }
+                    consecutiveTryAgainCount = 0
                     Log.i(TAG, "Decoder output format changed: sampleRate=$actualSampleRate, channelCount=$actualChannelCount")
                 } else if (outputBufferIndex >= 0) {
+                    consecutiveTryAgainCount = 0
                     val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                        fileChannel.write(outputBuffer)
+
+                        if (actualChannelCount == 2) {
+                            // Standard stereo 16-bit PCM: write directly
+                            fileChannel.write(outputBuffer)
+                        } else if (actualChannelCount == 1) {
+                            // Mono 16-bit PCM: duplicate each sample to stereo L/R
+                            val shortBuf = outputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                            normBuffer.clear()
+                            val normShorts = normBuffer.asShortBuffer()
+                            while (shortBuf.hasRemaining()) {
+                                if (normShorts.remaining() < 2) {
+                                    normBuffer.position(0)
+                                    normBuffer.limit(normShorts.position() * 2)
+                                    fileChannel.write(normBuffer)
+                                    normBuffer.clear()
+                                    normShorts.position(0)
+                                }
+                                val sample = shortBuf.get()
+                                normShorts.put(sample)
+                                normShorts.put(sample)
+                            }
+                            if (normShorts.position() > 0) {
+                                normBuffer.position(0)
+                                normBuffer.limit(normShorts.position() * 2)
+                                fileChannel.write(normBuffer)
+                            }
+                        } else {
+                            // Multi-channel (>2): downmix to stereo
+                            val shortBuf = outputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                            normBuffer.clear()
+                            val normShorts = normBuffer.asShortBuffer()
+                            while (shortBuf.remaining() >= actualChannelCount) {
+                                if (normShorts.remaining() < 2) {
+                                    normBuffer.position(0)
+                                    normBuffer.limit(normShorts.position() * 2)
+                                    fileChannel.write(normBuffer)
+                                    normBuffer.clear()
+                                    normShorts.position(0)
+                                }
+                                val l = shortBuf.get()
+                                val r = shortBuf.get()
+                                val c = (shortBuf.get() * 0.707f).toInt().toShort()
+                                for (ch in 3 until actualChannelCount) {
+                                    shortBuf.get()
+                                }
+                                normShorts.put(((l + c).coerceIn(-32768, 32767)).toShort())
+                                normShorts.put(((r + c).coerceIn(-32768, 32767)).toShort())
+                            }
+                            if (normShorts.position() > 0) {
+                                normBuffer.position(0)
+                                normBuffer.limit(normShorts.position() * 2)
+                                fileChannel.write(normBuffer)
+                            }
+                        }
                     }
                     codec.releaseOutputBuffer(outputBufferIndex, false)
                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                         sawOutputEOS = true
+                    }
+                } else if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    if (sawInputEOS) {
+                        consecutiveTryAgainCount++
+                        if (consecutiveTryAgainCount > 50) {
+                            Log.w(TAG, "MediaCodec decoder safety EOS triggered after $consecutiveTryAgainCount idle polls")
+                            sawOutputEOS = true
+                        }
                     }
                 }
             }
@@ -195,79 +390,31 @@ object AudioExtractor {
             }
         }
 
-        // Convert streamed PCM 16-bit to stereo Float32 arrays [-1.0f, 1.0f]
+        // tempPcmFile is now guaranteed to be 16-bit 2-channel stereo PCM (4 bytes per frame)
         val totalBytes = tempPcmFile.length()
-        val totalShorts = (totalBytes / 2L).toInt()
-        val channels = actualChannelCount.coerceAtLeast(1)
-        val numFrames = totalShorts / channels
-        val left = FloatArray(numFrames)
-        val right = FloatArray(numFrames)
-
-        try {
-            FileInputStream(tempPcmFile).use { fis ->
-                val inChannel = fis.channel
-                val readBuffer = ByteBuffer.allocateDirect(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
-                var frameIdx = 0
-
-                while (inChannel.read(readBuffer) > 0 && frameIdx < numFrames) {
-                    readBuffer.flip()
-                    val shortBuf = readBuffer.asShortBuffer()
-
-                    if (channels == 1) {
-                        while (shortBuf.hasRemaining() && frameIdx < numFrames) {
-                            val mono = shortBuf.get() / 32768.0f
-                            left[frameIdx] = mono
-                            right[frameIdx] = mono
-                            frameIdx++
-                        }
-                    } else if (channels == 2) {
-                        while (shortBuf.remaining() >= 2 && frameIdx < numFrames) {
-                            left[frameIdx] = shortBuf.get() / 32768.0f
-                            right[frameIdx] = shortBuf.get() / 32768.0f
-                            frameIdx++
-                        }
-                    } else {
-                        // Multi-channel downmix: L, R, C
-                        while (shortBuf.remaining() >= channels && frameIdx < numFrames) {
-                            val l = shortBuf.get() / 32768.0f
-                            val r = shortBuf.get() / 32768.0f
-                            val c = (shortBuf.get() / 32768.0f) * 0.707f
-                            for (ch in 3 until channels) {
-                                shortBuf.get()
-                            }
-                            left[frameIdx] = (l + c).coerceIn(-1.0f, 1.0f)
-                            right[frameIdx] = (r + c).coerceIn(-1.0f, 1.0f)
-                            frameIdx++
-                        }
-                    }
-                    readBuffer.clear()
-                }
-            }
-        } finally {
-            try {
-                tempPcmFile.delete()
-            } catch (_: Exception) {}
-        }
+        val numFrames = totalBytes / 4L
 
         val calculatedDurationMs = if (actualSampleRate > 0) {
-            (numFrames.toLong() * 1000L) / actualSampleRate
+            (numFrames * 1000L) / actualSampleRate
         } else {
             durationUs / 1000L
         }
 
-        Log.i(TAG, "Extracted audio: $numFrames frames at $actualSampleRate Hz (${calculatedDurationMs}ms), channels=$channels")
+        Log.i(TAG, "Extracted audio stream: $numFrames frames at $actualSampleRate Hz (${calculatedDurationMs}ms), file=${tempPcmFile.length()} bytes")
 
         return DecodedAudio(
-            leftChannel = left,
-            rightChannel = right,
             sampleRate = actualSampleRate,
-            durationMs = calculatedDurationMs
+            durationMs = calculatedDurationMs,
+            totalFrames = numFrames,
+            pcmFile = tempPcmFile,
+            autoDeletePcmFile = true
         )
     }
 
     /**
      * Directly decodes uncompressed 16-bit PCM WAV audio from a file or content URI
      * without needing MediaCodec. Returns null if the source is not a standard PCM WAV.
+     * Streams data directly to disk to prevent OOM on large WAV files.
      */
     fun readWavDirectly(context: Context, uri: Uri): DecodedAudio? {
         val inputStream = try {
@@ -314,39 +461,79 @@ object AudioExtractor {
                 }
 
                 buffer.position(40)
-                var dataSize = buffer.int.toLong() and 0xFFFFFFFFL
+                val dataSize = buffer.int.toLong() and 0xFFFFFFFFL
 
-                val pcmData = stream.readBytes()
-                val totalShorts = pcmData.size / 2
-                val numFrames = totalShorts / numChannels
-                if (numFrames <= 0) return null
+                val tempPcmFile = File.createTempFile("direct_wav_pcm_", ".raw", context.cacheDir)
+                FileOutputStream(tempPcmFile).use { fos ->
+                    val inBuf = ByteArray(64 * 1024)
+                    var remaining = if (dataSize > 0) dataSize else Long.MAX_VALUE
 
-                val left = FloatArray(numFrames)
-                val right = FloatArray(numFrames)
-                val sBuf = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-
-                if (numChannels == 1) {
-                    for (i in 0 until numFrames) {
-                        val mono = sBuf.get() / 32768.0f
-                        left[i] = mono
-                        right[i] = mono
-                    }
-                } else {
-                    for (i in 0 until numFrames) {
-                        left[i] = sBuf.get() / 32768.0f
-                        right[i] = sBuf.get() / 32768.0f
-                        for (ch in 2 until numChannels) {
-                            sBuf.get()
+                    if (numChannels == 2) {
+                        while (remaining > 0) {
+                            val toRead = minOf(remaining, inBuf.size.toLong()).toInt()
+                            val r = stream.read(inBuf, 0, toRead)
+                            if (r <= 0) break
+                            fos.write(inBuf, 0, r)
+                            if (dataSize > 0) remaining -= r
+                        }
+                    } else if (numChannels == 1) {
+                        val stereoBuf = ByteBuffer.allocate(inBuf.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+                        while (remaining > 0) {
+                            val toRead = minOf(remaining, inBuf.size.toLong()).toInt()
+                            val r = stream.read(inBuf, 0, toRead)
+                            if (r <= 0) break
+                            val sIn = ByteBuffer.wrap(inBuf, 0, r).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                            stereoBuf.clear()
+                            val sOut = stereoBuf.asShortBuffer()
+                            while (sIn.hasRemaining()) {
+                                val s = sIn.get()
+                                sOut.put(s)
+                                sOut.put(s)
+                            }
+                            fos.write(stereoBuf.array(), 0, sOut.position() * 2)
+                            if (dataSize > 0) remaining -= r
+                        }
+                    } else {
+                        // Multi-channel
+                        val stereoBuf = ByteBuffer.allocate(inBuf.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+                        while (remaining > 0) {
+                            val toRead = minOf(remaining, inBuf.size.toLong()).toInt()
+                            val r = stream.read(inBuf, 0, toRead)
+                            if (r <= 0) break
+                            val sIn = ByteBuffer.wrap(inBuf, 0, r).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                            stereoBuf.clear()
+                            val sOut = stereoBuf.asShortBuffer()
+                            while (sIn.remaining() >= numChannels) {
+                                val l = sIn.get()
+                                val right = sIn.get()
+                                val c = (sIn.get() * 0.707f).toInt().toShort()
+                                for (ch in 3 until numChannels) {
+                                    sIn.get()
+                                }
+                                sOut.put(((l + c).coerceIn(-32768, 32767)).toShort())
+                                sOut.put(((right + c).coerceIn(-32768, 32767)).toShort())
+                            }
+                            fos.write(stereoBuf.array(), 0, sOut.position() * 2)
+                            if (dataSize > 0) remaining -= r
                         }
                     }
+                    fos.flush()
                 }
 
-                val durationMs = (numFrames.toLong() * 1000L) / sampleRate
+                val totalBytes = tempPcmFile.length()
+                val totalFrames = totalBytes / 4L
+                if (totalFrames <= 0) {
+                    tempPcmFile.delete()
+                    return null
+                }
+
+                val durationMs = (totalFrames * 1000L) / sampleRate
                 return DecodedAudio(
-                    leftChannel = left,
-                    rightChannel = right,
                     sampleRate = sampleRate,
-                    durationMs = durationMs
+                    durationMs = durationMs,
+                    totalFrames = totalFrames,
+                    pcmFile = tempPcmFile,
+                    autoDeletePcmFile = true
                 )
             }
         } catch (e: Exception) {
@@ -355,3 +542,4 @@ object AudioExtractor {
         }
     }
 }
+

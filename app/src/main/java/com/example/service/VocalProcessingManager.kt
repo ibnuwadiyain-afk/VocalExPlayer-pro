@@ -194,6 +194,18 @@ object VocalProcessingManager {
                 _elapsedSeconds.value = elapsedSec
                 _elapsedTimeFormatted.value = formatSeconds(elapsedSec)
 
+                // Refresh WakeLock every 5 minutes to prevent background timeout during hours-long inference
+                if (elapsedSec > 0 && elapsedSec % 300L == 0L) {
+                    try {
+                        if (wakeLock?.isHeld == true) {
+                            wakeLock?.acquire(4 * 60 * 60 * 1000L)
+                            Log.d(TAG, "Heartbeat: partial WakeLock renewed for ongoing processing")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to renew WakeLock heartbeat: ${e.message}")
+                    }
+                }
+
                 // Calculate estimated remaining time if progress > 5%
                 val currentProgress = _progress.value
                 if (currentProgress > 0.05f && currentProgress < 0.99f && elapsedMs > 2000L) {
@@ -228,7 +240,7 @@ object VocalProcessingManager {
                     WAKELOCK_TAG
                 ).apply {
                     setReferenceCounted(false)
-                    acquire(20 * 60 * 1000L) // 20-minute safety timeout
+                    acquire(4 * 60 * 60 * 1000L) // 4-hour safety timeout for long videos
                 }
                 _isBackgroundProtected.value = true
                 Log.d(TAG, "Partial WakeLock acquired for background AI inference")

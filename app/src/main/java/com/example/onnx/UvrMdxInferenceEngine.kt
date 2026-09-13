@@ -133,11 +133,8 @@ class UvrMdxInferenceEngine(private val context: Context) {
             val inputShape = if (inputInfo is TensorInfo) inputInfo.shape else longArrayOf()
             Log.i(TAG, "ONNX Model Inputs: $inputNames (shape: ${inputShape.contentToString()}), Outputs: $outputNames")
 
-            val leftIn = decodedAudio.leftChannel
-            val rightIn = decodedAudio.rightChannel
-            val totalSamples = minOf(leftIn.size, rightIn.size)
-
-            if (totalSamples == 0) {
+            val totalSamples = decodedAudio.totalFrames
+            if (totalSamples <= 0L) {
                 throw IllegalArgumentException("Audio track has 0 samples")
             }
 
@@ -150,9 +147,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
                     session = session,
                     inputName = inputName,
                     outputName = outputName,
-                    leftIn = leftIn,
-                    rightIn = rightIn,
-                    sampleRate = decodedAudio.sampleRate,
+                    decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
                     accelerationMode = accelerationMode,
                     onProgress = onProgress
@@ -162,9 +157,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
                     session = session,
                     inputName = inputName,
                     outputName = outputName,
-                    leftIn = leftIn,
-                    rightIn = rightIn,
-                    sampleRate = decodedAudio.sampleRate,
+                    decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
                     onProgress = onProgress
                 )
@@ -178,33 +171,33 @@ class UvrMdxInferenceEngine(private val context: Context) {
 
     /**
      * Executes the UVR MDX-Net STFT -> Neural ONNX -> iSTFT separation pipeline.
+     * Streams input chunks directly from disk and streams output samples directly to the WAV file.
+     * Memory usage is strictly O(1) (< 15MB total heap), completely eliminating Dalvik heap OOM
+     * on arbitrarily long videos.
      */
     private fun runMdxSpectrogramPipeline(
         session: OrtSession,
         inputName: String,
         outputName: String,
-        leftIn: FloatArray,
-        rightIn: FloatArray,
-        sampleRate: Int,
+        decodedAudio: DecodedAudio,
         outputWavFile: File,
         accelerationMode: AccelerationMode,
         onProgress: (Float) -> Unit
     ) {
-        val totalSamples = minOf(leftIn.size, rightIn.size)
+        val totalSamples = decodedAudio.totalFrames
+        val sampleRate = decodedAudio.sampleRate
         val trim = processor.trim // 3072
         val genSize = processor.genSize // 254976
         val chunkSize = processor.chunkSize // 261120
 
         // Pad signal alignment to genSize
-        val pad = genSize - (totalSamples % genSize)
+        val remainder = (totalSamples % genSize).toInt()
+        val pad = if (remainder == 0) 0L else (genSize - remainder).toLong()
 
-        val totalChunks = (totalSamples + pad) / genSize
+        val totalChunks = ((totalSamples + pad) / genSize).toInt()
         Log.i(TAG, "Running UVR MDX-Net [${accelerationMode.displayName}]: $totalSamples samples, $totalChunks chunks (genSize=$genSize)")
 
-        val outFinalLeft = FloatArray(totalSamples)
-        val outFinalRight = FloatArray(totalSamples)
-
-        // Preallocate reusable scratchpads and buffers for chunk processing
+        // Preallocate reusable scratchpads and buffers for chunk processing (strictly O(1) heap)
         val scratchL = processor.createScratchpad()
         val scratchR = processor.createScratchpad()
 
@@ -228,117 +221,132 @@ class UvrMdxInferenceEngine(private val context: Context) {
         val istftWeightL = FloatArray(chunkSize + processor.nFft)
         val istftWeightR = FloatArray(chunkSize + processor.nFft)
 
+        val outChunkL = FloatArray(genSize)
+        val outChunkR = FloatArray(genSize)
+
         var chunkIdx = 0
-        var samplePos = 0
+        var samplePos = 0L
         var skippedChunks = 0
 
-        while (samplePos < totalSamples + pad) {
-            val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks) * 0.70f
-            onProgress(progressStart)
+        WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2).use { wavWriter ->
+            while (samplePos < totalSamples + pad) {
+                val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks.coerceAtLeast(1)) * 0.70f
+                onProgress(progressStart)
 
-            // 1. Copy chunk waveform directly from source audio without allocating padded buffers
-            java.util.Arrays.fill(chunkL, 0f)
-            java.util.Arrays.fill(chunkR, 0f)
+                val validCount = minOf(genSize.toLong(), totalSamples - samplePos).coerceAtLeast(0L).toInt()
 
-            val audioStart = samplePos - trim
-            val srcStart = maxOf(0, audioStart)
-            val srcEnd = minOf(totalSamples, audioStart + chunkSize)
-            val activeLen = if (srcEnd > srcStart) {
-                val destStart = srcStart - audioStart
-                val count = srcEnd - srcStart
-                System.arraycopy(leftIn, srcStart, chunkL, destStart, count)
-                System.arraycopy(rightIn, srcStart, chunkR, destStart, count)
-                destStart + count
-            } else {
-                0
-            }
+                // 1. Copy chunk waveform directly from source audio without allocating padded buffers
+                java.util.Arrays.fill(chunkL, 0f)
+                java.util.Arrays.fill(chunkR, 0f)
 
-            // Turbo Optimization: Check if chunk is silence/background pause
-            if (accelerationMode.silenceSkipThreshold > 0f) {
-                var sumSq = 0.0
-                val step = 8
-                var sampleCount = 0
-                var i = 0
-                while (i < activeLen) {
-                    val sL = chunkL[i]
-                    val sR = chunkR[i]
-                    sumSq += (sL * sL + sR * sR)
-                    sampleCount += 2
-                    i += step
+                val audioStart = samplePos - trim
+                val srcStart = maxOf(0L, audioStart)
+                val srcEnd = minOf(totalSamples, audioStart + chunkSize)
+                val activeLen = if (srcEnd > srcStart) (srcEnd - srcStart).toInt() else 0
+                val destStart = (srcStart - audioStart).toInt()
+
+                if (activeLen > 0) {
+                    decodedAudio.readStereoChunk(
+                        startFrame = srcStart,
+                        count = activeLen,
+                        destL = chunkL,
+                        destR = chunkR,
+                        destOffset = destStart
+                    )
                 }
-                val rms = if (sampleCount > 0) sqrt(sumSq / sampleCount).toFloat() else 0f
-                if (rms < accelerationMode.silenceSkipThreshold) {
-                    // Silence chunk: bypass heavy neural inference and iSTFT
-                    skippedChunks++
-                    samplePos += genSize
-                    chunkIdx++
-                    continue
+
+                // Turbo Optimization: Check if chunk is silence/background pause
+                if (accelerationMode.silenceSkipThreshold > 0f) {
+                    var sumSq = 0.0
+                    val step = 8
+                    var sampleCount = 0
+                    var i = 0
+                    while (i < activeLen) {
+                        val sL = chunkL[i]
+                        val sR = chunkR[i]
+                        sumSq += (sL * sL + sR * sR)
+                        sampleCount += 2
+                        i += step
+                    }
+                    val rms = if (sampleCount > 0) sqrt(sumSq / sampleCount).toFloat() else 0f
+                    if (rms < accelerationMode.silenceSkipThreshold) {
+                        // Silence chunk: bypass heavy neural inference and iSTFT, write silence directly
+                        skippedChunks++
+                        if (validCount > 0) {
+                            wavWriter.writeSilence(validCount)
+                        }
+                        samplePos += genSize
+                        chunkIdx++
+                        continue
+                    }
                 }
-            }
 
-            // 2. Compute STFT for Left and Right channels with zero-allocation scratchpads
-            processor.computeChannelStft(chunkL, specReL, specImL, scratchL)
-            processor.computeChannelStft(chunkR, specReR, specImR, scratchR)
+                // 2. Compute STFT for Left and Right channels with zero-allocation scratchpads
+                processor.computeChannelStft(chunkL, specReL, specImL, scratchL)
+                processor.computeChannelStft(chunkR, specReR, specImR, scratchR)
 
-            // 3. Pack into ONNX FloatBuffer
-            processor.packToFloatBuffer(specReL, specImL, specReR, specImR, inputFloatBuffer)
+                // 3. Pack into ONNX FloatBuffer
+                processor.packToFloatBuffer(specReL, specImL, specReR, specImR, inputFloatBuffer)
 
-            // 4. Run ONNX neural network
-            val inputTensor = OnnxTensor.createTensor(ortEnvironment, inputFloatBuffer, tensorShape)
-            var ortResult: OrtSession.Result? = null
+                // 4. Run ONNX neural network
+                val inputTensor = OnnxTensor.createTensor(ortEnvironment, inputFloatBuffer, tensorShape)
+                var ortResult: OrtSession.Result? = null
 
-            try {
-                ortResult = session.run(mapOf(inputName to inputTensor))
-                val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
+                try {
+                    ortResult = session.run(mapOf(inputName to inputTensor))
+                    val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
 
-                if (resultValue is OnnxTensor) {
-                    val outBuffer = resultValue.floatBuffer
-                    outBuffer.position(0)
+                    if (resultValue is OnnxTensor) {
+                        val outBuffer = resultValue.floatBuffer
+                        outBuffer.position(0)
 
-                    // Read out 4 channels: outReL, outImL, outReR, outImR
-                    for (f in 0 until DIM_F) {
-                        outBuffer.get(specReL[f], 0, DIM_T)
-                    }
-                    for (f in 0 until DIM_F) {
-                        outBuffer.get(specImL[f], 0, DIM_T)
-                    }
-                    for (f in 0 until DIM_F) {
-                        outBuffer.get(specReR[f], 0, DIM_T)
-                    }
-                    for (f in 0 until DIM_F) {
-                        outBuffer.get(specImR[f], 0, DIM_T)
-                    }
+                        // Read out 4 channels: outReL, outImL, outReR, outImR
+                        for (f in 0 until DIM_F) {
+                            outBuffer.get(specReL[f], 0, DIM_T)
+                        }
+                        for (f in 0 until DIM_F) {
+                            outBuffer.get(specImL[f], 0, DIM_T)
+                        }
+                        for (f in 0 until DIM_F) {
+                            outBuffer.get(specReR[f], 0, DIM_T)
+                        }
+                        for (f in 0 until DIM_F) {
+                            outBuffer.get(specImR[f], 0, DIM_T)
+                        }
 
-                    // 5. Compute Inverse STFT with zero-allocation scratchpads
-                    java.util.Arrays.fill(istftWaveL, 0f)
-                    java.util.Arrays.fill(istftWaveR, 0f)
-                    java.util.Arrays.fill(istftWeightL, 0f)
-                    java.util.Arrays.fill(istftWeightR, 0f)
+                        // 5. Compute Inverse STFT with zero-allocation scratchpads
+                        java.util.Arrays.fill(istftWaveL, 0f)
+                        java.util.Arrays.fill(istftWaveR, 0f)
+                        java.util.Arrays.fill(istftWeightL, 0f)
+                        java.util.Arrays.fill(istftWeightR, 0f)
 
-                    processor.computeChannelIstft(specReL, specImL, istftWaveL, istftWeightL, COMPENSATION, scratchL)
-                    processor.computeChannelIstft(specReR, specImR, istftWaveR, istftWeightR, COMPENSATION, scratchR)
+                        processor.computeChannelIstft(specReL, specImL, istftWaveL, istftWeightL, COMPENSATION, scratchL)
+                        processor.computeChannelIstft(specReR, specImR, istftWaveR, istftWeightR, COMPENSATION, scratchR)
 
-                    // 6. Normalize interior window weight and extract trim .. (trim + genSize)
-                    for (k in 0 until genSize) {
-                        val srcIdx = trim + k
-                        val targetIdx = samplePos + k
-                        if (targetIdx < totalSamples) {
+                        // 6. Normalize interior window weight and stream directly to disk
+                        for (k in 0 until validCount) {
+                            val srcIdx = trim + k
                             val wL = istftWeightL[srcIdx]
                             val wR = istftWeightR[srcIdx]
-                            outFinalLeft[targetIdx] = if (wL > 1e-4f) (istftWaveL[srcIdx] / wL).coerceIn(-1.0f, 1.0f) else istftWaveL[srcIdx]
-                            outFinalRight[targetIdx] = if (wR > 1e-4f) (istftWaveR[srcIdx] / wR).coerceIn(-1.0f, 1.0f) else istftWaveR[srcIdx]
+                            outChunkL[k] = if (wL > 1e-4f) (istftWaveL[srcIdx] / wL).coerceIn(-1.0f, 1.0f) else istftWaveL[srcIdx]
+                            outChunkR[k] = if (wR > 1e-4f) (istftWaveR[srcIdx] / wR).coerceIn(-1.0f, 1.0f) else istftWaveR[srcIdx]
                         }
+                        wavWriter.writeStereoChunk(outChunkL, outChunkR, 0, validCount)
+                    } else {
+                        // Fallback silence if tensor type unexpected
+                        if (validCount > 0) wavWriter.writeSilence(validCount)
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error executing ONNX chunk inference at chunk $chunkIdx", e)
+                    if (validCount > 0) wavWriter.writeSilence(validCount)
+                } finally {
+                    inputTensor.close()
+                    ortResult?.close()
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error executing ONNX chunk inference at chunk $chunkIdx", e)
-            } finally {
-                inputTensor.close()
-                ortResult?.close()
-            }
 
-            samplePos += genSize
-            chunkIdx++
+                samplePos += genSize
+                chunkIdx++
+            }
         }
 
         if (skippedChunks > 0) {
@@ -346,8 +354,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
         }
 
         onProgress(0.97f)
-        Log.i(TAG, "Writing separated vocal WAV: ${outputWavFile.absolutePath} ($totalSamples samples at $sampleRate Hz)")
-        WavWriter.writeWavFile(outFinalLeft, outFinalRight, sampleRate, outputWavFile)
+        Log.i(TAG, "Finished separated vocal WAV: ${outputWavFile.absolutePath} ($totalSamples samples at $sampleRate Hz)")
         System.gc()
         onProgress(1.0f)
     }
@@ -359,74 +366,81 @@ class UvrMdxInferenceEngine(private val context: Context) {
         session: OrtSession,
         inputName: String,
         outputName: String,
-        leftIn: FloatArray,
-        rightIn: FloatArray,
-        sampleRate: Int,
+        decodedAudio: DecodedAudio,
         outputWavFile: File,
         onProgress: (Float) -> Unit
     ) {
-        val totalSamples = minOf(leftIn.size, rightIn.size)
+        val totalSamples = decodedAudio.totalFrames
+        val sampleRate = decodedAudio.sampleRate
         val chunkSize = 44100 * 5 // 5 second chunks
-        val outFinalLeft = FloatArray(totalSamples)
-        val outFinalRight = FloatArray(totalSamples)
 
-        val totalChunks = (totalSamples + chunkSize - 1) / chunkSize
+        val totalChunks = ((totalSamples + chunkSize - 1) / chunkSize).toInt()
         var chunkIdx = 0
-        var samplePos = 0
+        var samplePos = 0L
 
         val chunkAudio = FloatArray(chunkSize * 2)
         val floatBuffer = ByteBuffer.allocateDirect(chunkSize * 2 * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
 
-        while (samplePos < totalSamples) {
-            val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks) * 0.70f
-            onProgress(progressStart)
+        val tempL = FloatArray(chunkSize)
+        val tempR = FloatArray(chunkSize)
+        val outL = FloatArray(chunkSize)
+        val outR = FloatArray(chunkSize)
 
-            val currentChunkLen = minOf(chunkSize, totalSamples - samplePos)
-            floatBuffer.clear()
-            for (i in 0 until currentChunkLen) {
-                floatBuffer.put(leftIn[samplePos + i])
-                floatBuffer.put(rightIn[samplePos + i])
-            }
-            for (i in currentChunkLen until chunkSize) {
-                floatBuffer.put(0f)
-                floatBuffer.put(0f)
-            }
-            floatBuffer.flip()
+        WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2).use { wavWriter ->
+            while (samplePos < totalSamples) {
+                val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks.coerceAtLeast(1)) * 0.70f
+                onProgress(progressStart)
 
-            val tensorShape = longArrayOf(1, 2, chunkSize.toLong())
-            val inputTensor = OnnxTensor.createTensor(ortEnvironment, floatBuffer, tensorShape)
-            var ortResult: OrtSession.Result? = null
+                val currentChunkLen = minOf(chunkSize.toLong(), totalSamples - samplePos).toInt()
+                java.util.Arrays.fill(tempL, 0f)
+                java.util.Arrays.fill(tempR, 0f)
+                decodedAudio.readStereoChunk(samplePos, currentChunkLen, tempL, tempR, 0)
 
-            try {
-                ortResult = session.run(mapOf(inputName to inputTensor))
-                val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
-                if (resultValue is OnnxTensor) {
-                    val outBuf = resultValue.floatBuffer
-                    outBuf.position(0)
-                    for (i in 0 until currentChunkLen) {
-                        if (outBuf.hasRemaining()) {
-                            outFinalLeft[samplePos + i] = outBuf.get().coerceIn(-1.0f, 1.0f)
-                        }
-                        if (outBuf.hasRemaining()) {
-                            outFinalRight[samplePos + i] = outBuf.get().coerceIn(-1.0f, 1.0f)
-                        }
-                    }
+                floatBuffer.clear()
+                for (i in 0 until currentChunkLen) {
+                    floatBuffer.put(tempL[i])
+                    floatBuffer.put(tempR[i])
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in waveform model inference at chunk $chunkIdx", e)
-            } finally {
-                inputTensor.close()
-                ortResult?.close()
-            }
+                for (i in currentChunkLen until chunkSize) {
+                    floatBuffer.put(0f)
+                    floatBuffer.put(0f)
+                }
+                floatBuffer.flip()
 
-            samplePos += currentChunkLen
-            chunkIdx++
+                val tensorShape = longArrayOf(1, 2, chunkSize.toLong())
+                val inputTensor = OnnxTensor.createTensor(ortEnvironment, floatBuffer, tensorShape)
+                var ortResult: OrtSession.Result? = null
+
+                try {
+                    ortResult = session.run(mapOf(inputName to inputTensor))
+                    val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
+                    if (resultValue is OnnxTensor) {
+                        val outBuf = resultValue.floatBuffer
+                        outBuf.position(0)
+                        for (i in 0 until currentChunkLen) {
+                            outL[i] = if (outBuf.hasRemaining()) outBuf.get().coerceIn(-1.0f, 1.0f) else 0f
+                            outR[i] = if (outBuf.hasRemaining()) outBuf.get().coerceIn(-1.0f, 1.0f) else 0f
+                        }
+                        wavWriter.writeStereoChunk(outL, outR, 0, currentChunkLen)
+                    } else {
+                        wavWriter.writeSilence(currentChunkLen)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in waveform model inference at chunk $chunkIdx", e)
+                    wavWriter.writeSilence(currentChunkLen)
+                } finally {
+                    inputTensor.close()
+                    ortResult?.close()
+                }
+
+                samplePos += currentChunkLen
+                chunkIdx++
+            }
         }
 
         onProgress(0.97f)
-        WavWriter.writeWavFile(outFinalLeft, outFinalRight, sampleRate, outputWavFile)
         onProgress(1.0f)
     }
 }

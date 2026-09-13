@@ -43,7 +43,7 @@ class AudioSeparationPipeline(
                 val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 localWakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)?.apply {
                     setReferenceCounted(false)
-                    acquire(15 * 60 * 1000L) // 15-minute timeout safeguard
+                    acquire(4 * 60 * 60 * 1000L) // 4-hour timeout safeguard for long videos
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Could not acquire pipeline WakeLock: ${e.message}")
@@ -93,16 +93,20 @@ class AudioSeparationPipeline(
                 }
             )
 
-            // Step 2: Run Real ONNX Separation
-            inferenceEngine.separateVocals(
-                decodedAudio = decodedAudio,
-                outputWavFile = vocalWavFile,
-                customModelPath = customModelPath,
-                accelerationMode = accelerationMode,
-                onProgress = { sepProgress ->
-                    onProgress(sepProgress)
-                }
-            )
+            try {
+                // Step 2: Run Real ONNX Separation
+                inferenceEngine.separateVocals(
+                    decodedAudio = decodedAudio,
+                    outputWavFile = vocalWavFile,
+                    customModelPath = customModelPath,
+                    accelerationMode = accelerationMode,
+                    onProgress = { sepProgress ->
+                        onProgress(sepProgress)
+                    }
+                )
+            } finally {
+                decodedAudio.close()
+            }
 
             // Step 3: Mark Ready
             videoDao.updateSeparationStatus(

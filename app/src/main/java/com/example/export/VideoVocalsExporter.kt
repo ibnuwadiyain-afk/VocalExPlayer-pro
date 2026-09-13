@@ -183,29 +183,14 @@ object VideoVocalsExporter {
 
             onProgress(0.20f)
 
-            // Step 2: Multiplex Video samples
-            val videoBuffer = ByteBuffer.allocate(1024 * 1024)
+            // Step 2: Interleave Video and Audio samples in lockstep chronologically
+            // Prevents native MediaMuxer buffer overflow crashes on long videos
+            val videoBuffer = ByteBuffer.allocateDirect(2 * 1024 * 1024)
             val videoBufferInfo = MediaCodec.BufferInfo()
+            var sawVideoEos = false
 
-            while (true) {
-                videoBuffer.clear()
-                val sampleSize = videoExtractor.readSampleData(videoBuffer, 0)
-                if (sampleSize < 0) {
-                    break
-                }
-                videoBufferInfo.offset = 0
-                videoBufferInfo.size = sampleSize
-                videoBufferInfo.presentationTimeUs = videoExtractor.sampleTime
-                videoBufferInfo.flags = videoExtractor.sampleFlags
-
-                muxer.writeSampleData(muxerVideoTrack, videoBuffer, videoBufferInfo)
-                videoExtractor.advance()
-            }
-
-            onProgress(0.50f)
-
-            // Step 3: Complete encoding & multiplexing Audio
-            while (!sawEncoderEos) {
+            while (!sawVideoEos || !sawEncoderEos) {
+                // 1. Feed PCM to audio encoder
                 if (!sawPcmEos) {
                     val inIdx = audioEncoder.dequeueInputBuffer(TIMEOUT_USEC)
                     if (inIdx >= 0) {
@@ -219,8 +204,8 @@ object VideoVocalsExporter {
                             val pts = (pcmTotalBytesRead * 1_000_000L) / bytesPerSec
                             audioEncoder.queueInputBuffer(inIdx, 0, bytesRead, pts, 0)
                             pcmTotalBytesRead += bytesRead
-                            val progress = 0.50f + (pcmTotalBytesRead.toFloat() / totalPcmBytes) * 0.40f
-                            onProgress(progress.coerceIn(0.50f, 0.90f))
+                            val progress = 0.20f + (pcmTotalBytesRead.toFloat() / totalPcmBytes) * 0.70f
+                            onProgress(progress.coerceIn(0.20f, 0.92f))
                         } else {
                             sawPcmEos = true
                             audioEncoder.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
@@ -228,20 +213,63 @@ object VideoVocalsExporter {
                     }
                 }
 
-                val outIdx = audioEncoder.dequeueOutputBuffer(encoderBufferInfo, TIMEOUT_USEC)
-                if (outIdx >= 0) {
-                    val encodedBuffer = audioEncoder.getOutputBuffer(outIdx)!!
-                    if ((encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                        encoderBufferInfo.size = 0
+                // 2. Dequeue encoded audio buffer and interleave with video samples
+                if (!sawEncoderEos) {
+                    val outIdx = audioEncoder.dequeueOutputBuffer(encoderBufferInfo, TIMEOUT_USEC)
+                    if (outIdx >= 0) {
+                        val currentAudioPts = encoderBufferInfo.presentationTimeUs
+
+                        // Advance video track up to current audio timestamp (+100ms tolerance)
+                        while (!sawVideoEos && videoExtractor.sampleTime in 0L..(currentAudioPts + 100_000L)) {
+                            videoBuffer.clear()
+                            val sampleSize = videoExtractor.readSampleData(videoBuffer, 0)
+                            if (sampleSize < 0) {
+                                sawVideoEos = true
+                                break
+                            }
+                            videoBufferInfo.offset = 0
+                            videoBufferInfo.size = sampleSize
+                            videoBufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                            videoBufferInfo.flags = videoExtractor.sampleFlags
+
+                            muxer.writeSampleData(muxerVideoTrack, videoBuffer, videoBufferInfo)
+                            videoExtractor.advance()
+                        }
+
+                        // Write the audio sample
+                        val encodedBuffer = audioEncoder.getOutputBuffer(outIdx)!!
+                        if ((encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                            encoderBufferInfo.size = 0
+                        }
+                        if (encoderBufferInfo.size > 0 && muxerAudioTrack != -1) {
+                            encodedBuffer.position(encoderBufferInfo.offset)
+                            encodedBuffer.limit(encoderBufferInfo.offset + encoderBufferInfo.size)
+                            muxer.writeSampleData(muxerAudioTrack, encodedBuffer, encoderBufferInfo)
+                        }
+                        audioEncoder.releaseOutputBuffer(outIdx, false)
+
+                        if ((encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            sawEncoderEos = true
+                        }
                     }
-                    if (encoderBufferInfo.size > 0 && muxerAudioTrack != -1) {
-                        encodedBuffer.position(encoderBufferInfo.offset)
-                        encodedBuffer.limit(encoderBufferInfo.offset + encoderBufferInfo.size)
-                        muxer.writeSampleData(muxerAudioTrack, encodedBuffer, encoderBufferInfo)
-                    }
-                    audioEncoder.releaseOutputBuffer(outIdx, false)
-                    if ((encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        sawEncoderEos = true
+                }
+
+                // If audio finished first, drain remaining video frames
+                if (sawEncoderEos && !sawVideoEos) {
+                    while (!sawVideoEos) {
+                        videoBuffer.clear()
+                        val sampleSize = videoExtractor.readSampleData(videoBuffer, 0)
+                        if (sampleSize < 0) {
+                            sawVideoEos = true
+                            break
+                        }
+                        videoBufferInfo.offset = 0
+                        videoBufferInfo.size = sampleSize
+                        videoBufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                        videoBufferInfo.flags = videoExtractor.sampleFlags
+
+                        muxer.writeSampleData(muxerVideoTrack, videoBuffer, videoBufferInfo)
+                        videoExtractor.advance()
                     }
                 }
             }

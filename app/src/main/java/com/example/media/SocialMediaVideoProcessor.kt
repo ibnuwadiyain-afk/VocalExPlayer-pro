@@ -58,10 +58,17 @@ sealed class DownloadProgressState {
     data class Failed(val error: String) : DownloadProgressState()
 }
 
-class SocialMediaVideoProcessor(private val context: Context) {
+class SocialMediaVideoProcessor(private val context: Context? = null) {
 
     companion object {
         private const val TAG = "SocialMediaProcessor"
+
+        /**
+         * Convenience static method to fetch available resolutions for a URL without requiring Context.
+         */
+        suspend fun fetchAvailableResolutions(inputUrl: String): List<MediaResolutionOption> {
+            return SocialMediaVideoProcessor().fetchAvailableResolutions(inputUrl)
+        }
 
         private val YOUTUBE_REGEX = Pattern.compile(
             """(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([\w-]{6,})""",
@@ -258,7 +265,8 @@ class SocialMediaVideoProcessor(private val context: Context) {
             if (isDirectVideoUrl(cleanUrl)) {
                 val ext = cleanUrl.substringBefore('?').substringAfterLast('.').lowercase()
                 return@withContext listOf(
-                    MediaResolutionOption("original", "Source Stream Quality ($ext)", 1080, ext, directUrl = cleanUrl, isRecommended = true, isFromSource = true)
+                    MediaResolutionOption("original", "Source Quality ($ext)", 1080, ext, directUrl = cleanUrl, isRecommended = true, isFromSource = true),
+                    MediaResolutionOption("audio", "Audio Only (Extract Track)", 0, ext, directUrl = cleanUrl, isFromSource = true)
                 )
             }
 
@@ -303,7 +311,8 @@ class SocialMediaVideoProcessor(private val context: Context) {
             Log.i(TAG, "Resolved stream URL: $streamUrl, Title: $titleCandidate, Referer: $referer")
 
             // 2. Download the video stream to app storage
-            val downloadsDir = File(context.filesDir, "downloads").apply { if (!exists()) mkdirs() }
+            val baseDir = context?.filesDir ?: File(System.getProperty("java.io.tmpdir"), "app_files")
+            val downloadsDir = File(baseDir, "downloads").apply { if (!exists()) mkdirs() }
             val videoId = UUID.randomUUID().toString().substring(0, 8)
             val cleanStream = streamUrl.substringBefore('?').lowercase()
             val fileExt = when {
@@ -1078,10 +1087,11 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     "https://lto2.affadaffa.com/api/progress?id=$downloadId"
                 }
 
-                // Poll progress URL up to 25 times (~35s max)
+                // Poll progress URL up to 60 times (~90-120s max for long videos)
                 var downloadUrl: String? = null
-                for (pollCount in 1..25) {
-                    delay(1500)
+                for (pollCount in 1..60) {
+                    val waitMs = if (pollCount <= 10) 1500L else 2000L
+                    delay(waitMs)
                     val progReq = Request.Builder()
                         .url(baseProgressUrl)
                         .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -1097,7 +1107,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     val progressVal = (progJson.optInt("progress", 0) / 10).coerceIn(0, 100)
                     val textMsg = progJson.optString("text", "")
                     if (textMsg.isNotBlank()) {
-                        onProgress(DownloadProgressState.Resolving("Converting YouTube stream: $textMsg ($progressVal%)…"))
+                        onProgress(DownloadProgressState.Resolving("Converting long video stream: $textMsg ($progressVal%)…"))
                     }
 
                     val candidate = progJson.optString("download_url")
