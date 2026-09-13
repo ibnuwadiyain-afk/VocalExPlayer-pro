@@ -107,6 +107,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _sharedMediaUrl = MutableStateFlow<String?>(null)
     val sharedMediaUrl: StateFlow<String?> = _sharedMediaUrl.asStateFlow()
 
+    // Web Import Resolution Selection State
+    data class WebImportResolutionState(
+        val url: String,
+        val isProbing: Boolean = false,
+        val options: List<com.example.media.MediaResolutionOption> = emptyList(),
+        val selectedOption: com.example.media.MediaResolutionOption? = null,
+        val probeError: String? = null
+    )
+
+    private val _webImportResolutionState = MutableStateFlow<WebImportResolutionState?>(null)
+    val webImportResolutionState: StateFlow<WebImportResolutionState?> = _webImportResolutionState.asStateFlow()
+
     // Internal Storage Folders access state
     private val _savedFolders = MutableStateFlow<List<com.example.storage.GrantedFolder>>(emptyList())
     val savedFolders: StateFlow<List<com.example.storage.GrantedFolder>> = _savedFolders.asStateFlow()
@@ -182,15 +194,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _sharedMediaUrl.value = null
     }
 
-    fun processSocialMediaUrl(url: String) {
+    fun probeResolutionsForUrl(url: String) {
+        val trimmed = url.trim()
+        if (trimmed.isBlank()) return
+        _webImportResolutionState.value = WebImportResolutionState(url = trimmed, isProbing = true)
+        _downloadErrorMessage.value = null
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val resolutions = socialMediaProcessor.fetchAvailableResolutions(trimmed)
+                if (resolutions.isNotEmpty()) {
+                    val defaultSelected = resolutions.firstOrNull { it.isRecommended } ?: resolutions.first()
+                    _webImportResolutionState.value = WebImportResolutionState(
+                        url = trimmed,
+                        isProbing = false,
+                        options = resolutions,
+                        selectedOption = defaultSelected
+                    )
+                } else {
+                    val standardOptions = listOf(
+                        com.example.media.MediaResolutionOption("1080p", "1080p (Full HD)", 1080, "mp4"),
+                        com.example.media.MediaResolutionOption("720p", "720p (HD)", 720, "mp4", isRecommended = true),
+                        com.example.media.MediaResolutionOption("480p", "480p (SD)", 480, "mp4"),
+                        com.example.media.MediaResolutionOption("360p", "360p (Fast)", 360, "mp4"),
+                        com.example.media.MediaResolutionOption("audio", "Audio Only (MP3/M4A)", 0, "mp3")
+                    )
+                    _webImportResolutionState.value = WebImportResolutionState(
+                        url = trimmed,
+                        isProbing = false,
+                        options = standardOptions,
+                        selectedOption = standardOptions[1]
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w("MainViewModel", "Resolution probing failed for $trimmed, providing standard resolutions", e)
+                val standardOptions = listOf(
+                    com.example.media.MediaResolutionOption("1080p", "1080p (Full HD)", 1080, "mp4"),
+                    com.example.media.MediaResolutionOption("720p", "720p (HD)", 720, "mp4", isRecommended = true),
+                    com.example.media.MediaResolutionOption("480p", "480p (SD)", 480, "mp4"),
+                    com.example.media.MediaResolutionOption("360p", "360p (Fast)", 360, "mp4"),
+                    com.example.media.MediaResolutionOption("audio", "Audio Only (MP3/M4A)", 0, "mp3")
+                )
+                _webImportResolutionState.value = WebImportResolutionState(
+                    url = trimmed,
+                    isProbing = false,
+                    options = standardOptions,
+                    selectedOption = standardOptions[1]
+                )
+            }
+        }
+    }
+
+    fun selectResolutionOption(option: com.example.media.MediaResolutionOption) {
+        _webImportResolutionState.value = _webImportResolutionState.value?.copy(selectedOption = option)
+    }
+
+    fun confirmDownloadWithResolution() {
+        val current = _webImportResolutionState.value ?: return
+        val url = current.url
+        val selectedOption = current.selectedOption
+        _webImportResolutionState.value = null
+        processSocialMediaUrl(url, selectedOption)
+    }
+
+    fun backToUrlInput() {
+        _webImportResolutionState.value = null
+    }
+
+    fun processSocialMediaUrl(url: String, targetResolution: com.example.media.MediaResolutionOption? = null) {
         if (url.isBlank()) return
+        _webImportResolutionState.value = null
         mediaDownloadJob?.cancel()
         downloadTimerJob?.cancel()
 
         mediaDownloadJob = viewModelScope.launch(Dispatchers.IO) {
             _isDownloadingMedia.value = true
             _downloadErrorMessage.value = null
-            _downloadProgressState.value = DownloadProgressState.Resolving("Analyzing link…")
+            val qualitySuffix = targetResolution?.label?.let { " ($it)" } ?: ""
+            _downloadProgressState.value = DownloadProgressState.Resolving("Analyzing link$qualitySuffix…")
             _downloadElapsedFormatted.value = "00:00"
 
             val startDownloadTime = android.os.SystemClock.elapsedRealtime()
@@ -203,7 +284,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             try {
-                val result = socialMediaProcessor.processAndDownload(url) { state ->
+                val result = socialMediaProcessor.processAndDownload(url, targetResolution) { state ->
                     _downloadProgressState.value = state
                 }
 
@@ -253,12 +334,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _downloadProgressState.value = null
         _downloadErrorMessage.value = null
         _sharedMediaUrl.value = null
+        _webImportResolutionState.value = null
     }
 
     fun dismissDownloadDialog() {
         // Dismissing the dialog view lets the download continue running seamlessly in the background!
         _downloadErrorMessage.value = null
         _sharedMediaUrl.value = null
+        _webImportResolutionState.value = null
     }
 
     fun clearDownloadError() {

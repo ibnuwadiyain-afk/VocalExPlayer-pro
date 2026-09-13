@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
                     val downloadElapsedFormatted by viewModel.downloadElapsedFormatted.collectAsState()
                     val downloadErrorMessage by viewModel.downloadErrorMessage.collectAsState()
                     val sharedMediaUrl by viewModel.sharedMediaUrl.collectAsState()
+                    val webImportResolutionState by viewModel.webImportResolutionState.collectAsState()
 
                     // Android 13+ Notification permission request for foreground service
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -139,7 +140,12 @@ class MainActivity : ComponentActivity() {
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
                             onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
+                            resolutionState = webImportResolutionState,
                             onSubmitMediaUrl = { url -> viewModel.processSocialMediaUrl(url) },
+                            onProbeResolutions = { url -> viewModel.probeResolutionsForUrl(url) },
+                            onSelectResolution = { option -> viewModel.selectResolutionOption(option) },
+                            onConfirmResolutionDownload = { viewModel.confirmDownloadWithResolution() },
+                            onBackToUrlInput = { viewModel.backToUrlInput() },
                             onCancelDownload = { viewModel.cancelMediaDownload() },
                             onClearDownloadError = { viewModel.clearDownloadError() },
                             onDismissDownloadDialog = { viewModel.dismissDownloadDialog() },

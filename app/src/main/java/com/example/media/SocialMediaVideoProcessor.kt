@@ -20,6 +20,29 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
+data class MediaResolutionOption(
+    val id: String, // "best", "1080p", "720p", "480p", "360p", "audio"
+    val label: String, // e.g. "1080p (Full HD)", "720p (HD)"
+    val height: Int = 0, // e.g. 1080, 720, 480, 360, 0
+    val format: String = "mp4", // "mp4", "webm", "mp3"
+    val sizeText: String? = null, // e.g. "45.2 MB"
+    val isRecommended: Boolean = false,
+    val internalKey: String? = null, // token key e.g. Y2Mate formatKey
+    val directUrl: String? = null, // if already resolved
+    val isFromSource: Boolean = false
+) {
+    companion object {
+        val PRESET_OPTIONS = listOf(
+            MediaResolutionOption("best", "Best (Auto)", 1080, "mp4", isRecommended = true),
+            MediaResolutionOption("1080p", "1080p (Full HD)", 1080, "mp4"),
+            MediaResolutionOption("720p", "720p (HD)", 720, "mp4"),
+            MediaResolutionOption("480p", "480p (SD)", 480, "mp4"),
+            MediaResolutionOption("360p", "360p (Fast)", 360, "mp4"),
+            MediaResolutionOption("audio", "Audio Only (MP3)", 0, "mp3")
+        )
+    }
+}
+
 data class ExtractedVideoInfo(
     val file: File,
     val title: String,
@@ -166,22 +189,113 @@ class SocialMediaVideoProcessor(private val context: Context) {
     }
 
     /**
+     * Inspects a video or stream URL and retrieves the list of available resolutions from the source
+     * (such as 1080p, 720p, 480p, 360p, or audio), when available.
+     */
+    suspend fun fetchAvailableResolutions(inputUrl: String): List<MediaResolutionOption> = withContext(Dispatchers.IO) {
+        val cleanUrl = extractUrlFromText(inputUrl) ?: inputUrl.trim()
+        if (cleanUrl.isBlank()) return@withContext emptyList()
+
+        try {
+            // 1. YouTube & YouTube Shorts
+            val ytId = extractYouTubeId(cleanUrl)
+            if (ytId != null) {
+                // Try Y2Mate formats first (accurate size, bitrates, format keys)
+                val y2Formats = fetchY2MateFormats(ytId)
+                if (y2Formats.isNotEmpty()) {
+                    return@withContext y2Formats
+                }
+
+                // Fallback to InnerTube formats
+                val directYtFormats = fetchYouTubeDirectFormats(ytId)
+                if (directYtFormats.isNotEmpty()) {
+                    return@withContext directYtFormats
+                }
+
+                // Standard YouTube resolutions if source inspection is throttled
+                return@withContext listOf(
+                    MediaResolutionOption("1080p", "1080p (Full HD)", 1080, "mp4", isRecommended = true, isFromSource = true),
+                    MediaResolutionOption("720p", "720p (HD)", 720, "mp4", isFromSource = true),
+                    MediaResolutionOption("480p", "480p (SD)", 480, "mp4", isFromSource = true),
+                    MediaResolutionOption("360p", "360p (Fast)", 360, "mp4", isFromSource = true),
+                    MediaResolutionOption("audio", "Audio Only (MP3)", 0, "mp3", isFromSource = true)
+                )
+            }
+
+            // 2. Vimeo
+            val vimeoMatcher = VIMEO_REGEX.matcher(cleanUrl)
+            if (vimeoMatcher.find() || cleanUrl.lowercase().contains("vimeo.com/")) {
+                val vimeoId = if (vimeoMatcher.find(0)) vimeoMatcher.group(1) else cleanUrl.substringAfterLast('/').substringBefore('?')
+                if (!vimeoId.isNullOrBlank() && vimeoId.all { it.isDigit() }) {
+                    val vimeoFormats = fetchVimeoFormats(vimeoId)
+                    if (vimeoFormats.isNotEmpty()) {
+                        return@withContext vimeoFormats
+                    }
+                }
+            }
+
+            // 3. Dailymotion
+            val dmMatcher = DAILYMOTION_REGEX.matcher(cleanUrl)
+            if (dmMatcher.find()) {
+                val dmId = dmMatcher.group(1)
+                if (!dmId.isNullOrBlank()) {
+                    val dmFormats = fetchDailymotionFormats(dmId)
+                    if (dmFormats.isNotEmpty()) {
+                        return@withContext dmFormats
+                    }
+                }
+            }
+
+            // 4. HLS Stream (.m3u8)
+            if (cleanUrl.contains(".m3u8")) {
+                val hlsFormats = fetchHlsFormats(cleanUrl)
+                if (hlsFormats.isNotEmpty()) {
+                    return@withContext hlsFormats
+                }
+            }
+
+            // 5. Direct media file link
+            if (isDirectVideoUrl(cleanUrl)) {
+                val ext = cleanUrl.substringBefore('?').substringAfterLast('.').lowercase()
+                return@withContext listOf(
+                    MediaResolutionOption("original", "Source Stream Quality ($ext)", 1080, ext, directUrl = cleanUrl, isRecommended = true, isFromSource = true)
+                )
+            }
+
+            // 6. Generic web / social fallback
+            return@withContext listOf(
+                MediaResolutionOption("best", "Best Available (Auto)", 1080, "mp4", isRecommended = true, isFromSource = false),
+                MediaResolutionOption("1080p", "1080p (Full HD)", 1080, "mp4", isFromSource = false),
+                MediaResolutionOption("720p", "720p (HD)", 720, "mp4", isFromSource = false),
+                MediaResolutionOption("480p", "480p (SD)", 480, "mp4", isFromSource = false),
+                MediaResolutionOption("360p", "360p (Fast)", 360, "mp4", isFromSource = false),
+                MediaResolutionOption("audio", "Audio Only (MP3)", 0, "mp3", isFromSource = false)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to inspect resolutions from $cleanUrl", e)
+            MediaResolutionOption.PRESET_OPTIONS
+        }
+    }
+
+    /**
      * Resolves the stream or download URL for YouTube, social media, or direct video link,
-     * then downloads the MP4 and extracts duration metadata.
+     * then downloads the MP4/media and extracts duration metadata.
      */
     suspend fun processAndDownload(
         inputUrl: String,
+        targetResolution: MediaResolutionOption? = null,
         onProgress: (DownloadProgressState) -> Unit
     ): Result<ExtractedVideoInfo> = withContext(Dispatchers.IO) {
         val cleanUrl = extractUrlFromText(inputUrl) ?: inputUrl.trim()
         val platform = detectPlatform(cleanUrl)
-        Log.i(TAG, "Processing video URL: $cleanUrl [Detected: $platform]")
+        val resTag = targetResolution?.let { " [${it.label}]" } ?: ""
+        Log.i(TAG, "Processing video URL: $cleanUrl [Detected: $platform]$resTag")
 
-        onProgress(DownloadProgressState.Resolving("Analyzing $platform link…"))
+        onProgress(DownloadProgressState.Resolving("Analyzing $platform link$resTag…"))
 
         try {
             // 1. Resolve direct download stream URL
-            val streamResult = resolveMediaStream(cleanUrl, platform, onProgress)
+            val streamResult = resolveMediaStream(cleanUrl, platform, targetResolution, onProgress)
             val streamUrl = streamResult.url
             val titleCandidate = streamResult.title ?: "$platform Video"
             val referer = streamResult.referer ?: cleanUrl
@@ -193,7 +307,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             val videoId = UUID.randomUUID().toString().substring(0, 8)
             val cleanStream = streamUrl.substringBefore('?').lowercase()
             val fileExt = when {
-                cleanStream.endsWith(".mp3") -> ".mp3"
+                cleanStream.endsWith(".mp3") || targetResolution?.id == "audio" -> ".mp3"
                 cleanStream.endsWith(".m4a") -> ".m4a"
                 cleanStream.endsWith(".webm") -> ".webm"
                 cleanStream.endsWith(".wav") -> ".wav"
@@ -204,7 +318,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
 
             onProgress(DownloadProgressState.Downloading(0.01f))
             if (streamUrl.contains(".m3u8")) {
-                downloadHlsStream(streamUrl, targetFile, referer) { percent ->
+                downloadHlsStream(streamUrl, targetFile, referer, targetResolution) { percent ->
                     onProgress(DownloadProgressState.Downloading(percent))
                 }
             } else {
@@ -267,8 +381,14 @@ class SocialMediaVideoProcessor(private val context: Context) {
     private suspend fun resolveMediaStream(
         url: String,
         platform: String,
+        targetResolution: MediaResolutionOption?,
         onProgress: (DownloadProgressState) -> Unit
     ): StreamResolution {
+        // 0. If direct stream URL was already resolved during format inspection
+        if (!targetResolution?.directUrl.isNullOrBlank()) {
+            return StreamResolution(targetResolution!!.directUrl!!, "$platform Video", referer = url)
+        }
+
         // 1. Direct media URL check (.mp4, .mkv, .webm, .mov, .m4a, .wav, .mp3)
         if (isDirectVideoUrl(url)) {
             return StreamResolution(url, extractFilenameFromUrl(url), referer = url)
@@ -277,21 +397,10 @@ class SocialMediaVideoProcessor(private val context: Context) {
         // 2. YouTube & YouTube Shorts extraction
         val ytId = extractYouTubeId(url)
         if (ytId != null) {
-            // Strategy A (Primary & Verified): loader.to stream converter
+            // Strategy A: Y2Mate high-speed stream converter with targeted format
             try {
                 onProgress(DownloadProgressState.Resolving("Requesting stream converter for YouTube…"))
-                val loaderRes = queryLoaderTo(ytId, onProgress)
-                if (loaderRes != null) {
-                    return loaderRes
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Loader.to resolution failed for $ytId", e)
-            }
-
-            // Strategy B: Y2Mate high-speed stream converter
-            try {
-                onProgress(DownloadProgressState.Resolving("Requesting alternate stream converter for YouTube…"))
-                val y2Res = queryY2Mate(ytId, onProgress)
+                val y2Res = queryY2Mate(ytId, targetResolution, onProgress)
                 if (y2Res != null) {
                     return y2Res
                 }
@@ -299,10 +408,21 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 Log.w(TAG, "Y2Mate resolution failed for $ytId", e)
             }
 
+            // Strategy B (Primary & Verified): loader.to stream converter
+            try {
+                onProgress(DownloadProgressState.Resolving("Requesting stream converter for YouTube…"))
+                val loaderRes = queryLoaderTo(ytId, targetResolution, onProgress)
+                if (loaderRes != null) {
+                    return loaderRes
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Loader.to resolution failed for $ytId", e)
+            }
+
             // Strategy C: Direct YouTube InnerTube client extraction
             try {
                 onProgress(DownloadProgressState.Resolving("Extracting direct YouTube stream…"))
-                val directYt = queryYouTubeDirect(ytId)
+                val directYt = queryYouTubeDirect(ytId, targetResolution)
                 if (directYt != null) {
                     return directYt
                 }
@@ -314,7 +434,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             for (endpoint in INVIDIOUS_ENDPOINTS) {
                 try {
                     onProgress(DownloadProgressState.Resolving("Checking alternative stream server…"))
-                    val resolution = queryInvidiousApi(endpoint, ytId)
+                    val resolution = queryInvidiousApi(endpoint, ytId, targetResolution)
                     if (resolution != null) {
                         return resolution
                     }
@@ -327,7 +447,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             for (endpoint in COBALT_ENDPOINTS) {
                 try {
                     onProgress(DownloadProgressState.Resolving("Checking alternative stream converter…"))
-                    val res = queryCobaltApi(endpoint, url)
+                    val res = queryCobaltApi(endpoint, url, targetResolution)
                     if (res != null) {
                         return res
                     }
@@ -344,7 +464,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             if (!vimeoId.isNullOrBlank() && vimeoId.all { it.isDigit() }) {
                 onProgress(DownloadProgressState.Resolving("Resolving Vimeo video stream ($vimeoId)…"))
                 try {
-                    val vimeoRes = queryVimeoStream(vimeoId)
+                    val vimeoRes = queryVimeoStream(vimeoId, targetResolution)
                     if (vimeoRes != null) {
                         return vimeoRes
                     }
@@ -361,7 +481,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             if (!dmId.isNullOrBlank()) {
                 onProgress(DownloadProgressState.Resolving("Resolving Dailymotion video stream ($dmId)…"))
                 try {
-                    val dmRes = queryDailymotionHls(dmId)
+                    val dmRes = queryDailymotionHls(dmId, targetResolution)
                     if (dmRes != null) {
                         return dmRes
                     }
@@ -371,7 +491,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // 4. Facebook video resolution (embed player page scraper)
+        // 5. Facebook video resolution (embed player page scraper)
         if (FACEBOOK_REGEX.matcher(url).find()) {
             onProgress(DownloadProgressState.Resolving("Extracting Facebook video stream…"))
             try {
@@ -384,7 +504,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // 5. TikTok extraction via TikWM API
+        // 6. TikTok extraction via TikWM API
         if (TIKTOK_REGEX.matcher(url).find()) {
             onProgress(DownloadProgressState.Resolving("Extracting TikTok video stream…"))
             try {
@@ -397,7 +517,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
             }
         }
 
-        // 4. Universal HTML5 Web Scraper & Stream Resolver
+        // 7. Universal HTML5 Web Scraper & Stream Resolver
         // (Supports VidLii, Dailymotion, Vimeo, Rumble, Internet Archive, Reddit, blogs, news, and HTML5 video sites)
         try {
             val webMedia = extractWebPageMedia(url, platform, onProgress)
@@ -408,11 +528,11 @@ class SocialMediaVideoProcessor(private val context: Context) {
             Log.w(TAG, "HTML5 web media extraction failed for $url", e)
         }
 
-        // 5. Cobalt API resolution for supported social networks (Instagram, Twitter, etc.)
+        // 8. Cobalt API resolution for supported social networks (Instagram, Twitter, etc.)
         for (endpoint in COBALT_ENDPOINTS) {
             try {
                 onProgress(DownloadProgressState.Resolving("Connecting to stream resolver ($platform)…"))
-                val resolution = queryCobaltApi(endpoint, url)
+                val resolution = queryCobaltApi(endpoint, url, targetResolution)
                 if (resolution != null) {
                     return resolution
                 }
@@ -451,12 +571,373 @@ class SocialMediaVideoProcessor(private val context: Context) {
         )
     }
 
-    private fun queryYouTubeDirect(videoId: String): StreamResolution? {
+    private fun fetchY2MateFormats(videoId: String): List<MediaResolutionOption> {
+        val ytUrl = "https://www.youtube.com/watch?v=$videoId"
+        val analyzeEndpoints = listOf(
+            "https://www.y2mate.com/mates/analyzeV2/ajax",
+            "https://t-y2mate.com/mates/analyzeV2/ajax"
+        )
+        for (endpoint in analyzeEndpoints) {
+            try {
+                val formBody = okhttp3.FormBody.Builder()
+                    .add("k_query", ytUrl)
+                    .add("k_page", "home")
+                    .add("hl", "en")
+                    .add("q_auto", "0")
+                    .build()
+
+                val request = Request.Builder()
+                    .url(endpoint)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .addHeader("Referer", "https://www.y2mate.com/en")
+                    .post(formBody)
+                    .build()
+
+                val respStr = httpClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) null else resp.body?.string()
+                } ?: continue
+
+                val json = JSONObject(respStr)
+                if (json.optString("status") != "ok") continue
+                val links = json.optJSONObject("links") ?: continue
+                val result = mutableListOf<MediaResolutionOption>()
+
+                val mp4Obj = links.optJSONObject("mp4")
+                if (mp4Obj != null) {
+                    val keys = mp4Obj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val item = mp4Obj.optJSONObject(k) ?: continue
+                        val q = item.optString("q")
+                        val qText = item.optString("q_text")
+                        val size = item.optString("size").takeIf { it.isNotBlank() && it != "null" }
+                        val keyVal = item.optString("k")
+                        if (keyVal.isBlank()) continue
+
+                        val height = when {
+                            q.contains("1080") || qText.contains("1080") -> 1080
+                            q.contains("720") || qText.contains("720") -> 720
+                            q.contains("480") || qText.contains("480") -> 480
+                            q.contains("360") || qText.contains("360") -> 360
+                            q.contains("240") || qText.contains("240") -> 240
+                            q.contains("144") || qText.contains("144") -> 144
+                            else -> 720
+                        }
+                        val label = when (height) {
+                            1080 -> "1080p (Full HD)"
+                            720 -> "720p (HD)"
+                            480 -> "480p (SD)"
+                            360 -> "360p (Fast)"
+                            240 -> "240p"
+                            144 -> "144p"
+                            else -> "${height}p"
+                        }
+
+                        if (result.none { it.height == height }) {
+                            result.add(
+                                MediaResolutionOption(
+                                    id = "${height}p",
+                                    label = label,
+                                    height = height,
+                                    format = "mp4",
+                                    sizeText = size,
+                                    internalKey = keyVal,
+                                    isRecommended = height == 720 || (height == 1080 && result.isEmpty()),
+                                    isFromSource = true
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Check MP3 audio track
+                val mp3Obj = links.optJSONObject("mp3")
+                if (mp3Obj != null) {
+                    val keys = mp3Obj.keys()
+                    if (keys.hasNext()) {
+                        val k = keys.next()
+                        val item = mp3Obj.optJSONObject(k)
+                        val size = item?.optString("size")?.takeIf { it.isNotBlank() && it != "null" }
+                        val keyVal = item?.optString("k")
+                        if (!keyVal.isNullOrBlank()) {
+                            result.add(
+                                MediaResolutionOption(
+                                    id = "audio",
+                                    label = "Audio Only (MP3)",
+                                    height = 0,
+                                    format = "mp3",
+                                    sizeText = size,
+                                    internalKey = keyVal,
+                                    isFromSource = true
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if (result.isNotEmpty()) {
+                    return result.sortedByDescending { it.height }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Y2Mate format inspection failed for $videoId", e)
+            }
+        }
+        return emptyList()
+    }
+
+    private fun fetchVimeoFormats(videoId: String): List<MediaResolutionOption> {
+        val embedUrl = "https://player.vimeo.com/video/$videoId?app_id=122963"
+        try {
+            val req = Request.Builder()
+                .url(embedUrl)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .addHeader("Referer", "https://vimeo.com/")
+                .get()
+                .build()
+            val html = httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) resp.body?.string() ?: "" else ""
+            }
+            val configPrefix = when {
+                html.contains("window.playerConfig = ") -> "window.playerConfig = "
+                html.contains("var config = ") -> "var config = "
+                else -> null
+            }
+            if (configPrefix != null) {
+                val startIndex = html.indexOf(configPrefix) + configPrefix.length
+                val endIndex = html.indexOf("</script>", startIndex)
+                if (startIndex > 0 && endIndex > startIndex) {
+                    val jsonStr = html.substring(startIndex, endIndex).trim().removeSuffix(";")
+                    val json = JSONObject(jsonStr)
+                    val progressive = json.optJSONObject("request")?.optJSONObject("files")?.optJSONArray("progressive")
+                    if (progressive != null && progressive.length() > 0) {
+                        val result = mutableListOf<MediaResolutionOption>()
+                        for (i in 0 until progressive.length()) {
+                            val item = progressive.getJSONObject(i)
+                            val streamUrl = item.optString("url")
+                            val width = item.optInt("width", 0)
+                            val height = item.optInt("height", 0).takeIf { it > 0 } ?: (width * 9 / 16)
+                            val label = when {
+                                height >= 1080 || width >= 1920 -> "1080p (Full HD)"
+                                height >= 720 || width >= 1280 -> "720p (HD)"
+                                height >= 480 || width >= 850 -> "480p (SD)"
+                                height >= 360 || width >= 600 -> "360p (Fast)"
+                                else -> "${height}p"
+                            }
+                            if (streamUrl.isNotBlank() && result.none { it.height == height }) {
+                                result.add(
+                                    MediaResolutionOption(
+                                        id = "${height}p",
+                                        label = label,
+                                        height = height,
+                                        format = "mp4",
+                                        directUrl = streamUrl,
+                                        isRecommended = height == 720 || height == 1080,
+                                        isFromSource = true
+                                    )
+                                )
+                            }
+                        }
+                        if (result.isNotEmpty()) {
+                            return result.sortedByDescending { it.height }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Vimeo format inspection failed for $videoId", e)
+        }
+        return emptyList()
+    }
+
+    private fun fetchDailymotionFormats(videoId: String): List<MediaResolutionOption> {
+        try {
+            val metaUrl = "https://www.dailymotion.com/player/metadata/video/$videoId"
+            val request = Request.Builder()
+                .url(metaUrl)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .addHeader("Referer", "https://www.dailymotion.com/video/$videoId")
+                .get()
+                .build()
+            val bodyStr = httpClient.newCall(request).execute().use { if (it.isSuccessful) it.body?.string() else null } ?: return emptyList()
+            val json = JSONObject(bodyStr)
+            val qualities = json.optJSONObject("qualities") ?: return emptyList()
+            val result = mutableListOf<MediaResolutionOption>()
+            val keys = qualities.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                if (k == "auto") continue
+                val qArr = qualities.optJSONArray(k)
+                val streamUrl = qArr?.optJSONObject(0)?.optString("url")
+                val h = k.toIntOrNull() ?: 720
+                val label = when (h) {
+                    1080 -> "1080p (Full HD)"
+                    720 -> "720p (HD)"
+                    480 -> "480p (SD)"
+                    380 -> "380p"
+                    240 -> "240p"
+                    else -> "${h}p"
+                }
+                if (!streamUrl.isNullOrBlank() && result.none { it.height == h }) {
+                    result.add(
+                        MediaResolutionOption(
+                            id = "${h}p",
+                            label = label,
+                            height = h,
+                            format = "mp4",
+                            directUrl = streamUrl,
+                            isRecommended = h == 720,
+                            isFromSource = true
+                        )
+                    )
+                }
+            }
+            return result.sortedByDescending { it.height }
+        } catch (e: Exception) {
+            Log.w(TAG, "Dailymotion format inspection failed for $videoId", e)
+            return emptyList()
+        }
+    }
+
+    private fun fetchYouTubeDirectFormats(videoId: String): List<MediaResolutionOption> {
+        try {
+            val payload = JSONObject().apply {
+                put("videoId", videoId)
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", "ANDROID_VR")
+                        put("clientVersion", "1.61.48")
+                        put("deviceMake", "Oculus")
+                        put("deviceModel", "Quest 3")
+                        put("hl", "en")
+                        put("gl", "US")
+                    })
+                })
+            }
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val request = Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+                .post(payload.toString().toRequestBody(mediaType))
+                .addHeader("Content-Type", "application/json")
+                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .build()
+            val bodyStr = httpClient.newCall(request).execute().use { if (it.isSuccessful) it.body?.string() else null } ?: return emptyList()
+            val json = JSONObject(bodyStr)
+            val streamingData = json.optJSONObject("streamingData") ?: return emptyList()
+            val result = mutableListOf<MediaResolutionOption>()
+
+            val formats = streamingData.optJSONArray("formats")
+            if (formats != null) {
+                for (i in 0 until formats.length()) {
+                    val fmt = formats.getJSONObject(i)
+                    val url = fmt.optString("url")
+                    val height = fmt.optInt("height", 0)
+                    val quality = fmt.optString("qualityLabel", "${height}p")
+                    val contentLength = fmt.optLong("contentLength", 0L)
+                    val sizeText = if (contentLength > 0) "%.1f MB".format(contentLength / (1024.0 * 1024.0)) else null
+                    if (url.isNotBlank() && height > 0 && result.none { it.height == height }) {
+                        result.add(
+                            MediaResolutionOption(
+                                id = "${height}p",
+                                label = "$quality ${if (height >= 1080) "(Full HD)" else if (height >= 720) "(HD)" else ""}".trim(),
+                                height = height,
+                                format = "mp4",
+                                sizeText = sizeText,
+                                directUrl = url,
+                                isRecommended = height == 720,
+                                isFromSource = true
+                            )
+                        )
+                    }
+                }
+            }
+
+            val adaptive = streamingData.optJSONArray("adaptiveFormats")
+            if (adaptive != null) {
+                for (i in 0 until adaptive.length()) {
+                    val fmt = adaptive.getJSONObject(i)
+                    val mime = fmt.optString("mimeType")
+                    val url = fmt.optString("url")
+                    val contentLength = fmt.optLong("contentLength", 0L)
+                    val sizeText = if (contentLength > 0) "%.1f MB".format(contentLength / (1024.0 * 1024.0)) else null
+                    if (mime.startsWith("audio/mp4") && url.isNotBlank()) {
+                        result.add(
+                            MediaResolutionOption(
+                                id = "audio",
+                                label = "Audio Only (M4A)",
+                                height = 0,
+                                format = "m4a",
+                                sizeText = sizeText,
+                                directUrl = url,
+                                isFromSource = true
+                            )
+                        )
+                        break
+                    }
+                }
+            }
+            return result.sortedByDescending { it.height }
+        } catch (e: Exception) {
+            Log.w(TAG, "YouTube direct formats inspection failed for $videoId", e)
+            return emptyList()
+        }
+    }
+
+    private fun fetchHlsFormats(m3u8Url: String): List<MediaResolutionOption> {
+        try {
+            val req = Request.Builder().url(m3u8Url).build()
+            val manifest = httpClient.newCall(req).execute().use { if (it.isSuccessful) it.body?.string() else null } ?: return emptyList()
+            val result = mutableListOf<MediaResolutionOption>()
+            val lines = manifest.lines()
+            for (i in lines.indices) {
+                val line = lines[i]
+                if (line.startsWith("#EXT-X-STREAM-INF")) {
+                    val resMatcher = Pattern.compile("""RESOLUTION=(\d+)x(\d+)""").matcher(line)
+                    val bwMatcher = Pattern.compile("""BANDWIDTH=(\d+)""").matcher(line)
+                    if (resMatcher.find()) {
+                        val height = resMatcher.group(2).toIntOrNull() ?: 720
+                        val bw = if (bwMatcher.find()) bwMatcher.group(1).toLongOrNull() else null
+                        val bwText = if (bw != null) "${bw / 1000} kbps" else null
+                        val nextUrl = if (i + 1 < lines.size) resolveRelativeUrl(m3u8Url, lines[i + 1].trim()) else null
+                        val label = when {
+                            height >= 1080 -> "1080p (Full HD)"
+                            height >= 720 -> "720p (HD)"
+                            height >= 480 -> "480p (SD)"
+                            height >= 360 -> "360p (Fast)"
+                            else -> "${height}p"
+                        }
+                        if (result.none { it.height == height }) {
+                            result.add(
+                                MediaResolutionOption(
+                                    id = "${height}p",
+                                    label = label,
+                                    height = height,
+                                    format = "mp4",
+                                    sizeText = bwText,
+                                    directUrl = nextUrl,
+                                    isRecommended = height == 720,
+                                    isFromSource = true
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            return result.sortedByDescending { it.height }
+        } catch (e: Exception) {
+            Log.w(TAG, "HLS format inspection failed for $m3u8Url", e)
+            return emptyList()
+        }
+    }
+
+    private fun queryYouTubeDirect(videoId: String, targetResolution: MediaResolutionOption? = null): StreamResolution? {
         val clientConfigs = listOf(
             Triple("ANDROID_VR", "1.61.48", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"),
             Triple("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", "Mozilla/5.0 (SMART-TV; Linux; Tizen 5.0) AppleWebKit/538.1"),
             Triple("WEB_EMBEDDED_PLAYER", "1.20231009.01.00", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         )
+
+        val targetHeight = targetResolution?.height ?: 720
+        val isAudioOnly = targetResolution?.id == "audio" || targetResolution?.height == 0
 
         for ((cName, cVer, userAgent) in clientConfigs) {
             try {
@@ -489,24 +970,36 @@ class SocialMediaVideoProcessor(private val context: Context) {
                     val title = json.optJSONObject("videoDetails")?.optString("title") ?: "YouTube Video"
                     val streamingData = json.optJSONObject("streamingData") ?: return@use
 
-                    // 1. Check direct combined formats (video + audio)
-                    val formats = streamingData.optJSONArray("formats")
-                    if (formats != null && formats.length() > 0) {
-                        for (i in 0 until formats.length()) {
-                            val fmt = formats.getJSONObject(i)
-                            val streamUrl = fmt.optString("url")
-                            val mime = fmt.optString("mimeType")
-                            if (streamUrl.isNotBlank() && mime.contains("mp4", ignoreCase = true)) {
-                                return StreamResolution(streamUrl, "YouTube - $title")
+                    // 1. If not audio-only, check video formats with closest resolution match
+                    if (!isAudioOnly) {
+                        val formats = streamingData.optJSONArray("formats")
+                        if (formats != null && formats.length() > 0) {
+                            var bestUrl: String? = null
+                            var bestDiff = Int.MAX_VALUE
+                            for (i in 0 until formats.length()) {
+                                val fmt = formats.getJSONObject(i)
+                                val streamUrl = fmt.optString("url")
+                                val h = fmt.optInt("height", 0)
+                                val mime = fmt.optString("mimeType")
+                                if (streamUrl.isNotBlank() && mime.contains("mp4", ignoreCase = true)) {
+                                    val diff = kotlin.math.abs(h - targetHeight)
+                                    if (diff < bestDiff) {
+                                        bestDiff = diff
+                                        bestUrl = streamUrl
+                                    }
+                                }
                             }
-                        }
-                        val firstUrl = formats.getJSONObject(0).optString("url")
-                        if (firstUrl.isNotBlank()) {
-                            return StreamResolution(firstUrl, "YouTube - $title")
+                            if (bestUrl != null) {
+                                return StreamResolution(bestUrl, "YouTube - $title")
+                            }
+                            val firstUrl = formats.getJSONObject(0).optString("url")
+                            if (firstUrl.isNotBlank()) {
+                                return StreamResolution(firstUrl, "YouTube - $title")
+                            }
                         }
                     }
 
-                    // 2. Check adaptive audio formats (AAC / MP4 audio stream)
+                    // 2. Adaptive audio formats (AAC / MP4 audio stream)
                     val adaptive = streamingData.optJSONArray("adaptiveFormats")
                     if (adaptive != null && adaptive.length() > 0) {
                         for (i in 0 until adaptive.length()) {
@@ -536,12 +1029,25 @@ class SocialMediaVideoProcessor(private val context: Context) {
 
     private suspend fun queryLoaderTo(
         videoId: String,
+        targetResolution: MediaResolutionOption? = null,
         onProgress: (DownloadProgressState) -> Unit
     ): StreamResolution? = withContext(Dispatchers.IO) {
         val ytUrl = "https://www.youtube.com/watch?v=$videoId"
         val encodedYtUrl = URLEncoder.encode(ytUrl, "UTF-8")
-        // Prioritize 720p, 360p and MP3 audio stream for fastest, most reliable conversion
-        val formats = listOf("720", "360", "mp3", "1080", "480")
+        val isAudio = targetResolution?.id == "audio" || targetResolution?.height == 0
+        val targetFmt = when {
+            isAudio -> "mp3"
+            targetResolution?.height == 1080 -> "1080"
+            targetResolution?.height == 720 -> "720"
+            targetResolution?.height == 480 -> "480"
+            targetResolution?.height == 360 -> "360"
+            else -> "720"
+        }
+        val formats = if (isAudio) {
+            listOf("mp3")
+        } else {
+            listOf(targetFmt, "720", "360", "1080", "480", "mp3").distinct()
+        }
 
         for (fmt in formats) {
             try {
@@ -619,9 +1125,13 @@ class SocialMediaVideoProcessor(private val context: Context) {
 
     private suspend fun queryY2Mate(
         videoId: String,
+        targetResolution: MediaResolutionOption? = null,
         onProgress: (DownloadProgressState) -> Unit
     ): StreamResolution? = withContext(Dispatchers.IO) {
         val ytUrl = "https://www.youtube.com/watch?v=$videoId"
+        val isAudio = targetResolution?.id == "audio" || targetResolution?.height == 0
+        val targetHeight = targetResolution?.height ?: 720
+
         val analyzeEndpoints = listOf(
             "https://www.y2mate.com/mates/analyzeV2/ajax",
             "https://t-y2mate.com/mates/analyzeV2/ajax"
@@ -654,32 +1164,49 @@ class SocialMediaVideoProcessor(private val context: Context) {
                 val vidTitle = analyzeJson.optString("title").ifBlank { "YouTube Video" }
                 val links = analyzeJson.optJSONObject("links") ?: continue
 
-                // Find candidate format key: mp4 first (720p or 1080p or 360p), or mp3
-                var formatKey: String? = null
-                val mp4Obj = links.optJSONObject("mp4")
-                if (mp4Obj != null) {
-                    val keys = mp4Obj.keys()
-                    while (keys.hasNext()) {
-                        val k = keys.next()
-                        val item = mp4Obj.optJSONObject(k)
-                        val kVal = item?.optString("k")
-                        if (!kVal.isNullOrBlank()) {
-                            formatKey = kVal
-                            break
-                        }
-                    }
-                }
+                var formatKey: String? = targetResolution?.internalKey
+
                 if (formatKey.isNullOrBlank()) {
-                    val mp3Obj = links.optJSONObject("mp3")
-                    if (mp3Obj != null) {
-                        val keys = mp3Obj.keys()
-                        while (keys.hasNext()) {
-                            val k = keys.next()
-                            val item = mp3Obj.optJSONObject(k)
-                            val kVal = item?.optString("k")
-                            if (!kVal.isNullOrBlank()) {
-                                formatKey = kVal
-                                break
+                    if (isAudio) {
+                        val mp3Obj = links.optJSONObject("mp3")
+                        if (mp3Obj != null) {
+                            val keys = mp3Obj.keys()
+                            while (keys.hasNext()) {
+                                val k = keys.next()
+                                val item = mp3Obj.optJSONObject(k)
+                                val kVal = item?.optString("k")
+                                if (!kVal.isNullOrBlank()) {
+                                    formatKey = kVal
+                                    break
+                                }
+                            }
+                        }
+                    } else {
+                        val mp4Obj = links.optJSONObject("mp4")
+                        if (mp4Obj != null) {
+                            // Find closest match to targetHeight
+                            var bestDiff = Int.MAX_VALUE
+                            val keys = mp4Obj.keys()
+                            while (keys.hasNext()) {
+                                val k = keys.next()
+                                val item = mp4Obj.optJSONObject(k)
+                                val q = item?.optString("q") ?: ""
+                                val qText = item?.optString("q_text") ?: ""
+                                val kVal = item?.optString("k")
+                                if (!kVal.isNullOrBlank()) {
+                                    val h = when {
+                                        q.contains("1080") || qText.contains("1080") -> 1080
+                                        q.contains("720") || qText.contains("720") -> 720
+                                        q.contains("480") || qText.contains("480") -> 480
+                                        q.contains("360") || qText.contains("360") -> 360
+                                        else -> 720
+                                    }
+                                    val diff = kotlin.math.abs(h - targetHeight)
+                                    if (diff < bestDiff) {
+                                        bestDiff = diff
+                                        formatKey = kVal
+                                    }
+                                }
                             }
                         }
                     }
@@ -721,7 +1248,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
         null
     }
 
-    private fun queryDailymotionHls(videoId: String): StreamResolution? {
+    private fun queryDailymotionHls(videoId: String, targetResolution: MediaResolutionOption? = null): StreamResolution? {
         val metaUrl = "https://www.dailymotion.com/player/metadata/video/$videoId"
         val request = Request.Builder()
             .url(metaUrl)
@@ -736,6 +1263,17 @@ class SocialMediaVideoProcessor(private val context: Context) {
             val json = JSONObject(bodyStr)
             val title = json.optString("title").ifBlank { "Dailymotion Video" }
             val qualities = json.optJSONObject("qualities") ?: return null
+
+            // If target resolution height is specified, check that specific quality entry first
+            if (targetResolution != null && targetResolution.height > 0) {
+                val qArr = qualities.optJSONArray("${targetResolution.height}")
+                if (qArr != null && qArr.length() > 0) {
+                    val streamUrl = qArr.getJSONObject(0).optString("url")
+                    if (streamUrl.isNotBlank()) {
+                        return StreamResolution(streamUrl, "Dailymotion - $title", referer = "https://www.dailymotion.com/video/$videoId")
+                    }
+                }
+            }
 
             val autoArr = qualities.optJSONArray("auto")
             if (autoArr != null && autoArr.length() > 0) {
@@ -761,8 +1299,9 @@ class SocialMediaVideoProcessor(private val context: Context) {
         return null
     }
 
-    private fun queryVimeoStream(videoId: String): StreamResolution? {
+    private fun queryVimeoStream(videoId: String, targetResolution: MediaResolutionOption? = null): StreamResolution? {
         val embedUrl = "https://player.vimeo.com/video/$videoId?app_id=122963"
+        val targetHeight = targetResolution?.height ?: 720
 
         // Strategy 1: Fetch title and thumbnail from public Vimeo oEmbed API
         var oembedTitle: String? = null
@@ -821,18 +1360,22 @@ class SocialMediaVideoProcessor(private val context: Context) {
                                 val title = oembedTitle ?: videoObj?.optString("title") ?: "Vimeo Video"
                                 val files = json.optJSONObject("request")?.optJSONObject("files")
 
-                                // 1. Check progressive MP4 files (highest quality first)
+                                // 1. Check progressive MP4 files matching target quality
                                 val progressive = files?.optJSONArray("progressive")
                                 if (progressive != null && progressive.length() > 0) {
                                     var bestUrl: String? = null
-                                    var bestWidth = 0
+                                    var bestDiff = Int.MAX_VALUE
                                     for (i in 0 until progressive.length()) {
                                         val item = progressive.getJSONObject(i)
                                         val streamUrl = item.optString("url")
                                         val width = item.optInt("width", 0)
-                                        if (streamUrl.isNotBlank() && width >= bestWidth) {
-                                            bestWidth = width
-                                            bestUrl = streamUrl
+                                        val h = item.optInt("height", 0).takeIf { it > 0 } ?: (width * 9 / 16)
+                                        if (streamUrl.isNotBlank()) {
+                                            val diff = kotlin.math.abs(h - targetHeight)
+                                            if (diff < bestDiff) {
+                                                bestDiff = diff
+                                                bestUrl = streamUrl
+                                            }
                                         }
                                     }
                                     if (bestUrl != null) {
@@ -957,12 +1500,20 @@ class SocialMediaVideoProcessor(private val context: Context) {
         return null
     }
 
-    private fun queryCobaltApi(apiEndpoint: String, targetUrl: String): StreamResolution? {
+    private fun queryCobaltApi(apiEndpoint: String, targetUrl: String, targetResolution: MediaResolutionOption? = null): StreamResolution? {
+        val isAudio = targetResolution?.id == "audio" || targetResolution?.height == 0
+        val quality = when (targetResolution?.height) {
+            1080 -> "1080"
+            720 -> "720"
+            480 -> "480"
+            360 -> "360"
+            else -> "720"
+        }
         val jsonPayload = JSONObject().apply {
             put("url", targetUrl)
-            put("videoQuality", "720")
+            put("videoQuality", quality)
             put("audioFormat", "best")
-            put("downloadMode", "auto")
+            put("downloadMode", if (isAudio) "audio" else "auto")
         }
 
         val mediaType = "application/json; charset=utf-8".toMediaType()
@@ -994,7 +1545,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
         return null
     }
 
-    private fun queryInvidiousApi(endpoint: String, videoId: String): StreamResolution? {
+    private fun queryInvidiousApi(endpoint: String, videoId: String, targetResolution: MediaResolutionOption? = null): StreamResolution? {
         val apiUrl = if (endpoint.contains("piped")) {
             "$endpoint/streams/$videoId"
         } else {
@@ -1013,17 +1564,29 @@ class SocialMediaVideoProcessor(private val context: Context) {
             val json = JSONObject(bodyStr)
 
             val title = json.optString("title", "YouTube Video")
+            val targetHeight = targetResolution?.height ?: 720
 
             // Format streams (video + audio combined)
             val formatStreams = json.optJSONArray("formatStreams")
             if (formatStreams != null && formatStreams.length() > 0) {
+                var bestUrl: String? = null
+                var bestDiff = Int.MAX_VALUE
                 for (i in 0 until formatStreams.length()) {
                     val streamObj = formatStreams.getJSONObject(i)
                     val streamUrl = streamObj.optString("url")
                     val container = streamObj.optString("container", "mp4")
+                    val qualityLabel = streamObj.optString("qualityLabel", "")
+                    val h = qualityLabel.filter { it.isDigit() }.toIntOrNull() ?: 720
                     if (streamUrl.isNotBlank() && container.contains("mp4", ignoreCase = true)) {
-                        return StreamResolution(streamUrl, "YouTube - $title")
+                        val diff = kotlin.math.abs(h - targetHeight)
+                        if (diff < bestDiff) {
+                            bestDiff = diff
+                            bestUrl = streamUrl
+                        }
                     }
+                }
+                if (bestUrl != null) {
+                    return StreamResolution(bestUrl, "YouTube - $title")
                 }
                 val firstUrl = formatStreams.getJSONObject(0).optString("url")
                 if (firstUrl.isNotBlank()) {
@@ -1401,6 +1964,7 @@ class SocialMediaVideoProcessor(private val context: Context) {
         m3u8Url: String,
         targetFile: File,
         referer: String,
+        targetResolution: MediaResolutionOption? = null,
         onProgress: (Float) -> Unit
     ) {
         val origin = if (referer.contains("vimeo")) "https://player.vimeo.com" else if (referer.contains("dailymotion")) "https://www.dailymotion.com" else null
@@ -1427,19 +1991,33 @@ class SocialMediaVideoProcessor(private val context: Context) {
         var mediaPlaylistUrl = manifestFinalUrl
 
         if (manifestContent.contains("#EXT-X-STREAM-INF") || manifestContent.contains("#EXT-X-MEDIA:TYPE=AUDIO")) {
-            // For audio extraction/vocal separation, an audio track is ideal if available
-            val audioMatcher = Pattern.compile("""#EXT-X-MEDIA:TYPE=AUDIO.*?URI=["']([^"']+)["']""").matcher(manifestContent)
+            val isAudioOnly = targetResolution?.id == "audio" || targetResolution?.height == 0
+            val targetHeight = targetResolution?.height ?: 720
             var chosenVariantUrl: String? = null
-            if (audioMatcher.find()) {
-                chosenVariantUrl = resolveRelativeUrl(manifestFinalUrl, audioMatcher.group(1))
-            } else {
-                // Otherwise pick best video variant URL
+
+            if (isAudioOnly) {
+                val audioMatcher = Pattern.compile("""#EXT-X-MEDIA:TYPE=AUDIO.*?URI=["']([^"']+)["']""").matcher(manifestContent)
+                if (audioMatcher.find()) {
+                    chosenVariantUrl = resolveRelativeUrl(manifestFinalUrl, audioMatcher.group(1))
+                }
+            }
+
+            if (chosenVariantUrl == null) {
                 val lines = manifestContent.lines()
+                var bestDiff = Int.MAX_VALUE
                 for (i in lines.indices) {
-                    if (lines[i].startsWith("#EXT-X-STREAM-INF") && i + 1 < lines.size) {
+                    val line = lines[i]
+                    if (line.startsWith("#EXT-X-STREAM-INF") && i + 1 < lines.size) {
                         val lineNext = lines[i + 1].trim()
                         if (!lineNext.startsWith("#") && lineNext.isNotBlank()) {
-                            chosenVariantUrl = resolveRelativeUrl(manifestFinalUrl, lineNext)
+                            val nextUrl = resolveRelativeUrl(manifestFinalUrl, lineNext)
+                            val resMatcher = Pattern.compile("""RESOLUTION=(\d+)x(\d+)""").matcher(line)
+                            val h = if (resMatcher.find()) resMatcher.group(2).toIntOrNull() ?: 720 else 720
+                            val diff = kotlin.math.abs(h - targetHeight)
+                            if (diff < bestDiff) {
+                                bestDiff = diff
+                                chosenVariantUrl = nextUrl
+                            }
                         }
                     }
                 }

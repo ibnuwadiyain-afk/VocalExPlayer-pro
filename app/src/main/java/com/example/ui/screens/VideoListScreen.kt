@@ -135,7 +135,12 @@ fun VideoListScreen(
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
+    resolutionState: com.example.MainViewModel.WebImportResolutionState? = null,
     onSubmitMediaUrl: (String) -> Unit = {},
+    onProbeResolutions: (String) -> Unit = {},
+    onSelectResolution: (com.example.media.MediaResolutionOption) -> Unit = {},
+    onConfirmResolutionDownload: () -> Unit = {},
+    onBackToUrlInput: () -> Unit = {},
     onCancelDownload: () -> Unit = {},
     onClearDownloadError: () -> Unit = {},
     onDismissDownloadDialog: () -> Unit = {},
@@ -880,20 +885,26 @@ fun VideoListScreen(
     }
 
     // YouTube & Social Media URL Import Dialog
-    if (showUrlDialog || (!sharedMediaUrl.isNullOrBlank() && !isDownloadingMedia)) {
+    if (showUrlDialog || (!sharedMediaUrl.isNullOrBlank() && !isDownloadingMedia) || resolutionState != null) {
         UrlImportDialog(
             initialUrl = sharedMediaUrl ?: "",
             downloadState = downloadProgressState,
             isDownloading = isDownloadingMedia,
             errorMessage = downloadErrorMessage,
             elapsedTime = downloadElapsedFormatted,
+            resolutionState = resolutionState,
             onDismiss = {
                 showUrlDialog = false
+                onBackToUrlInput()
                 onDismissDownloadDialog()
             },
             onSubmitUrl = { url ->
-                onSubmitMediaUrl(url)
+                onProbeResolutions(url)
             },
+            onProbeResolutions = onProbeResolutions,
+            onSelectResolution = onSelectResolution,
+            onConfirmResolutionDownload = onConfirmResolutionDownload,
+            onBackToUrlInput = onBackToUrlInput,
             onCancelDownload = {
                 showUrlDialog = false
                 onCancelDownload()
