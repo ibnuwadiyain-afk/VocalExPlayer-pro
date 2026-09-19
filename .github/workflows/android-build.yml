@@ -87,22 +87,16 @@ jobs:
         run: curl https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone
+        env:
+          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
         run: |
           mkdir -p ~/.config/rclone
-          echo '${{ secrets.RCLONE_CONFIG }}' > ~/.config/rclone/rclone.conf
+          echo "$RCLONE_CONFIG_B64" | base64 -d > ~/.config/rclone/rclone.conf
+          echo "---- Section headers found: ----"
+          grep -E '^\[.*\]$' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
 
-      - name: Debug rclone config
-  env:
-    RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
-  run: |
-    echo "Secret length: ${#RCLONE_CONFIG}"
-    echo "---- First 40 chars (first line) ----"
-    echo "$RCLONE_CONFIG" | head -c 40
-    echo
-    echo "---- Section headers ----"
-    grep -E '^\[' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
-    echo "---- Full file line count ----"
-    wc -l ~/.config/rclone/rclone.conf
+      - name: Test rclone connection
+        run: rclone lsd gdrive: --max-depth 1
 
       - name: Upload APK to Google Drive
         run: |
