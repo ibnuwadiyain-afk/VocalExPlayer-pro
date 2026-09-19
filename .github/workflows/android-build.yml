@@ -90,30 +90,48 @@ jobs:
         env:
           RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
         run: |
+          set -euo pipefail
+          
+          if [ -z "$RCLONE_CONFIG_B64" ]; then
+            echo "❌ ERROR: secrets.RCLONE_CONFIG is empty or not set!"
+            echo "Please add your rclone config as a base64-encoded secret."
+            exit 1
+          fi
+          
           mkdir -p ~/.config/rclone
           CONF=~/.config/rclone/rclone.conf
-
-          # If the secret starts with '[' it's plain text; otherwise assume base64
-          if [[ "$RCLONE_CONFIG_B64" == \[* ]]; then
-            echo "Detected plain-text config — writing directly."
-            printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
+          
+          # Try base64 decode first
+          if echo "$RCLONE_CONFIG_B64" | base64 -d > "$CONF" 2>/dev/null; then
+            echo "✅ Base64 decoded successfully."
           else
-            echo "Detected base64 — decoding."
-            if echo "$RCLONE_CONFIG_B64" | base64 -d > "$CONF" 2>/dev/null; then
-              echo "Base64 decoded successfully."
-            else
-              echo "❌ Base64 decode failed. Writing raw value as fallback."
-              printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
-            fi
+            echo "⚠️  Base64 decode failed, trying as plain text..."
+            printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
           fi
-
-          echo "---- Config file contents (token redacted) ----"
-          sed -E 's/(token *= *).*/\1<REDACTED>/' "$CONF"
-          echo "---- Section headers found: ----"
-          grep -E '^\[.*\]$' "$CONF" || echo "❌ No [section] headers found!"
+          
+          # Validate config has [gdrive] section
+          if ! grep -q '^\[gdrive\]' "$CONF"; then
+            echo "❌ ERROR: No [gdrive] section found in rclone config!"
+            echo "Available sections:"
+            grep -E '^\[.*\]$' "$CONF" || echo "  (none found)"
+            echo ""
+            echo "Your config should look like:"
+            echo "  [gdrive]"
+            echo "  type = drive"
+            echo "  ..."
+            exit 1
+          fi
+          
+          echo "✅ Found [gdrive] section in config"
+          echo "---- Config sections (redacted) ----"
+          grep -E '^\[.*\]$' "$CONF"
+          echo "------------------------------------"
 
       - name: Test rclone connection
         run: |
+          echo "Testing rclone connection..."
+          rclone listremotes
+          echo ""
           rclone lsd gdrive: --max-depth 1
 
       - name: Upload APK to Google Drive
@@ -121,7 +139,16 @@ jobs:
           APK_DIR="app/build/outputs/apk/debug"
           TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')
           REMOTE_DIR="gdrive:VocalExPlayer-Builds/${TIMESTAMP}"
+          
+          if [ ! -d "$APK_DIR" ]; then
+            echo "❌ ERROR: APK directory not found: $APK_DIR"
+            exit 1
+          fi
+          
+          echo "Uploading APKs from $APK_DIR..."
           rclone copy "$APK_DIR" "$REMOTE_DIR" \
             --include "*.apk" \
-            --progress
+            --progress \
+            --verbose
+          
           echo "✅ Uploaded to $REMOTE_DIR"
