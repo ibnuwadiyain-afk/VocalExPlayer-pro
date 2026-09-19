@@ -123,6 +123,21 @@ class StreamingWavWriter(
         totalFramesWritten += count
     }
 
+    /**
+     * Flushes internal memory buffer to underlying file output stream.
+     * Enables concurrent streaming readers to immediately read up to [framesWritten].
+     */
+    fun flush() {
+        if (buffer.position() > 0) {
+            fos.write(buffer.array(), 0, buffer.position())
+            buffer.clear()
+        }
+        fos.flush()
+    }
+
+    val framesWritten: Long
+        get() = totalFramesWritten
+
     override fun close() {
         try {
             if (buffer.position() > 0) {
