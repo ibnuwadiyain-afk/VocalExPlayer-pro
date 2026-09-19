@@ -96,8 +96,10 @@ jobs:
           grep -E '^\[.*\]$' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
 
       - name: Test rclone connection
-        run: rclone lsd gdrive: --max-depth 1
-
+        - name: Test rclone connection
+  run: |
+    rclone lsd gdrive: --max-depth 1
+    
       - name: Upload APK to Google Drive
         run: |
           APK_DIR="app/build/outputs/apk/debug"
