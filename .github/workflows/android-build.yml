@@ -85,7 +85,6 @@ jobs:
 
       - name: Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
-
       - name: Configure rclone
         env:
           RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
@@ -95,11 +94,11 @@ jobs:
           echo "---- Section headers found: ----"
           grep -E '^\[.*\]$' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
           
-        - name: Test rclone connection
-  run: |
-    rclone lsd gdrive: --max-depth 1
-    
-      - name: Upload APK to Google Drive
+       - name: Test rclone connection
+        run: |
+        rclone lsd gdrive: --max-depth 1
+        
+       - name: Upload APK to Google Drive
         run: |
           APK_DIR="app/build/outputs/apk/debug"
           TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')
