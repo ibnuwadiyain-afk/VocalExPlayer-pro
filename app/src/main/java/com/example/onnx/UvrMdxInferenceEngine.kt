@@ -7,8 +7,6 @@ import ai.onnxruntime.TensorInfo
 import android.content.Context
 import android.util.Log
 import com.example.audio.DecodedAudio
-import com.example.audio.SpectralVocalFilter
-import com.example.audio.VocalCacheManager
 import com.example.audio.WavWriter
 import java.io.File
 import java.io.FileOutputStream
@@ -81,23 +79,15 @@ class UvrMdxInferenceEngine(private val context: Context) {
     /**
      * Executes neural AI source separation using the UVR MDX-Net ONNX model.
      * Uses sample-accurate STFT -> ONNX Neural Network -> iSTFT with zero-allocation buffers.
-     * Supports Live Streaming Sessions (VocalCacheManager.LiveVocalSession) for progressive chunk playback.
      */
     fun separateVocals(
         decodedAudio: DecodedAudio,
         outputWavFile: File,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
-        liveSession: VocalCacheManager.LiveVocalSession? = null,
         onProgress: (Float) -> Unit = {}
     ): File {
-        val modelFile = try {
-            getOrExtractModelFile(customModelPath)
-        } catch (e: Throwable) {
-            Log.w(TAG, "ONNX model acquisition failed: ${e.message}. Launching Fallback DSP Engine.")
-            runFallbackDspPipeline(decodedAudio, outputWavFile, liveSession, onProgress)
-            return outputWavFile
-        }
+        val modelFile = getOrExtractModelFile(customModelPath)
 
         val availableProcessors = Runtime.getRuntime().availableProcessors()
         val numThreads = availableProcessors.coerceIn(4, 8)
@@ -123,20 +113,14 @@ class UvrMdxInferenceEngine(private val context: Context) {
             Log.i(TAG, "Opening ONNX Session for model: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
             ortEnvironment.createSession(modelFile.absolutePath, sessionOptions)
         } catch (e: Throwable) {
-            Log.w(TAG, "Accelerated session initialization failed (${e.message}), attempting safe CPU mode")
-            try {
-                activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
-                val safeOptions = OrtSession.SessionOptions().apply {
-                    setIntraOpNumThreads(numThreads)
-                    setInterOpNumThreads(2)
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
-                }
-                ortEnvironment.createSession(modelFile.absolutePath, safeOptions)
-            } catch (e2: Throwable) {
-                Log.w(TAG, "ONNX runtime session creation completely failed: ${e2.message}. Using Fallback DSP Engine.")
-                runFallbackDspPipeline(decodedAudio, outputWavFile, liveSession, onProgress)
-                return outputWavFile
+            Log.w(TAG, "Accelerated session initialization failed (${e.message}), falling back to safe CPU mode")
+            activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
+            val safeOptions = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(numThreads)
+                setInterOpNumThreads(2)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
             }
+            ortEnvironment.createSession(modelFile.absolutePath, safeOptions)
         }
 
         try {
@@ -166,7 +150,6 @@ class UvrMdxInferenceEngine(private val context: Context) {
                     decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
                     accelerationMode = accelerationMode,
-                    liveSession = liveSession,
                     onProgress = onProgress
                 )
             } else {
@@ -176,7 +159,6 @@ class UvrMdxInferenceEngine(private val context: Context) {
                     outputName = outputName,
                     decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
-                    liveSession = liveSession,
                     onProgress = onProgress
                 )
             }
@@ -200,7 +182,6 @@ class UvrMdxInferenceEngine(private val context: Context) {
         decodedAudio: DecodedAudio,
         outputWavFile: File,
         accelerationMode: AccelerationMode,
-        liveSession: VocalCacheManager.LiveVocalSession? = null,
         onProgress: (Float) -> Unit
     ) {
         val totalSamples = decodedAudio.totalFrames
@@ -247,8 +228,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
         var samplePos = 0L
         var skippedChunks = 0
 
-        val localWriter = if (liveSession == null) WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2) else null
-        try {
+        WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2).use { wavWriter ->
             while (samplePos < totalSamples + pad) {
                 val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks.coerceAtLeast(1)) * 0.70f
                 onProgress(progressStart)
@@ -293,11 +273,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
                         // Silence chunk: bypass heavy neural inference and iSTFT, write silence directly
                         skippedChunks++
                         if (validCount > 0) {
-                            if (liveSession != null) {
-                                liveSession.appendSilence(validCount)
-                            } else {
-                                localWriter?.writeSilence(validCount)
-                            }
+                            wavWriter.writeSilence(validCount)
                         }
                         samplePos += genSize
                         chunkIdx++
@@ -355,30 +331,14 @@ class UvrMdxInferenceEngine(private val context: Context) {
                             outChunkL[k] = if (wL > 1e-4f) (istftWaveL[srcIdx] / wL).coerceIn(-1.0f, 1.0f) else istftWaveL[srcIdx]
                             outChunkR[k] = if (wR > 1e-4f) (istftWaveR[srcIdx] / wR).coerceIn(-1.0f, 1.0f) else istftWaveR[srcIdx]
                         }
-                        if (liveSession != null) {
-                            liveSession.appendChunk(outChunkL, outChunkR, 0, validCount)
-                        } else {
-                            localWriter?.writeStereoChunk(outChunkL, outChunkR, 0, validCount)
-                        }
+                        wavWriter.writeStereoChunk(outChunkL, outChunkR, 0, validCount)
                     } else {
                         // Fallback silence if tensor type unexpected
-                        if (validCount > 0) {
-                            if (liveSession != null) {
-                                liveSession.appendSilence(validCount)
-                            } else {
-                                localWriter?.writeSilence(validCount)
-                            }
-                        }
+                        if (validCount > 0) wavWriter.writeSilence(validCount)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error executing ONNX chunk inference at chunk $chunkIdx", e)
-                    if (validCount > 0) {
-                        if (liveSession != null) {
-                            liveSession.appendSilence(validCount)
-                        } else {
-                            localWriter?.writeSilence(validCount)
-                        }
-                    }
+                    if (validCount > 0) wavWriter.writeSilence(validCount)
                 } finally {
                     inputTensor.close()
                     ortResult?.close()
@@ -387,8 +347,6 @@ class UvrMdxInferenceEngine(private val context: Context) {
                 samplePos += genSize
                 chunkIdx++
             }
-        } finally {
-            localWriter?.close()
         }
 
         if (skippedChunks > 0) {
@@ -410,7 +368,6 @@ class UvrMdxInferenceEngine(private val context: Context) {
         outputName: String,
         decodedAudio: DecodedAudio,
         outputWavFile: File,
-        liveSession: VocalCacheManager.LiveVocalSession? = null,
         onProgress: (Float) -> Unit
     ) {
         val totalSamples = decodedAudio.totalFrames
@@ -431,8 +388,7 @@ class UvrMdxInferenceEngine(private val context: Context) {
         val outL = FloatArray(chunkSize)
         val outR = FloatArray(chunkSize)
 
-        val localWriter = if (liveSession == null) WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2) else null
-        try {
+        WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2).use { wavWriter ->
             while (samplePos < totalSamples) {
                 val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks.coerceAtLeast(1)) * 0.70f
                 onProgress(progressStart)
@@ -467,25 +423,13 @@ class UvrMdxInferenceEngine(private val context: Context) {
                             outL[i] = if (outBuf.hasRemaining()) outBuf.get().coerceIn(-1.0f, 1.0f) else 0f
                             outR[i] = if (outBuf.hasRemaining()) outBuf.get().coerceIn(-1.0f, 1.0f) else 0f
                         }
-                        if (liveSession != null) {
-                            liveSession.appendChunk(outL, outR, 0, currentChunkLen)
-                        } else {
-                            localWriter?.writeStereoChunk(outL, outR, 0, currentChunkLen)
-                        }
+                        wavWriter.writeStereoChunk(outL, outR, 0, currentChunkLen)
                     } else {
-                        if (liveSession != null) {
-                            liveSession.appendSilence(currentChunkLen)
-                        } else {
-                            localWriter?.writeSilence(currentChunkLen)
-                        }
+                        wavWriter.writeSilence(currentChunkLen)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in waveform model inference at chunk $chunkIdx", e)
-                    if (liveSession != null) {
-                        liveSession.appendSilence(currentChunkLen)
-                    } else {
-                        localWriter?.writeSilence(currentChunkLen)
-                    }
+                    wavWriter.writeSilence(currentChunkLen)
                 } finally {
                     inputTensor.close()
                     ortResult?.close()
@@ -494,53 +438,9 @@ class UvrMdxInferenceEngine(private val context: Context) {
                 samplePos += currentChunkLen
                 chunkIdx++
             }
-        } finally {
-            localWriter?.close()
         }
 
         onProgress(0.97f)
-        onProgress(1.0f)
-    }
-
-    /**
-     * Fallback Engine: Multi-band Harmonic STFT Spectral Filter (FFT size 2048, hop size 512, formants weighted 220Hz-3.5kHz).
-     */
-    private fun runFallbackDspPipeline(
-        decodedAudio: DecodedAudio,
-        outputWavFile: File,
-        liveSession: VocalCacheManager.LiveVocalSession? = null,
-        onProgress: (Float) -> Unit
-    ) {
-        Log.i(TAG, "Running Fallback Engine: Multi-band Harmonic STFT Spectral Filter (FFT 2048, formants 220Hz-3.5kHz)")
-        val sampleRate = decodedAudio.sampleRate
-        val totalSamples = decodedAudio.totalFrames
-        val chunkSize = 4096
-        val filter = SpectralVocalFilter(sampleRate)
-
-        val inL = FloatArray(chunkSize)
-        val inR = FloatArray(chunkSize)
-        val outL = FloatArray(chunkSize)
-        val outR = FloatArray(chunkSize)
-
-        val localWriter = if (liveSession == null) WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2) else null
-        var pos = 0L
-        try {
-            while (pos < totalSamples) {
-                val count = minOf(chunkSize.toLong(), totalSamples - pos).toInt()
-                decodedAudio.readStereoChunk(pos, count, inL, inR, 0)
-                filter.processChunkStft(inL, inR, outL, outR, count, isolateVocals = true)
-
-                if (liveSession != null) {
-                    liveSession.appendChunk(outL, outR, 0, count)
-                } else {
-                    localWriter?.writeStereoChunk(outL, outR, 0, count)
-                }
-                pos += count
-                onProgress(0.25f + (pos.toFloat() / totalSamples.coerceAtLeast(1L)) * 0.70f)
-            }
-        } finally {
-            localWriter?.close()
-        }
         onProgress(1.0f)
     }
 }

@@ -5,7 +5,6 @@ import android.net.Uri
 import android.os.PowerManager
 import android.util.Log
 import com.example.audio.AudioExtractor
-import com.example.audio.VocalCacheManager
 import com.example.data.dao.VideoDao
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
@@ -94,27 +93,18 @@ class AudioSeparationPipeline(
                 }
             )
 
-            // Start live vocal session so NeuralAudioProcessor can stream chunks in real-time
-            val liveSession = VocalCacheManager.startLiveSession(
-                context = context,
-                videoId = video.id,
-                sampleRate = decodedAudio.sampleRate
-            )
-
             try {
-                // Step 2: Run Real ONNX Separation with progressive streaming
+                // Step 2: Run Real ONNX Separation
                 inferenceEngine.separateVocals(
                     decodedAudio = decodedAudio,
                     outputWavFile = vocalWavFile,
                     customModelPath = customModelPath,
                     accelerationMode = accelerationMode,
-                    liveSession = liveSession,
                     onProgress = { sepProgress ->
                         onProgress(sepProgress)
                     }
                 )
             } finally {
-                liveSession.close()
                 decodedAudio.close()
             }
 

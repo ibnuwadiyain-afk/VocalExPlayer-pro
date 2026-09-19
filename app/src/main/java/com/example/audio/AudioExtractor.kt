@@ -14,20 +14,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Producer-Consumer synchronization interface for pipelined streaming audio decoding.
- * Allows ONNX inference to start Chunk 1 immediately as soon as the first ~1.5 to 7.8s of audio
- * land on disk, while MediaCodec continues decoding subsequent frames concurrently in the background.
- */
-interface AudioFrameProducer : AutoCloseable {
-    val decodedFramesCount: Long
-    val isFinished: Boolean
-    fun waitForFrames(targetFrame: Long, timeoutMs: Long = 120_000L): Boolean
-}
-
-/**
  * Encapsulates decoded audio data.
- * Supports both zero-memory-overhead disk-backed chunk streaming (for long videos/audio),
- * concurrent pipelined decoding (MediaCodec producer-consumer),
+ * Supports both zero-memory-overhead disk-backed chunk streaming (for long videos/audio)
  * and in-memory arrays (for short clips or unit tests).
  */
 class DecodedAudio(
@@ -37,8 +25,7 @@ class DecodedAudio(
     private val inMemoryLeft: FloatArray? = null,
     private val inMemoryRight: FloatArray? = null,
     val pcmFile: File? = null,
-    private val autoDeletePcmFile: Boolean = true,
-    var frameProducer: AudioFrameProducer? = null
+    private val autoDeletePcmFile: Boolean = true
 ) : AutoCloseable {
 
     constructor(
@@ -53,8 +40,7 @@ class DecodedAudio(
         inMemoryLeft = leftChannel,
         inMemoryRight = rightChannel,
         pcmFile = null,
-        autoDeletePcmFile = false,
-        frameProducer = null
+        autoDeletePcmFile = false
     )
 
     val leftChannel: FloatArray by lazy {
@@ -82,12 +68,6 @@ class DecodedAudio(
         destOffset: Int
     ): Int {
         if (count <= 0) return 0
-
-        // If a pipelined frameProducer is active, wait until frames land on disk
-        frameProducer?.let { producer ->
-            val target = minOf(startFrame + count, totalFrames)
-            producer.waitForFrames(target)
-        }
 
         // If in-memory arrays are available, copy directly
         if (inMemoryLeft != null && inMemoryRight != null) {
@@ -155,9 +135,6 @@ class DecodedAudio(
     }
 
     override fun close() {
-        try {
-            frameProducer?.close()
-        } catch (_: Exception) {}
         try {
             raf?.close()
             raf = null
@@ -431,281 +408,6 @@ object AudioExtractor {
             totalFrames = numFrames,
             pcmFile = tempPcmFile,
             autoDeletePcmFile = true
-        )
-    }
-
-    /**
-     * Pipelined Streaming Audio Decoding (MediaCodec + Producer-Consumer).
-     * 1. Uses MediaExtractor to instantly (<5ms) inspect track metadata.
-     * 2. Launches a background MediaCodec decoding worker that streams 16-bit PCM stereo frames to disk.
-     * 3. Returns a DecodedAudio source immediately with an AudioFrameProducer.
-     * 4. As soon as the first ~1.5 to 7.8s land on disk (~50-150ms), Chunk 1 neural separation begins immediately
-     *    while MediaCodec continues decoding subsequent chunks in parallel in the background!
-     */
-    fun extractPipelinedAudio(
-        context: Context,
-        videoUri: Uri,
-        onProgress: (Float) -> Unit = {}
-    ): DecodedAudio {
-        // Fast-path for uncompressed WAV files
-        try {
-            val directWav = readWavDirectly(context, videoUri)
-            if (directWav != null) {
-                onProgress(0.25f)
-                return directWav
-            }
-        } catch (_: Exception) {}
-
-        val extractor = MediaExtractor()
-        val scheme = videoUri.scheme
-        if (scheme == null || scheme == "file") {
-            val path = videoUri.path ?: videoUri.toString().removePrefix("file://")
-            val file = File(path)
-            if (file.exists()) {
-                extractor.setDataSource(file.absolutePath)
-            } else {
-                extractor.setDataSource(context, videoUri, null)
-            }
-        } else {
-            extractor.setDataSource(context, videoUri, null)
-        }
-
-        var audioTrackIndex = -1
-        var audioFormat: MediaFormat? = null
-        for (i in 0 until extractor.trackCount) {
-            val format = extractor.getTrackFormat(i)
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-            if (mime.startsWith("audio/")) {
-                audioTrackIndex = i
-                audioFormat = format
-                break
-            }
-        }
-
-        if (audioTrackIndex == -1 || audioFormat == null) {
-            extractor.release()
-            throw IllegalStateException("No audio track found in the selected video")
-        }
-
-        extractor.selectTrack(audioTrackIndex)
-        val mime = audioFormat.getString(MediaFormat.KEY_MIME) ?: "audio/mp4a-latm"
-        val sampleRate = if (audioFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-            audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-        } else 44100
-        val durationUs = if (audioFormat.containsKey(MediaFormat.KEY_DURATION)) {
-            audioFormat.getLong(MediaFormat.KEY_DURATION)
-        } else 10_000_000L
-
-        val totalExpectedFrames = if (durationUs > 0) {
-            (durationUs * sampleRate) / 1_000_000L
-        } else 44100L * 10
-
-        val calculatedDurationMs = durationUs / 1000L
-
-        val codec = try {
-            MediaCodec.createDecoderByType(mime).apply {
-                configure(audioFormat, null, null, 0)
-                start()
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Hardware codec creation failed for $mime (${e.message}), falling back to standard extraction")
-            extractor.release()
-            return extractAudioFromVideo(context, videoUri, onProgress)
-        }
-
-        val tempPcmFile = File.createTempFile("pipelined_pcm_", ".raw", context.cacheDir)
-        val fos = FileOutputStream(tempPcmFile)
-        val fileChannel = fos.channel
-
-        class PipelinedProducer : AudioFrameProducer {
-            val lock = Object()
-            @Volatile override var decodedFramesCount: Long = 0L
-            @Volatile override var isFinished: Boolean = false
-            @Volatile var isCancelled: Boolean = false
-
-            val thread = Thread({
-                var actualSampleRate = sampleRate
-                var actualChannelCount = 2
-                val bufferInfo = MediaCodec.BufferInfo()
-                var sawInputEOS = false
-                var sawOutputEOS = false
-                var consecutiveTryAgainCount = 0
-                val normBuffer = ByteBuffer.allocateDirect(32 * 1024).order(ByteOrder.LITTLE_ENDIAN)
-
-                try {
-                    while (!sawOutputEOS && !isCancelled) {
-                        if (!sawInputEOS) {
-                            val inputBufferIndex = codec.dequeueInputBuffer(TIMEOUT_US)
-                            if (inputBufferIndex >= 0) {
-                                val inputBuffer = codec.getInputBuffer(inputBufferIndex)
-                                if (inputBuffer != null) {
-                                    val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                                    if (sampleSize < 0) {
-                                        sawInputEOS = true
-                                        codec.queueInputBuffer(
-                                            inputBufferIndex, 0, 0, 0,
-                                            MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                                        )
-                                    } else {
-                                        val presentationTimeUs = extractor.sampleTime
-                                        codec.queueInputBuffer(
-                                            inputBufferIndex, 0, sampleSize, presentationTimeUs, 0
-                                        )
-                                        extractor.advance()
-                                        if (durationUs > 0) {
-                                            val progress = (presentationTimeUs.toFloat() / durationUs.toFloat()).coerceIn(0f, 1f)
-                                            onProgress(progress * 0.25f)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
-                        if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                            val outFormat = codec.outputFormat
-                            if (outFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                                actualSampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                            }
-                            if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-                                actualChannelCount = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                            }
-                            consecutiveTryAgainCount = 0
-                        } else if (outputBufferIndex >= 0) {
-                            consecutiveTryAgainCount = 0
-                            val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
-                            if (outputBuffer != null && bufferInfo.size > 0) {
-                                outputBuffer.position(bufferInfo.offset)
-                                outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-
-                                val framesInBlock: Int
-                                if (actualChannelCount == 2) {
-                                    framesInBlock = bufferInfo.size / 4
-                                    fileChannel.write(outputBuffer)
-                                } else if (actualChannelCount == 1) {
-                                    val shortBuf = outputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                                    framesInBlock = shortBuf.remaining()
-                                    normBuffer.clear()
-                                    val normShorts = normBuffer.asShortBuffer()
-                                    while (shortBuf.hasRemaining()) {
-                                        if (normShorts.remaining() < 2) {
-                                            normBuffer.position(0)
-                                            normBuffer.limit(normShorts.position() * 2)
-                                            fileChannel.write(normBuffer)
-                                            normBuffer.clear()
-                                            normShorts.position(0)
-                                        }
-                                        val sample = shortBuf.get()
-                                        normShorts.put(sample)
-                                        normShorts.put(sample)
-                                    }
-                                    if (normShorts.position() > 0) {
-                                        normBuffer.position(0)
-                                        normBuffer.limit(normShorts.position() * 2)
-                                        fileChannel.write(normBuffer)
-                                    }
-                                } else {
-                                    val shortBuf = outputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                                    framesInBlock = shortBuf.remaining() / actualChannelCount
-                                    normBuffer.clear()
-                                    val normShorts = normBuffer.asShortBuffer()
-                                    while (shortBuf.remaining() >= actualChannelCount) {
-                                        if (normShorts.remaining() < 2) {
-                                            normBuffer.position(0)
-                                            normBuffer.limit(normShorts.position() * 2)
-                                            fileChannel.write(normBuffer)
-                                            normBuffer.clear()
-                                            normShorts.position(0)
-                                        }
-                                        val l = shortBuf.get()
-                                        val r = shortBuf.get()
-                                        val c = (shortBuf.get() * 0.707f).toInt().toShort()
-                                        for (ch in 3 until actualChannelCount) {
-                                            shortBuf.get()
-                                        }
-                                        normShorts.put(((l + c).coerceIn(-32768, 32767)).toShort())
-                                        normShorts.put(((r + c).coerceIn(-32768, 32767)).toShort())
-                                    }
-                                    if (normShorts.position() > 0) {
-                                        normBuffer.position(0)
-                                        normBuffer.limit(normShorts.position() * 2)
-                                        fileChannel.write(normBuffer)
-                                    }
-                                }
-
-                                synchronized(lock) {
-                                    decodedFramesCount += framesInBlock
-                                    lock.notifyAll()
-                                }
-                            }
-                            codec.releaseOutputBuffer(outputBufferIndex, false)
-                            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                sawOutputEOS = true
-                            }
-                        } else if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                            if (sawInputEOS) {
-                                consecutiveTryAgainCount++
-                                if (consecutiveTryAgainCount > 50) {
-                                    sawOutputEOS = true
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Pipelined audio decoding exception: ${e.message}")
-                } finally {
-                    try {
-                        fileChannel.close()
-                        fos.close()
-                    } catch (_: Exception) {}
-                    try {
-                        codec.stop()
-                        codec.release()
-                    } catch (_: Exception) {}
-                    try {
-                        extractor.release()
-                    } catch (_: Exception) {}
-                    synchronized(lock) {
-                        isFinished = true
-                        lock.notifyAll()
-                    }
-                }
-            }, "PipelinedAudioDecoder")
-
-            init {
-                thread.isDaemon = true
-                thread.start()
-            }
-
-            override fun waitForFrames(targetFrame: Long, timeoutMs: Long): Boolean {
-                synchronized(lock) {
-                    val deadline = System.currentTimeMillis() + timeoutMs
-                    while (decodedFramesCount < targetFrame && !isFinished && !isCancelled) {
-                        val waitTime = deadline - System.currentTimeMillis()
-                        if (waitTime <= 0) break
-                        lock.wait(minOf(waitTime, 100L))
-                    }
-                    return decodedFramesCount >= targetFrame || isFinished
-                }
-            }
-
-            override fun close() {
-                isCancelled = true
-                synchronized(lock) {
-                    lock.notifyAll()
-                }
-                thread.interrupt()
-            }
-        }
-
-        val producer = PipelinedProducer()
-        return DecodedAudio(
-            sampleRate = sampleRate,
-            durationMs = calculatedDurationMs,
-            totalFrames = totalExpectedFrames,
-            pcmFile = tempPcmFile,
-            autoDeletePcmFile = true,
-            frameProducer = producer
         )
     }
 

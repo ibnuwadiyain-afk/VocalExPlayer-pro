@@ -20,10 +20,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
       - name: Ensure Gradle Wrapper
         run: |
@@ -83,72 +84,10 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Install rclone
-        run: curl https://rclone.org/install.sh | sudo bash
-
-      - name: Configure rclone
-        env:
-          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
-        run: |
-          set -euo pipefail
-          
-          if [ -z "$RCLONE_CONFIG_B64" ]; then
-            echo "❌ ERROR: secrets.RCLONE_CONFIG is empty or not set!"
-            echo "Please add your rclone config as a base64-encoded secret."
-            exit 1
-          fi
-          
-          mkdir -p ~/.config/rclone
-          CONF=~/.config/rclone/rclone.conf
-          
-          # Try base64 decode first
-          if echo "$RCLONE_CONFIG_B64" | base64 -d > "$CONF" 2>/dev/null; then
-            echo "✅ Base64 decoded successfully."
-          else
-            echo "⚠️  Base64 decode failed, trying as plain text..."
-            printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
-          fi
-          
-          # Validate config has [gdrive] section
-          if ! grep -q '^\[gdrive\]' "$CONF"; then
-            echo "❌ ERROR: No [gdrive] section found in rclone config!"
-            echo "Available sections:"
-            grep -E '^\[.*\]$' "$CONF" || echo "  (none found)"
-            echo ""
-            echo "Your config should look like:"
-            echo "  [gdrive]"
-            echo "  type = drive"
-            echo "  ..."
-            exit 1
-          fi
-          
-          echo "✅ Found [gdrive] section in config"
-          echo "---- Config sections (redacted) ----"
-          grep -E '^\[.*\]$' "$CONF"
-          echo "------------------------------------"
-
-      - name: Test rclone connection
-        run: |
-          echo "Testing rclone connection..."
-          rclone listremotes
-          echo ""
-          rclone lsd gdrive: --max-depth 1
-
-      - name: Upload APK to Google Drive
-        run: |
-          APK_DIR="app/build/outputs/apk/debug"
-          TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')
-          REMOTE_DIR="gdrive:VocalExPlayer-Builds/${TIMESTAMP}"
-          
-          if [ ! -d "$APK_DIR" ]; then
-            echo "❌ ERROR: APK directory not found: $APK_DIR"
-            exit 1
-          fi
-          
-          echo "Uploading APKs from $APK_DIR..."
-          rclone copy "$APK_DIR" "$REMOTE_DIR" \
-            --include "*.apk" \
-            --progress \
-            --verbose
-          
-          echo "✅ Uploaded to $REMOTE_DIR"
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/
+          if-no-files-found: error
+          retention-days: 21

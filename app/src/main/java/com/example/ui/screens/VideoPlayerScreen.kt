@@ -73,14 +73,10 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.audio.AudioSink
-import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
-import com.example.audio.NeuralAudioProcessor
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import com.example.export.ExportFormat
@@ -133,36 +129,12 @@ fun VideoPlayerScreen(
                 path.endsWith(".flac") || path.endsWith(".ogg") || path.endsWith(".aac")
     }
 
-    val audioProcessor = remember { NeuralAudioProcessor(context) }
-
-    LaunchedEffect(video.id, video.vocalUri) {
-        audioProcessor.setTargetVideoId(video.id, video.vocalUri)
-    }
-
-    // Single unified ExoPlayer instance with custom NeuralAudioProcessor for zero-lag stem mixing
+    // Single unified ExoPlayer instance for frame-accurate, sample-synced video and audio playback
     val player = remember {
-        val renderersFactory = object : DefaultRenderersFactory(context) {
-            override fun buildAudioSink(
-                context: android.content.Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink? {
-                return DefaultAudioSink.Builder(context)
-                    .setEnableFloatOutput(enableFloatOutput)
-                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                    .setAudioProcessors(arrayOf(audioProcessor))
-                    .build()
-            }
-        }
-        ExoPlayer.Builder(context, renderersFactory).build()
+        ExoPlayer.Builder(context).build()
     }
 
     fun selectTrack(vocalsOnly: Boolean) {
-        if (vocalsOnly) {
-            audioProcessor.setStemMode(NeuralAudioProcessor.StemMode.VOCAL_ONLY)
-        } else {
-            audioProcessor.setStemMode(NeuralAudioProcessor.StemMode.ORIGINAL_MIX)
-        }
         val tracks = player.currentTracks
         val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (audioGroups.size >= 2) {
@@ -179,7 +151,6 @@ fun VideoPlayerScreen(
     DisposableEffect(Unit) {
         onDispose {
             player.release()
-            audioProcessor.release()
         }
     }
 
@@ -227,14 +198,6 @@ fun VideoPlayerScreen(
 
             override fun onTracksChanged(tracks: Tracks) {
                 selectTrack(useIsolatedVocals)
-            }
-
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int
-            ) {
-                audioProcessor.notifySeek(newPosition.positionMs)
             }
         }
         player.addListener(listener)
@@ -522,7 +485,6 @@ fun VideoPlayerScreen(
                         onValueChangeFinished = {
                             val seekTarget = (sliderPosition * duration).toLong()
                             player.seekTo(seekTarget)
-                            audioProcessor.notifySeek(seekTarget)
                             isSliderDragging = false
                         },
                         colors = SliderDefaults.colors(
