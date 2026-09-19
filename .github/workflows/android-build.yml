@@ -91,6 +91,19 @@ jobs:
           mkdir -p ~/.config/rclone
           echo '${{ secrets.RCLONE_CONFIG }}' > ~/.config/rclone/rclone.conf
 
+      - name: Debug rclone config
+  env:
+    RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+  run: |
+    echo "Secret length: ${#RCLONE_CONFIG}"
+    echo "---- First 40 chars (first line) ----"
+    echo "$RCLONE_CONFIG" | head -c 40
+    echo
+    echo "---- Section headers ----"
+    grep -E '^\[' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
+    echo "---- Full file line count ----"
+    wc -l ~/.config/rclone/rclone.conf
+
       - name: Upload APK to Google Drive
         run: |
           APK_DIR="app/build/outputs/apk/debug"
