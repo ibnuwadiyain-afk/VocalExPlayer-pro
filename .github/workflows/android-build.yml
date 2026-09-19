@@ -84,14 +84,19 @@ jobs:
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Install rclone
-  run: curl https://rclone.org/install.sh | sudo bash
+        run: curl https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone
-  run: |
-    mkdir -p ~/.config/rclone
-    echo '${{ secrets.RCLONE_CONFIG }}' > ~/.config/rclone/rclone.conf
+        run: |
+          mkdir -p ~/.config/rclone
+          echo '${{ secrets.RCLONE_CONFIG }}' > ~/.config/rclone/rclone.conf
 
       - name: Upload APK to Google Drive
-  run: |
-    rclone copy app/build/outputs/apk/debug/app-debug.apk \
-      gdrive:VocalExPlayer-Builds/ --progress
+        run: |
+          APK_DIR="app/build/outputs/apk/debug"
+          TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')
+          REMOTE_DIR="gdrive:VocalExPlayer-Builds/${TIMESTAMP}"
+          rclone copy "$APK_DIR" "$REMOTE_DIR" \
+            --include "*.apk" \
+            --progress
+          echo "✅ Uploaded to $REMOTE_DIR"
