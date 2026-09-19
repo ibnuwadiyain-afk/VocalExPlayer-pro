@@ -3,12 +3,13 @@ name: Android Build
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # required to create releases
 
 jobs:
   build:
@@ -83,10 +84,40 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload Debug APK Artifact
-        uses: actions/upload-artifact@v4
+      # ---------- Rename APK for a nicer asset name ----------
+      - name: Rename APK
+        id: apk
+        run: |
+          SRC=$(find app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          if [ -z "$SRC" ]; then
+            echo "❌ No APK found"; exit 1
+          fi
+          STAMP=$(date -u +'%Y%m%d-%H%M%S')
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          NEW="VocalExPlayer-debug-${STAMP}-${SHORT_SHA}.apk"
+          cp "$SRC" "$NEW"
+          echo "apk_path=$NEW" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$NEW" >> "$GITHUB_OUTPUT"
+          ls -lh "$NEW"
+
+      # ---------- GitHub Release upload ----------
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/
-          if-no-files-found: error
-          retention-days: 21
+          # If triggered by a tag push → use that tag.
+          # Otherwise → auto-tag with build number (e.g. build-123).
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Debug build #{0}', github.run_number) }}
+          body: |
+            Automated debug build.
+
+            - Commit: `${{ github.sha }}`
+            - Branch: `${{ github.ref_name }}`
+            - Triggered by: `${{ github.actor }}`
+          files: ${{ steps.apk.outputs.apk_path }}
+          draft: false
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # ------------------------------------------
