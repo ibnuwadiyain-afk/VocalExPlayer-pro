@@ -86,12 +86,12 @@ jobs:
       - name: Install rclone
   run: curl https://rclone.org/install.sh | sudo bash
 
-- name: Configure rclone
+      - name: Configure rclone
   run: |
     mkdir -p ~/.config/rclone
     echo '${{ secrets.RCLONE_CONFIG }}' > ~/.config/rclone/rclone.conf
 
-- name: Upload APK to Google Drive
+      - name: Upload APK to Google Drive
   run: |
     rclone copy app/build/outputs/apk/debug/app-debug.apk \
       gdrive:VocalExPlayer-Builds/ --progress
