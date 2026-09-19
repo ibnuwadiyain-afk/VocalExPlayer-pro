@@ -94,8 +94,7 @@ jobs:
           echo "$RCLONE_CONFIG_B64" | base64 -d > ~/.config/rclone/rclone.conf
           echo "---- Section headers found: ----"
           grep -E '^\[.*\]$' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
-
-      - name: Test rclone connection
+          
         - name: Test rclone connection
   run: |
     rclone lsd gdrive: --max-depth 1
