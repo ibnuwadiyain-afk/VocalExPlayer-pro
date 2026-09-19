@@ -87,14 +87,31 @@ jobs:
         run: curl https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone
-        env:
-          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
-        run: |
-          mkdir -p ~/.config/rclone
-          echo "$RCLONE_CONFIG_B64" | base64 -d > ~/.config/rclone/rclone.conf
-          echo "---- Section headers found: ----"
-          grep -E '^\[.*\]$' ~/.config/rclone/rclone.conf || echo "❌ No [section] headers found!"
+  env:
+    RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
+  run: |
+    mkdir -p ~/.config/rclone
+    CONF=~/.config/rclone/rclone.conf
 
+    # If the secret starts with '[' it's plain text; otherwise assume base64
+    if [[ "$RCLONE_CONFIG_B64" == \[* ]]; then
+      echo "Detected plain-text config — writing directly."
+      printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
+    else
+      echo "Detected base64 — decoding."
+      if echo "$RCLONE_CONFIG_B64" | base64 -d > "$CONF" 2>/dev/null; then
+        echo "Base64 decoded successfully."
+      else
+        echo "❌ Base64 decode failed. Writing raw value as fallback."
+        printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
+      fi
+    fi
+
+    echo "---- Config file contents (token redacted) ----"
+    sed -E 's/(token *= *).*/\1<REDACTED>/' "$CONF"
+    echo "---- Section headers found: ----"
+    grep -E '^\[.*\]$' "$CONF" || echo "❌ No [section] headers found!"
+    
       - name: Test rclone connection
         run: |
           rclone lsd gdrive: --max-depth 1
