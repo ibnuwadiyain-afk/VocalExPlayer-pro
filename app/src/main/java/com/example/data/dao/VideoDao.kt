@@ -18,6 +18,9 @@ interface VideoDao {
     @Query("SELECT * FROM videos WHERE id = :id LIMIT 1")
     suspend fun getVideoById(id: String): VideoItemEntity?
 
+    @Query("SELECT * FROM videos WHERE videoUri = :uri LIMIT 1")
+    suspend fun getVideoByUri(uri: String): VideoItemEntity?
+
     @Query("SELECT * FROM videos WHERE id = :id LIMIT 1")
     fun observeVideoById(id: String): Flow<VideoItemEntity?>
 

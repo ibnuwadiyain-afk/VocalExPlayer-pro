@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
@@ -79,10 +80,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import com.example.export.ExportFormat
+import com.example.media.ConcurrentDownloadTask
 import com.example.media.DownloadProgressState
+import com.example.media.DownloadTaskStatus
 import com.example.onnx.AccelerationMode
 import com.example.storage.GrantedFolder
 import com.example.storage.StorageMediaItem
+import com.example.ui.components.DefaultPlayerSettingsDialog
 import com.example.ui.components.ExportConfirmDialog
 import com.example.ui.components.ExportOptionsDialog
 import com.example.ui.components.ModelSettingsDialog
@@ -110,6 +114,11 @@ fun VideoListScreen(
     downloadProgressState: DownloadProgressState? = null,
     isDownloadingMedia: Boolean = false,
     downloadErrorMessage: String? = null,
+    downloadTasks: List<ConcurrentDownloadTask> = emptyList(),
+    onCancelDownloadTask: (String) -> Unit = {},
+    onRetryDownloadTask: (String) -> Unit = {},
+    onStartConcurrentDownloads: (List<String>) -> Unit = {},
+    onPlayLiveStream: ((String) -> Unit)? = null,
     sharedMediaUrl: String? = null,
     downloadElapsedFormatted: String = "00:00",
     isProcessing: Boolean = false,
@@ -155,6 +164,7 @@ fun VideoListScreen(
     var videoToExport by remember { mutableStateOf<VideoItemEntity?>(null) }
     var showModelDialog by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
+    var showDefaultPlayerDialog by remember { mutableStateOf(false) }
     var showStorageFolderBrowser by remember { mutableStateOf(false) }
 
     LaunchedEffect(sharedMediaUrl) {
@@ -202,6 +212,16 @@ fun VideoListScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showDefaultPlayerDialog = true },
+                        modifier = Modifier.testTag("default_player_settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayCircleOutline,
+                            contentDescription = "Set as Default Media Player",
+                            tint = AccentTeal
+                        )
+                    }
                     IconButton(
                         onClick = { showStorageFolderBrowser = true },
                         modifier = Modifier.testTag("storage_folders_top_button")
@@ -450,9 +470,14 @@ fun VideoListScreen(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(
-                                            text = when (downloadProgressState) {
-                                                is DownloadProgressState.Downloading -> "Downloading Web Media (${(downloadProgressState.progress * 100).toInt()}%)"
-                                                is DownloadProgressState.Resolving -> downloadProgressState.message
+                                            text = when {
+                                                downloadTasks.size > 1 -> {
+                                                    val activeCount = downloadTasks.count { it.status == DownloadTaskStatus.DOWNLOADING || it.status == DownloadTaskStatus.QUEUED }
+                                                    val doneCount = downloadTasks.count { it.status == DownloadTaskStatus.COMPLETED }
+                                                    "Parallel Downloads: $doneCount/${downloadTasks.size} done ($activeCount downloading)"
+                                                }
+                                                downloadProgressState is DownloadProgressState.Downloading -> "Downloading Web Media (${(downloadProgressState.progress * 100).toInt()}%)"
+                                                downloadProgressState is DownloadProgressState.Resolving -> downloadProgressState.message
                                                 else -> "Downloading in Background…"
                                             },
                                             color = TextPrimary,
@@ -893,6 +918,11 @@ fun VideoListScreen(
             errorMessage = downloadErrorMessage,
             elapsedTime = downloadElapsedFormatted,
             resolutionState = resolutionState,
+            downloadTasks = downloadTasks,
+            onCancelDownloadTask = onCancelDownloadTask,
+            onRetryDownloadTask = onRetryDownloadTask,
+            onStartConcurrentDownloads = onStartConcurrentDownloads,
+            onPlayLiveStream = onPlayLiveStream,
             onDismiss = {
                 showUrlDialog = false
                 onBackToUrlInput()
@@ -954,6 +984,13 @@ fun VideoListScreen(
                     }
                 }
             }
+        )
+    }
+
+    // Default Media Player Settings Dialog
+    if (showDefaultPlayerDialog) {
+        DefaultPlayerSettingsDialog(
+            onDismiss = { showDefaultPlayerDialog = false }
         )
     }
 }

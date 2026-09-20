@@ -10,8 +10,11 @@ import com.example.audio.SampleVideoGenerator
 import com.example.data.db.AppDatabase
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.media.ConcurrentDownloadTask
 import com.example.media.DownloadProgressState
+import com.example.media.DownloadTaskStatus
 import com.example.media.ExtractedVideoInfo
+import com.example.media.MediaResolutionOption
 import com.example.media.SocialMediaVideoProcessor
 import com.example.onnx.AudioSeparationPipeline
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +28,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -91,6 +95,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val socialMediaProcessor = SocialMediaVideoProcessor(application)
     private var mediaDownloadJob: kotlinx.coroutines.Job? = null
     private var downloadTimerJob: kotlinx.coroutines.Job? = null
+
+    // Concurrent multi-link download management
+    private val downloadJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+    private val _downloadTasks = MutableStateFlow<List<ConcurrentDownloadTask>>(emptyList())
+    val downloadTasks: StateFlow<List<ConcurrentDownloadTask>> = _downloadTasks.asStateFlow()
 
     private val _downloadProgressState = MutableStateFlow<DownloadProgressState?>(null)
     val downloadProgressState: StateFlow<DownloadProgressState?> = _downloadProgressState.asStateFlow()
@@ -261,75 +270,299 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _webImportResolutionState.value = null
     }
 
-    fun processSocialMediaUrl(url: String, targetResolution: com.example.media.MediaResolutionOption? = null) {
-        if (url.isBlank()) return
-        _webImportResolutionState.value = null
-        mediaDownloadJob?.cancel()
-        downloadTimerJob?.cancel()
-
-        mediaDownloadJob = viewModelScope.launch(Dispatchers.IO) {
-            _isDownloadingMedia.value = true
-            _downloadErrorMessage.value = null
-            val qualitySuffix = targetResolution?.label?.let { " ($it)" } ?: ""
-            _downloadProgressState.value = DownloadProgressState.Resolving("Analyzing link$qualitySuffix…")
-            _downloadElapsedFormatted.value = "00:00"
-
-            val startDownloadTime = android.os.SystemClock.elapsedRealtime()
-            downloadTimerJob = viewModelScope.launch(Dispatchers.Default) {
-                while (_isDownloadingMedia.value) {
-                    val elapsed = (android.os.SystemClock.elapsedRealtime() - startDownloadTime) / 1000
-                    _downloadElapsedFormatted.value = com.example.service.VocalProcessingManager.formatSeconds(elapsed)
-                    kotlinx.coroutines.delay(500)
+    fun parseUrlsFromInput(input: String): List<String> {
+        val lines = input.split("\n", "\r", ",", " ", "\t").map { it.trim() }.filter { it.isNotBlank() }
+        val urls = mutableListOf<String>()
+        for (token in lines) {
+            val extracted = socialMediaProcessor.extractUrlFromText(token) ?: token
+            if (extracted.startsWith("http://", ignoreCase = true) ||
+                extracted.startsWith("https://", ignoreCase = true) ||
+                extracted.startsWith("rtsp://", ignoreCase = true)) {
+                if (!urls.contains(extracted)) {
+                    urls.add(extracted)
                 }
             }
+        }
+        return urls
+    }
 
-            try {
-                val result = socialMediaProcessor.processAndDownload(url, targetResolution) { state ->
-                    _downloadProgressState.value = state
-                }
+    fun isLiveStreamUrl(url: String): Boolean {
+        val clean = url.trim().lowercase()
+        return clean.endsWith(".m3u8") ||
+                clean.contains(".m3u8?") ||
+                clean.endsWith(".mpd") ||
+                clean.contains(".mpd?") ||
+                clean.startsWith("rtsp://") ||
+                clean.contains("/live") ||
+                clean.contains("manifest") ||
+                clean.contains(".m3u")
+    }
 
-                downloadTimerJob?.cancel()
+    fun playLiveStream(url: String, customTitle: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val trimmed = url.trim()
+            if (trimmed.isBlank()) return@launch
 
-                result.onSuccess { info ->
-                    val videoId = UUID.randomUUID().toString().substring(0, 8)
-                    val newVideo = VideoItemEntity(
-                        id = videoId,
-                        title = info.title,
-                        videoUri = Uri.fromFile(info.file).toString(),
-                        duration = info.durationMs,
-                        status = VideoStatus.NEW,
-                        dateAdded = System.currentTimeMillis()
-                    )
-                    videoDao.insertVideo(newVideo)
-                    _isDownloadingMedia.value = false
-                    _downloadProgressState.value = null
-                    _sharedMediaUrl.value = null
-                    _modelInfoMessage.value = "Downloaded \"${info.title}\" successfully! Ready for separation."
-                    withContext(Dispatchers.Main) {
-                        selectVideo(newVideo)
-                    }
-                }.onFailure { error ->
-                    _isDownloadingMedia.value = false
-                    _downloadErrorMessage.value = error.localizedMessage ?: "Failed to process video from link."
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                downloadTimerJob?.cancel()
-                _isDownloadingMedia.value = false
-                _downloadProgressState.value = null
-                android.util.Log.i("MainViewModel", "Media download cancelled by user")
-            } catch (e: Exception) {
-                downloadTimerJob?.cancel()
-                _isDownloadingMedia.value = false
-                _downloadErrorMessage.value = e.localizedMessage ?: "Failed to process video from link."
+            val title = customTitle ?: when {
+                trimmed.contains("nasa", ignoreCase = true) -> "NASA TV (Live Stream)"
+                trimmed.contains("zeno", ignoreCase = true) -> "Radio Live Stream"
+                trimmed.contains("tears", ignoreCase = true) -> "Tears of Steel HLS Stream"
+                trimmed.contains("bipbop", ignoreCase = true) -> "Apple BipBop Test Stream"
+                else -> "Live Stream (${trimmed.substringBefore('?').substringAfterLast('/').ifBlank { "Channel" }})"
+            }
+
+            val existing = videoDao.getVideoByUri(trimmed)
+            val videoEntity = existing ?: VideoItemEntity(
+                id = "live_" + UUID.randomUUID().toString().substring(0, 8),
+                title = title,
+                videoUri = trimmed,
+                duration = 0L,
+                status = VideoStatus.READY,
+                dateAdded = System.currentTimeMillis()
+            ).also {
+                videoDao.insertVideo(it)
+            }
+
+            withContext(Dispatchers.Main) {
+                _selectedVideo.value = videoEntity
+                _modelInfoMessage.value = "Playing Live Stream: $title"
             }
         }
     }
 
-    fun cancelMediaDownload() {
+    fun openAndPlayExternalMediaUri(uri: Uri) {
+        val uriString = uri.toString()
+        if (uriString.startsWith("http://", ignoreCase = true) ||
+            uriString.startsWith("https://", ignoreCase = true) ||
+            uriString.startsWith("rtsp://", ignoreCase = true)) {
+            if (isLiveStreamUrl(uriString)) {
+                playLiveStream(uriString)
+            } else {
+                viewModelScope.launch(Dispatchers.IO) {
+                    val existing = videoDao.getVideoByUri(uriString)
+                    if (existing != null) {
+                        withContext(Dispatchers.Main) {
+                            _selectedVideo.value = existing
+                        }
+                    } else {
+                        val videoEntity = VideoItemEntity(
+                            id = "ext_" + UUID.randomUUID().toString().substring(0, 8),
+                            title = uri.lastPathSegment?.substringBefore('?') ?: "Network Stream",
+                            videoUri = uriString,
+                            duration = 0L,
+                            status = VideoStatus.READY,
+                            dateAdded = System.currentTimeMillis()
+                        )
+                        videoDao.insertVideo(videoEntity)
+                        withContext(Dispatchers.Main) {
+                            _selectedVideo.value = videoEntity
+                        }
+                    }
+                }
+            }
+        } else {
+            importMediaFromUri(uri)
+        }
+    }
+
+    fun handleIncomingShareUrls(rawTexts: List<String>) {
+        val allUrls = rawTexts.flatMap { parseUrlsFromInput(it) }.distinct()
+        if (allUrls.size > 1) {
+            startConcurrentDownloads(allUrls)
+        } else if (allUrls.size == 1) {
+            _sharedMediaUrl.value = allUrls.first()
+        }
+    }
+
+    fun startConcurrentDownloads(
+        urls: List<String>,
+        targetResolution: com.example.media.MediaResolutionOption? = null
+    ) {
+        val validUrls = urls.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (validUrls.isEmpty()) return
+
+        _webImportResolutionState.value = null
+        _downloadErrorMessage.value = null
+        _isDownloadingMedia.value = true
+
+        val newTasks = validUrls.map { url ->
+            val existing = _downloadTasks.value.find { it.url == url && it.isActive }
+            existing ?: ConcurrentDownloadTask(
+                url = url,
+                title = "Detecting ${url.substringBefore('?').substringAfterLast('/').ifBlank { "media" }}…",
+                resolutionOption = targetResolution,
+                status = DownloadTaskStatus.QUEUED
+            )
+        }
+
+        // Add or update tasks list
+        val currentTasks = _downloadTasks.value.toMutableList()
+        for (task in newTasks) {
+            val index = currentTasks.indexOfFirst { it.id == task.id }
+            if (index >= 0) {
+                currentTasks[index] = task
+            } else {
+                currentTasks.add(0, task)
+            }
+        }
+        _downloadTasks.value = currentTasks
+
+        // Launch concurrent download for each task
+        for (task in newTasks) {
+            if (downloadJobs.containsKey(task.id)) continue
+
+            val job = viewModelScope.launch(Dispatchers.IO) {
+                updateDownloadTask(task.id) {
+                    it.copy(
+                        status = DownloadTaskStatus.RESOLVING,
+                        statusText = "Analyzing link…"
+                    )
+                }
+
+                try {
+                    val result = socialMediaProcessor.processAndDownload(task.url, task.resolutionOption) { progressState ->
+                        when (progressState) {
+                            is DownloadProgressState.Resolving -> {
+                                updateDownloadTask(task.id) {
+                                    it.copy(
+                                        status = DownloadTaskStatus.RESOLVING,
+                                        statusText = progressState.message
+                                    )
+                                }
+                            }
+                            is DownloadProgressState.Downloading -> {
+                                updateDownloadTask(task.id) {
+                                    it.copy(
+                                        status = DownloadTaskStatus.DOWNLOADING,
+                                        progress = progressState.progress,
+                                        speedKbps = progressState.speedKbps,
+                                        statusText = "${(progressState.progress * 100).toInt()}% • ${progressState.speedKbps} KB/s"
+                                    )
+                                }
+                            }
+                            else -> {}
+                        }
+                    }
+
+                    result.onSuccess { info ->
+                        val videoId = UUID.randomUUID().toString().substring(0, 8)
+                        val newVideo = VideoItemEntity(
+                            id = videoId,
+                            title = info.title,
+                            videoUri = Uri.fromFile(info.file).toString(),
+                            duration = info.durationMs,
+                            status = VideoStatus.NEW,
+                            dateAdded = System.currentTimeMillis()
+                        )
+                        videoDao.insertVideo(newVideo)
+
+                        updateDownloadTask(task.id) {
+                            it.copy(
+                                status = DownloadTaskStatus.COMPLETED,
+                                progress = 1f,
+                                title = info.title,
+                                statusText = "Downloaded",
+                                downloadedFile = info.file,
+                                videoEntity = newVideo
+                            )
+                        }
+
+                        _modelInfoMessage.value = "Downloaded \"${info.title}\" successfully!"
+                        if (validUrls.size == 1 && _selectedVideo.value == null) {
+                            withContext(Dispatchers.Main) {
+                                selectVideo(newVideo, autoStartSeparation = false)
+                            }
+                        }
+                    }.onFailure { error ->
+                        val errorMsg = error.localizedMessage ?: "Failed to download media"
+                        updateDownloadTask(task.id) {
+                            it.copy(
+                                status = DownloadTaskStatus.FAILED,
+                                statusText = "Failed",
+                                errorMessage = errorMsg
+                            )
+                        }
+                        if (validUrls.size == 1) {
+                            _downloadErrorMessage.value = errorMsg
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    updateDownloadTask(task.id) {
+                        it.copy(
+                            status = DownloadTaskStatus.CANCELLED,
+                            statusText = "Cancelled"
+                        )
+                    }
+                } catch (e: Exception) {
+                    val errorMsg = e.localizedMessage ?: "Failed to download"
+                    updateDownloadTask(task.id) {
+                        it.copy(
+                            status = DownloadTaskStatus.FAILED,
+                            statusText = "Failed",
+                            errorMessage = errorMsg
+                        )
+                    }
+                } finally {
+                    downloadJobs.remove(task.id)
+                    syncGlobalDownloadState()
+                }
+            }
+            downloadJobs[task.id] = job
+        }
+
+        syncGlobalDownloadState()
+    }
+
+    private fun updateDownloadTask(taskId: String, transform: (ConcurrentDownloadTask) -> ConcurrentDownloadTask) {
+        val list = _downloadTasks.value.toMutableList()
+        val index = list.indexOfFirst { it.id == taskId }
+        if (index >= 0) {
+            list[index] = transform(list[index])
+            _downloadTasks.value = list
+            syncGlobalDownloadState()
+        }
+    }
+
+    private fun syncGlobalDownloadState() {
+        val tasks = _downloadTasks.value
+        val hasActive = tasks.any { it.isActive }
+        _isDownloadingMedia.value = hasActive
+
+        val activeTask = tasks.firstOrNull { it.isActive }
+        if (activeTask != null) {
+            _downloadProgressState.value = if (activeTask.status == DownloadTaskStatus.DOWNLOADING) {
+                DownloadProgressState.Downloading(activeTask.progress, activeTask.speedKbps)
+            } else {
+                DownloadProgressState.Resolving(activeTask.statusText)
+            }
+        } else {
+            _downloadProgressState.value = null
+        }
+    }
+
+    fun cancelDownloadTask(taskId: String) {
+        downloadJobs[taskId]?.cancel()
+        downloadJobs.remove(taskId)
+        updateDownloadTask(taskId) {
+            it.copy(status = DownloadTaskStatus.CANCELLED, statusText = "Cancelled")
+        }
+        syncGlobalDownloadState()
+    }
+
+    fun cancelAllDownloads() {
+        for ((_, job) in downloadJobs) {
+            job.cancel()
+        }
+        downloadJobs.clear()
         mediaDownloadJob?.cancel()
         downloadTimerJob?.cancel()
         mediaDownloadJob = null
         downloadTimerJob = null
+
+        val updated = _downloadTasks.value.map {
+            if (it.isActive) it.copy(status = DownloadTaskStatus.CANCELLED, statusText = "Cancelled") else it
+        }
+        _downloadTasks.value = updated
         _isDownloadingMedia.value = false
         _downloadProgressState.value = null
         _downloadErrorMessage.value = null
@@ -337,8 +570,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _webImportResolutionState.value = null
     }
 
+    fun clearCompletedDownloads() {
+        _downloadTasks.value = _downloadTasks.value.filter { it.isActive }
+    }
+
+    fun retryDownloadTask(taskId: String) {
+        val task = _downloadTasks.value.find { it.id == taskId } ?: return
+        startConcurrentDownloads(listOf(task.url), task.resolutionOption)
+    }
+
+    fun processSocialMediaUrl(url: String, targetResolution: com.example.media.MediaResolutionOption? = null) {
+        if (url.isBlank()) return
+        val parsed = parseUrlsFromInput(url)
+        if (parsed.isNotEmpty()) {
+            startConcurrentDownloads(parsed, targetResolution)
+        } else {
+            startConcurrentDownloads(listOf(url.trim()), targetResolution)
+        }
+    }
+
+    fun cancelMediaDownload() {
+        cancelAllDownloads()
+    }
+
     fun dismissDownloadDialog() {
-        // Dismissing the dialog view lets the download continue running seamlessly in the background!
+        // Dismissing the dialog view lets concurrent downloads continue running seamlessly in the background!
         _downloadErrorMessage.value = null
         _sharedMediaUrl.value = null
         _webImportResolutionState.value = null
@@ -467,9 +723,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _modelInfoMessage.value = null
     }
 
-    fun selectVideo(video: VideoItemEntity) {
+    fun selectVideo(video: VideoItemEntity, autoStartSeparation: Boolean = false) {
         _selectedVideo.value = video
-        if (video.status == VideoStatus.NEW) {
+        if (autoStartSeparation && video.status == VideoStatus.NEW) {
             startSeparation(video)
         }
     }

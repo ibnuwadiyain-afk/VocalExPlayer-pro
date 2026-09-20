@@ -23,6 +23,18 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CellTower
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import com.example.media.ConcurrentDownloadTask
+import com.example.media.DownloadTaskStatus
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -95,10 +107,22 @@ fun UrlImportDialog(
     onBackToUrlInput: () -> Unit = {},
     onCancelDownload: () -> Unit = {},
     onLoadOfflineDemo: (() -> Unit)? = null,
+    downloadTasks: List<ConcurrentDownloadTask> = emptyList(),
+    onCancelDownloadTask: (String) -> Unit = {},
+    onRetryDownloadTask: (String) -> Unit = {},
+    onStartConcurrentDownloads: ((List<String>) -> Unit)? = null,
+    onPlayLiveStream: ((String) -> Unit)? = null,
     onClearError: () -> Unit
 ) {
+    var selectedTab by remember { mutableStateOf(0) } // 0: Web Media / Multi-Link, 1: Live Stream
+    var liveStreamUrl by remember { mutableStateOf("") }
     var urlText by remember(initialUrl) { mutableStateOf(initialUrl) }
     val clipboardManager = LocalClipboardManager.current
+
+    val detectedUrls = remember(urlText) {
+        val regex = Regex("""https?://[^\s,]+|rtsp://[^\s,]+""")
+        regex.findAll(urlText).map { it.value.trim() }.filter { it.isNotBlank() }.toList()
+    }
 
     val isProbing = resolutionState?.isProbing == true
     val hasResolutions = resolutionState != null && resolutionState.options.isNotEmpty()
@@ -132,6 +156,8 @@ fun UrlImportDialog(
                             isDownloading -> "Downloading Media"
                             isProbing -> "Checking Resolutions…"
                             hasResolutions -> "Choose Video Resolution"
+                            selectedTab == 1 -> "Live Stream Player"
+                            detectedUrls.size > 1 -> "Concurrent Multi-Link Import"
                             else -> "Import Video from URL"
                         },
                         style = MaterialTheme.typography.titleMedium,
@@ -143,6 +169,8 @@ fun UrlImportDialog(
                             isDownloading -> "Stream & Audio Extraction"
                             isProbing -> "Detecting source quality options…"
                             hasResolutions -> "Select quality before download"
+                            selectedTab == 1 -> "Play HLS / DASH / RTSP live streams"
+                            detectedUrls.size > 1 -> "${detectedUrls.size} links detected for parallel download"
                             else -> "YouTube & Social Media Link"
                         },
                         fontSize = 11.sp,
@@ -157,10 +185,51 @@ fun UrlImportDialog(
                     .fillMaxWidth()
                     .testTag("url_import_dialog_content")
             ) {
+                // Tab Selection for Normal/Multi-Link vs Live Stream (only when not downloading or probing)
+                if (!isDownloading && !isProbing && !hasResolutions) {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = DarkSurface,
+                        contentColor = AccentTeal,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                                color = AccentTeal
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                    ) {
+                        Tab(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            text = { Text("Web & Multi-Link", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                            icon = { Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        )
+                        Tab(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            text = { Text("Live Streams", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                            icon = { Icon(Icons.Default.CellTower, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+
                 when {
                     isDownloading -> {
-                        // Active Download Progress View
-                        ActiveDownloadProgressView(downloadState, elapsedTime)
+                        // Active Download Progress View (Multi-task or Single)
+                        if (downloadTasks.isNotEmpty()) {
+                            ConcurrentDownloadTasksView(
+                                tasks = downloadTasks,
+                                elapsedTime = elapsedTime,
+                                onCancelTask = onCancelDownloadTask,
+                                onRetryTask = onRetryDownloadTask
+                            )
+                        } else {
+                            ActiveDownloadProgressView(downloadState, elapsedTime)
+                        }
                     }
                     isProbing -> {
                         // Resolution Probing Spinner
@@ -306,10 +375,153 @@ fun UrlImportDialog(
                             }
                         }
                     }
-                    else -> {
-                        // Input & Quick Paste View
+                    selectedTab == 1 -> {
+                        // LIVE STREAM PLAYER TAB
                         Text(
-                            text = "Paste a link from YouTube, TikTok, Instagram, X, or direct video:",
+                            text = "Stream live HLS (.m3u8), DASH (.mpd), or RTSP streams directly in realtime without separation:",
+                            fontSize = 12.sp,
+                            color = TextSecondary,
+                            lineHeight = 16.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = liveStreamUrl,
+                            onValueChange = {
+                                liveStreamUrl = it
+                                if (errorMessage != null) onClearError()
+                            },
+                            placeholder = {
+                                Text(
+                                    "https://.../stream.m3u8 or rtsp://...",
+                                    color = TextSecondary.copy(alpha = 0.6f),
+                                    fontSize = 13.sp
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.CellTower,
+                                    contentDescription = null,
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            trailingIcon = {
+                                if (liveStreamUrl.isNotBlank()) {
+                                    IconButton(onClick = { liveStreamUrl = "" }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Clear,
+                                            contentDescription = "Clear",
+                                            tint = TextSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            val clip = clipboardManager.getText()?.text
+                                            if (!clip.isNullOrBlank()) {
+                                                liveStreamUrl = clip.trim()
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentPaste,
+                                            contentDescription = "Paste",
+                                            tint = AccentTeal,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Uri,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (liveStreamUrl.isNotBlank() && onPlayLiveStream != null) {
+                                        onDismiss()
+                                        onPlayLiveStream(liveStreamUrl.trim())
+                                    }
+                                }
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentTeal,
+                                unfocusedBorderColor = DarkSurfaceVariant,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                cursorColor = AccentTeal
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("live_stream_url_input")
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "VERIFIED LIVE BROADCAST PRESETS",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val livePresets = listOf(
+                            Triple("NASA TV Official Live Broadcast", "HLS Live • Space Station & Mission Control", "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8"),
+                            Triple("Tears of Steel 4K HLS Stream", "Multi-Bitrate Adaptive HLS Demo", "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8"),
+                            Triple("Apple BipBop Multi-Rate Stream", "Low-Latency Dynamic Bitrate Stream", "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8"),
+                            Triple("Worldwide Radio Live Stream", "Continuous High-Fidelity Audio Stream", "https://stream.zeno.fm/f3wvbbqmdg8uv")
+                        )
+
+                        livePresets.forEach { (name, sub, url) ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = DarkSurface,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp)
+                                    .clickable {
+                                        liveStreamUrl = url
+                                        if (onPlayLiveStream != null) {
+                                            onDismiss()
+                                            onPlayLiveStream(url)
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFFF3B30))
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(sub, color = TextSecondary, fontSize = 10.sp)
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play Live",
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        // Input & Quick Paste View (Supports Single & Multi-Link)
+                        Text(
+                            text = "Paste one or multiple video links (space, comma, or newline separated):",
                             fontSize = 12.sp,
                             color = TextSecondary,
                             lineHeight = 16.sp
@@ -325,7 +537,7 @@ fun UrlImportDialog(
                             },
                             placeholder = {
                                 Text(
-                                    "https://youtu.be/... or video URL",
+                                    "Paste 1 or multiple URLs to download concurrently…",
                                     color = TextSecondary.copy(alpha = 0.6f),
                                     fontSize = 13.sp
                                 )
@@ -367,18 +579,8 @@ fun UrlImportDialog(
                                     }
                                 }
                             },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Uri,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    if (urlText.isNotBlank()) {
-                                        onProbeResolutions(urlText.trim())
-                                    }
-                                }
-                            ),
+                            minLines = if (detectedUrls.size > 1) 2 else 1,
+                            maxLines = 4,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = AccentTeal,
                                 unfocusedBorderColor = DarkSurfaceVariant,
@@ -391,6 +593,35 @@ fun UrlImportDialog(
                                 .fillMaxWidth()
                                 .testTag("url_input_field")
                         )
+
+                        if (detectedUrls.size > 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = AccentTeal.copy(alpha = 0.15f),
+                                border = BorderStroke(1.dp, AccentTeal.copy(alpha = 0.3f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FastForward,
+                                        contentDescription = null,
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "⚡ ${detectedUrls.size} links detected for parallel concurrent download",
+                                        color = AccentTeal,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
 
                         if (!errorMessage.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(8.dp))
@@ -617,6 +848,62 @@ fun UrlImportDialog(
                         )
                     }
                 }
+                selectedTab == 1 -> {
+                    Button(
+                        onClick = {
+                            if (liveStreamUrl.isNotBlank() && onPlayLiveStream != null) {
+                                onDismiss()
+                                onPlayLiveStream(liveStreamUrl.trim())
+                            }
+                        },
+                        enabled = liveStreamUrl.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("play_live_stream_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Play Live Stream",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+                detectedUrls.size > 1 -> {
+                    Button(
+                        onClick = {
+                            if (onStartConcurrentDownloads != null) {
+                                onStartConcurrentDownloads(detectedUrls)
+                            } else {
+                                onSubmitUrl(detectedUrls.first())
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("submit_concurrent_urls_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FastForward,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            "Download ${detectedUrls.size} Links Concurrently",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
                 else -> {
                     Button(
                         onClick = {
@@ -820,6 +1107,201 @@ private fun ActiveDownloadProgressView(
         ) {
             Text(
                 text = "💡 Tap \"Run in Background\" to continue using the app while downloading.",
+                color = AccentTeal,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConcurrentDownloadTasksView(
+    tasks: List<ConcurrentDownloadTask>,
+    elapsedTime: String,
+    onCancelTask: (String) -> Unit,
+    onRetryTask: (String) -> Unit
+) {
+    val completedCount = tasks.count { it.status == DownloadTaskStatus.COMPLETED }
+    val failedCount = tasks.count { it.status == DownloadTaskStatus.FAILED }
+    val activeCount = tasks.size - completedCount - failedCount
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Parallel Downloads ($completedCount/${tasks.size} Done)",
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = if (activeCount > 0) "$activeCount downloading in parallel" else "All tasks finished",
+                    color = AccentTeal,
+                    fontSize = 11.sp
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = DarkSurfaceVariant
+            ) {
+                Text(
+                    text = "⏱ $elapsedTime",
+                    color = AccentTeal,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 280.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            tasks.forEach { task ->
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = DarkSurface,
+                    border = BorderStroke(1.dp, if (task.status == DownloadTaskStatus.DOWNLOADING) AccentTeal.copy(alpha = 0.4f) else DarkSurfaceVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                when (task.status) {
+                                    DownloadTaskStatus.COMPLETED -> {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Done",
+                                            tint = Color(0xFF34C759),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    DownloadTaskStatus.FAILED -> {
+                                        Icon(
+                                            imageVector = Icons.Default.ErrorOutline,
+                                            contentDescription = "Failed",
+                                            tint = StatusError,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    DownloadTaskStatus.CANCELLED -> {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Cancelled",
+                                            tint = TextSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    else -> {
+                                        CircularProgressIndicator(
+                                            color = AccentTeal,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = task.title,
+                                        color = TextPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = when (task.status) {
+                                            DownloadTaskStatus.QUEUED -> "Queued…"
+                                            DownloadTaskStatus.RESOLVING -> "Resolving stream…"
+                                            DownloadTaskStatus.DOWNLOADING -> "${(task.progress * 100).toInt()}% • ${task.speedKbps} KB/s"
+                                            DownloadTaskStatus.COMPLETED -> "Ready for playback"
+                                            DownloadTaskStatus.FAILED -> task.errorMessage ?: "Failed"
+                                            DownloadTaskStatus.CANCELLED -> "Cancelled"
+                                        },
+                                        color = when (task.status) {
+                                            DownloadTaskStatus.COMPLETED -> Color(0xFF34C759)
+                                            DownloadTaskStatus.FAILED -> StatusError
+                                            else -> TextSecondary
+                                        },
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+
+                            if (task.status == DownloadTaskStatus.DOWNLOADING || task.status == DownloadTaskStatus.RESOLVING || task.status == DownloadTaskStatus.QUEUED) {
+                                IconButton(
+                                    onClick = { onCancelTask(task.id) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Cancel Task",
+                                        tint = TextSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            } else if (task.status == DownloadTaskStatus.FAILED) {
+                                IconButton(
+                                    onClick = { onRetryTask(task.id) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Retry Task",
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (task.status == DownloadTaskStatus.DOWNLOADING) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { task.progress },
+                                color = AccentTeal,
+                                trackColor = DarkSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(1.5.dp))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = AccentTeal.copy(alpha = 0.08f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "💡 Tap \"Run in Background\" to continue using the player while downloading.",
                 color = AccentTeal,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(8.dp)
