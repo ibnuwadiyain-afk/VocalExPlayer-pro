@@ -5,10 +5,12 @@ import android.net.Uri
 import android.os.PowerManager
 import android.util.Log
 import com.example.audio.AudioExtractor
+import com.example.audio.InstantPhaseCancellationProcessor
 import com.example.data.dao.VideoDao
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -22,6 +24,7 @@ class AudioSeparationPipeline(
     }
 
     private val inferenceEngine = UvrMdxInferenceEngine(context)
+    private val streamingPipeline = StreamingNeuralSeparationPipeline(context)
 
     val activeHardwareBackend: String
         get() = inferenceEngine.activeHardwareBackend
@@ -33,6 +36,8 @@ class AudioSeparationPipeline(
         video: VideoItemEntity,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
+        separationMethod: SeparationMethod = SeparationMethod.STREAMING_NEURAL,
+        streamChannel: Channel<ShortArray>? = null,
         forceRecompute: Boolean = false,
         onProgress: (Float) -> Unit = {}
     ): Result<File> = withContext(Dispatchers.IO) {
@@ -53,9 +58,11 @@ class AudioSeparationPipeline(
             val vocalsDir = File(context.filesDir, "vocals")
             if (!vocalsDir.exists()) vocalsDir.mkdirs()
             val vocalWavFile = File(vocalsDir, "vocal_${video.id}.wav")
+            val pcmCacheFile = File(vocalsDir, "vocal_${video.id}.pcm")
 
-            if (forceRecompute && vocalWavFile.exists()) {
-                vocalWavFile.delete()
+            if (forceRecompute) {
+                if (vocalWavFile.exists()) vocalWavFile.delete()
+                if (pcmCacheFile.exists()) pcmCacheFile.delete()
                 Log.d(TAG, "forceRecompute requested: deleted old cached vocal file at ${vocalWavFile.absolutePath}")
             }
 
@@ -88,22 +95,50 @@ class AudioSeparationPipeline(
                 context = context,
                 videoUri = videoUri,
                 onProgress = { extProgress ->
-                    val overall = 0.05f + (extProgress * 0.20f)
+                    val overall = 0.05f + (extProgress * 0.15f)
                     onProgress(overall)
                 }
             )
 
             try {
-                // Step 2: Run Real ONNX Separation
-                inferenceEngine.separateVocals(
-                    decodedAudio = decodedAudio,
-                    outputWavFile = vocalWavFile,
-                    customModelPath = customModelPath,
-                    accelerationMode = accelerationMode,
-                    onProgress = { sepProgress ->
-                        onProgress(sepProgress)
+                when (separationMethod) {
+                    SeparationMethod.STREAMING_NEURAL -> {
+                        streamingPipeline.executeStreamingPipeline(
+                            decodedAudio = decodedAudio,
+                            outputWavFile = vocalWavFile,
+                            persistentPcmCacheFile = pcmCacheFile,
+                            streamChannel = streamChannel,
+                            customModelPath = customModelPath,
+                            accelerationMode = accelerationMode,
+                            onProgress = { sepProgress ->
+                                onProgress(0.20f + (sepProgress * 0.80f))
+                            }
+                        ).getOrThrow()
                     }
-                )
+
+                    SeparationMethod.INSTANT_PHASE_CANCELLATION -> {
+                        InstantPhaseCancellationProcessor.processDecodedAudio(
+                            decodedAudio = decodedAudio,
+                            outputWavFile = vocalWavFile,
+                            isVocalOnly = true,
+                            onProgress = { dspProgress ->
+                                onProgress(0.20f + (dspProgress * 0.80f))
+                            }
+                        )
+                    }
+
+                    SeparationMethod.UVR_MDX_FULL -> {
+                        inferenceEngine.separateVocals(
+                            decodedAudio = decodedAudio,
+                            outputWavFile = vocalWavFile,
+                            customModelPath = customModelPath,
+                            accelerationMode = accelerationMode,
+                            onProgress = { sepProgress ->
+                                onProgress(0.20f + (sepProgress * 0.80f))
+                            }
+                        )
+                    }
+                }
             } finally {
                 decodedAudio.close()
             }

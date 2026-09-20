@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RadioButtonChecked
@@ -44,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.onnx.AccelerationMode
+import com.example.onnx.SeparationMethod
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -57,8 +61,10 @@ fun ModelSettingsDialog(
     customModelPath: String?,
     accelerationMode: AccelerationMode,
     hardwareBackend: String,
+    separationMethod: SeparationMethod = SeparationMethod.STREAMING_NEURAL,
     onDismiss: () -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit,
+    onSelectSeparationMethod: (SeparationMethod) -> Unit = {},
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltIn: () -> Unit
 ) {
@@ -84,7 +90,7 @@ fun ModelSettingsDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "AI Engine & Acceleration",
+                    text = "Engine & Separation Settings",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
@@ -95,6 +101,7 @@ fun ModelSettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .testTag("model_settings_dialog")
             ) {
                 // Hardware Acceleration Status Badge
@@ -133,6 +140,79 @@ fun ModelSettingsDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                // Separation Method Section (User Preference)
+                Text(
+                    text = "SEPARATION METHOD (USER PREFERENCE)",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                SeparationMethod.entries.forEach { method ->
+                    val isSelected = method == separationMethod
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) DarkSurfaceVariant else DarkSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .then(
+                                if (isSelected) {
+                                    Modifier.border(1.dp, AccentTeal, RoundedCornerShape(12.dp))
+                                } else Modifier
+                            )
+                            .clickable { onSelectSeparationMethod(method) }
+                            .testTag("sep_method_${method.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (isSelected) AccentTeal else TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = method.displayName,
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (method == SeparationMethod.STREAMING_NEURAL) AccentTeal.copy(alpha = 0.2f) else DarkBackground
+                                    ) {
+                                        Text(
+                                            text = method.speedBadge,
+                                            color = if (method == SeparationMethod.STREAMING_NEURAL) AccentTeal else TextSecondary,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = method.description,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 // Processing Acceleration Modes
                 Text(
                     text = "SEPARATION SPEED PROFILE",
@@ -141,7 +221,7 @@ fun ModelSettingsDialog(
                     fontWeight = FontWeight.Bold
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 AccelerationMode.entries.forEach { mode ->
                     val isSelected = mode == accelerationMode
@@ -176,7 +256,7 @@ fun ModelSettingsDialog(
                                         text = mode.displayName,
                                         color = TextPrimary,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
+                                        fontSize = 13.sp
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Surface(
@@ -186,9 +266,9 @@ fun ModelSettingsDialog(
                                         Text(
                                             text = mode.speedBadge,
                                             color = if (mode == AccelerationMode.TURBO) AccentTeal else TextSecondary,
-                                            fontSize = 10.sp,
+                                            fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
@@ -197,7 +277,7 @@ fun ModelSettingsDialog(
                                     text = mode.description,
                                     color = TextSecondary,
                                     fontSize = 11.sp,
-                                    lineHeight = 15.sp
+                                    lineHeight = 14.sp
                                 )
                             }
                         }

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VolumeUp
 import com.example.onnx.AccelerationMode
+import com.example.onnx.SeparationMethod
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -74,7 +75,6 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
@@ -104,6 +104,7 @@ fun VideoPlayerScreen(
     activeModelName: String,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
+    separationMethod: SeparationMethod = SeparationMethod.STREAMING_NEURAL,
     elapsedTime: String = "00:00",
     estimatedRemaining: String? = null,
     isBackgroundProtected: Boolean = true,
@@ -113,7 +114,6 @@ fun VideoPlayerScreen(
     onExportVideo: (deleteOriginal: Boolean) -> Unit,
     onExportMedia: ((format: ExportFormat, deleteOriginal: Boolean) -> Unit)? = null,
     onCancelProcessing: (() -> Unit)? = null,
-    activeProcessingVideoId: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -125,19 +125,10 @@ fun VideoPlayerScreen(
     var useIsolatedVocals by remember { mutableStateOf(true) }
     var showExportConfirmDialog by remember { mutableStateOf(false) }
 
-    val isLiveUrl = remember(video.videoUri) {
-        val path = video.videoUri.lowercase()
-        path.endsWith(".m3u8") || path.contains(".m3u8?") ||
-                path.endsWith(".mpd") || path.contains(".mpd?") ||
-                path.startsWith("rtsp://") || path.contains("/live") ||
-                path.contains("manifest")
-    }
-    var isLiveStream by remember { mutableStateOf(isLiveUrl) }
-
     val isAudioSource = remember(video) {
         val path = video.videoUri.lowercase()
-        !isLiveUrl && (path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".m4a") ||
-                path.endsWith(".flac") || path.endsWith(".ogg") || path.endsWith(".aac"))
+        path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".m4a") ||
+                path.endsWith(".flac") || path.endsWith(".ogg") || path.endsWith(".aac")
     }
 
     // Single unified ExoPlayer instance for frame-accurate, sample-synced video and audio playback
@@ -167,38 +158,21 @@ fun VideoPlayerScreen(
 
     // Update media sources based on video status & vocal audio track
     LaunchedEffect(video.status, video.videoUri, video.vocalUri) {
-        val isReadyOrNew = video.status == VideoStatus.READY || video.status == VideoStatus.NEW
-        if (isReadyOrNew) {
-            val videoUri = if (video.videoUri.startsWith("http://", ignoreCase = true) ||
-                video.videoUri.startsWith("https://", ignoreCase = true) ||
-                video.videoUri.startsWith("rtsp://", ignoreCase = true) ||
-                video.videoUri.startsWith("content://", ignoreCase = true)) {
-                Uri.parse(video.videoUri)
-            } else {
-                val file = File(video.videoUri)
-                if (file.exists()) Uri.fromFile(file) else Uri.parse(video.videoUri)
+        if (video.status == VideoStatus.READY) {
+            val videoUri = Uri.fromFile(File(video.videoUri)).let {
+                if (File(video.videoUri).exists()) it else Uri.parse(video.videoUri)
             }
 
             val hasVocalFile = !video.vocalUri.isNullOrBlank() && File(video.vocalUri).exists()
             val dataSourceFactory = DefaultDataSource.Factory(context)
-            val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-
-            val mediaItem = MediaItem.Builder()
-                .setUri(videoUri)
-                .setLiveConfiguration(
-                    MediaItem.LiveConfiguration.Builder()
-                        .setMaxPlaybackSpeed(1.02f)
-                        .setMinPlaybackSpeed(0.98f)
-                        .build()
-                )
-                .build()
-
-            val videoSource = mediaSourceFactory.createMediaSource(mediaItem)
+            val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(videoUri))
 
             if (hasVocalFile) {
                 // Merge video track and isolated vocal audio track into one hardware-clock synced stream
                 val vocalUri = Uri.fromFile(File(video.vocalUri))
-                val vocalSource = mediaSourceFactory.createMediaSource(MediaItem.fromUri(vocalUri))
+                val vocalSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(vocalUri))
                 val mergedSource = MergingMediaSource(videoSource, vocalSource)
                 player.setMediaSource(mergedSource)
             } else {
@@ -206,7 +180,6 @@ fun VideoPlayerScreen(
             }
 
             player.prepare()
-            player.playWhenReady = true
         }
     }
 
@@ -220,8 +193,6 @@ fun VideoPlayerScreen(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     val d = player.duration
-                    val isLive = player.isCurrentMediaItemLive || player.isCurrentMediaItemDynamic || d == C.TIME_UNSET || d <= 0L
-                    isLiveStream = isLive || isLiveUrl
                     if (d > 0) duration = d
                     selectTrack(useIsolatedVocals)
                 }
@@ -280,32 +251,7 @@ fun VideoPlayerScreen(
                     }
                 },
                 actions = {
-                    if (isLiveStream) {
-                        Surface(
-                            color = Color(0xFFFF3B30),
-                            shape = RoundedCornerShape(4.dp),
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "LIVE",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    } else if (video.status == VideoStatus.READY) {
+                    if (video.status == VideoStatus.READY) {
                         IconButton(
                             onClick = { showExportConfirmDialog = true },
                             modifier = Modifier.testTag("export_video_top_bar_button")
@@ -331,7 +277,7 @@ fun VideoPlayerScreen(
                     .background(if (isAudioSource) Color(0xFF0F172A) else Color.Black),
                 contentAlignment = Alignment.Center
             ) {
-                if (video.status == VideoStatus.READY || video.status == VideoStatus.NEW || isLiveStream) {
+                if (video.status == VideoStatus.READY) {
                     if (isAudioSource) {
                         // Polished Audio Track Visualization Card
                         Column(
@@ -496,123 +442,100 @@ fun VideoPlayerScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    if (isLiveStream) {
-                        // Live Stream Indicator Bar
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(DarkSurface, RoundedCornerShape(8.dp))
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f, fill = false)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFFF3B30))
+                                Text(
+                                    text = separationMethod.displayName,
+                                    color = AccentTeal,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(3.dp),
+                                    color = AccentTeal.copy(alpha = 0.15f)
+                                ) {
                                     Text(
-                                        text = "LIVE BROADCAST",
-                                        color = Color(0xFFFF3B30),
+                                        text = separationMethod.speedBadge,
+                                        color = AccentTeal,
+                                        fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
-                                        letterSpacing = 0.5.sp
-                                    )
-                                    Text(
-                                        text = "HLS / DASH / RTSP Stream",
-                                        color = TextSecondary,
-                                        fontSize = 10.sp
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                     )
                                 }
                             }
-                            TextButton(
-                                onClick = {
-                                    player.seekToDefaultPosition()
-                                    player.play()
-                                },
-                                modifier = Modifier.testTag("jump_to_live_button")
-                            ) {
-                                Text("Sync to Live Edge", color = AccentTeal, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
                             Text(
-                                text = "Model: $activeModelName",
+                                text = activeModelName,
                                 color = TextSecondary,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f, fill = false)
+                                fontSize = 10.sp,
+                                maxLines = 1
                             )
-                            TextButton(
-                                onClick = onReprocess,
-                                modifier = Modifier.testTag("reprocess_vocals_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = null,
-                                    tint = AccentTeal,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Re-extract Vocals",
-                                    color = AccentTeal,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
                         }
+                        TextButton(
+                            onClick = onReprocess,
+                            modifier = Modifier.testTag("reprocess_vocals_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = AccentTeal,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Re-extract Vocals",
+                                color = AccentTeal,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                        // Progress Slider
-                        val effectivePosition = if (isSliderDragging) sliderPosition else (currentPosition.toFloat() / duration.coerceAtLeast(1L).toFloat())
-                        Slider(
-                            value = effectivePosition.coerceIn(0f, 1f),
-                            onValueChange = {
-                                isSliderDragging = true
-                                sliderPosition = it
-                            },
-                            onValueChangeFinished = {
-                                val seekTarget = (sliderPosition * duration).toLong()
-                                player.seekTo(seekTarget)
-                                isSliderDragging = false
-                            },
-                            colors = SliderDefaults.colors(
-                                thumbColor = AccentTeal,
-                                activeTrackColor = AccentTeal,
-                                inactiveTrackColor = Color(0xFF333333)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("video_seek_slider")
+                    // Progress Slider
+                    val effectivePosition = if (isSliderDragging) sliderPosition else (currentPosition.toFloat() / duration.coerceAtLeast(1L).toFloat())
+                    Slider(
+                        value = effectivePosition.coerceIn(0f, 1f),
+                        onValueChange = {
+                            isSliderDragging = true
+                            sliderPosition = it
+                        },
+                        onValueChangeFinished = {
+                            val seekTarget = (sliderPosition * duration).toLong()
+                            player.seekTo(seekTarget)
+                            isSliderDragging = false
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = AccentTeal,
+                            activeTrackColor = AccentTeal,
+                            inactiveTrackColor = Color(0xFF333333)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("video_seek_slider")
+                    )
+
+                    // Timestamps
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = formatTime(currentPosition),
+                            color = TextSecondary,
+                            fontSize = 12.sp
                         )
-
-                        // Timestamps
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = formatTime(currentPosition),
-                                color = TextSecondary,
-                                fontSize = 12.sp
-                            )
-                            Text(
-                                text = formatTime(duration),
-                                color = TextSecondary,
-                                fontSize = 12.sp
-                            )
-                        }
+                        Text(
+                            text = formatTime(duration),
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -716,9 +639,9 @@ fun VideoPlayerScreen(
             }
         }
 
-        // Centered Processing Overlay if video is actively being processed
+        // Centered Processing Overlay if video is NEW or PROCESSING
         ProcessingOverlay(
-            isVisible = (isProcessing && (activeProcessingVideoId == video.id || video.status == VideoStatus.PROCESSING)) || video.status == VideoStatus.PROCESSING,
+            isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
             progress = processingProgress,
             message = "Extracting vocals with UVR AI ($activeModelName)…",
             elapsedTime = elapsedTime,

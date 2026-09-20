@@ -12,6 +12,7 @@ import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import com.example.onnx.AccelerationMode
 import com.example.onnx.AudioSeparationPipeline
+import com.example.onnx.SeparationMethod
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -95,6 +96,7 @@ object VocalProcessingManager {
         video: VideoItemEntity,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
+        separationMethod: SeparationMethod = SeparationMethod.STREAMING_NEURAL,
         forceRecompute: Boolean = false,
         onComplete: ((Result<File>) -> Unit)? = null
     ) {
@@ -115,7 +117,7 @@ object VocalProcessingManager {
         _activeVideoId.value = video.id
         _activeVideoTitle.value = video.title
         _progress.value = 0.05f
-        _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})…"
+        _message.value = "Separating vocals with ${separationMethod.displayName}…"
         _elapsedSeconds.value = 0L
         _elapsedTimeFormatted.value = "00:00"
         _estimatedRemainingFormatted.value = null
@@ -140,11 +142,12 @@ object VocalProcessingManager {
                 video = video,
                 customModelPath = customModelPath,
                 accelerationMode = accelerationMode,
+                separationMethod = separationMethod,
                 forceRecompute = forceRecompute,
                 onProgress = { currentProgress ->
                     _progress.value = currentProgress
                     val pct = (currentProgress * 100).toInt()
-                    _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})… $pct%"
+                    _message.value = "Separating vocals [${separationMethod.speedBadge}]… $pct%"
                     notifyServiceProgress()
                 }
             )

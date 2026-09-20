@@ -326,7 +326,7 @@ object AudioExporter {
     /**
      * Saves audio file to MediaStore under Music/VocalExtractor.
      */
-    private fun saveAudioToMediaStore(
+    internal fun saveAudioToMediaStore(
         context: Context,
         sourceFile: File,
         baseName: String,

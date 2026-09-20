@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
                     val customModelPath by viewModel.customModelPath.collectAsState()
                     val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
                     val accelerationMode by viewModel.accelerationMode.collectAsState()
+                    val separationMethod by viewModel.separationMethod.collectAsState()
                     val hardwareBackend = viewModel.hardwareBackend
 
                     val processingElapsedFormatted by viewModel.processingElapsedTimeFormatted.collectAsState()
@@ -69,7 +70,6 @@ class MainActivity : ComponentActivity() {
                     val isDownloadingMedia by viewModel.isDownloadingMedia.collectAsState()
                     val downloadElapsedFormatted by viewModel.downloadElapsedFormatted.collectAsState()
                     val downloadErrorMessage by viewModel.downloadErrorMessage.collectAsState()
-                    val downloadTasks by viewModel.downloadTasks.collectAsState()
                     val sharedMediaUrl by viewModel.sharedMediaUrl.collectAsState()
                     val webImportResolutionState by viewModel.webImportResolutionState.collectAsState()
 
@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
+                            separationMethod = separationMethod,
                             elapsedTime = processingElapsedFormatted,
                             estimatedRemaining = processingEstimatedRemaining,
                             isBackgroundProtected = isBackgroundProtected,
@@ -103,8 +104,7 @@ class MainActivity : ComponentActivity() {
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
                             onExportVideo = { deleteOriginal -> viewModel.exportVideo(selectedVideo!!, deleteOriginal) },
                             onExportMedia = { format, deleteOriginal -> viewModel.exportMedia(selectedVideo!!, format, deleteOriginal) },
-                            onCancelProcessing = { viewModel.cancelSeparation() },
-                            activeProcessingVideoId = activeProcessingVideoId
+                            onCancelProcessing = { viewModel.cancelSeparation() }
                         )
                     } else {
                         VideoListScreen(
@@ -114,14 +114,11 @@ class MainActivity : ComponentActivity() {
                             modelInfoMessage = modelInfoMessage,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
+                            separationMethod = separationMethod,
+                            onSelectSeparationMethod = { method -> viewModel.setSeparationMethod(method) },
                             downloadProgressState = downloadProgressState,
                             isDownloadingMedia = isDownloadingMedia,
                             downloadErrorMessage = downloadErrorMessage,
-                            downloadTasks = downloadTasks,
-                            onCancelDownloadTask = { taskId -> viewModel.cancelDownloadTask(taskId) },
-                            onRetryDownloadTask = { taskId -> viewModel.retryDownloadTask(taskId) },
-                            onStartConcurrentDownloads = { urls -> viewModel.startConcurrentDownloads(urls) },
-                            onPlayLiveStream = { streamUrl -> viewModel.playLiveStream(streamUrl) },
                             sharedMediaUrl = sharedMediaUrl,
                             downloadElapsedFormatted = downloadElapsedFormatted,
                             isProcessing = isProcessing,
@@ -187,16 +184,6 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
-
-        // Handle Default Media Player ACTION_VIEW intent (Opening audio/video file or stream from Files, Browser, or other apps)
-        if (intent.action == Intent.ACTION_VIEW) {
-            val dataUri = intent.data
-            if (dataUri != null) {
-                viewModel.openAndPlayExternalMediaUri(dataUri)
-                return
-            }
-        }
-
         if (intent.action == Intent.ACTION_SEND) {
             val text = intent.getStringExtra(Intent.EXTRA_TEXT)
             if (!text.isNullOrBlank()) {
