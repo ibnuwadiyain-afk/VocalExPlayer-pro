@@ -1,0 +1,29 @@
+<resources>
+    <string name="app_name">مستخرج الصوت</string>
+    <string name="app_tagline">فصل الصوت والموسيقى بالذكاء الاصطناعي</string>
+    <string name="import_video">استيراد</string>
+    <string name="folders">المجلدات</string>
+    <string name="link">رابط</string>
+    <string name="extracting_vocals">جاري عزل الصوت بالذكاء الاصطناعي…</string>
+    <string name="no_videos_found">لم يتم استيراد أي ملفات بعد</string>
+    <string name="tap_to_import">اضغط على الزر أدناه أو استورد ملفاً من جهازك</string>
+    <string name="retry">إعادة المحاولة</string>
+    <string name="delete">حذف</string>
+    <string name="cancel">إلغاء</string>
+    <string name="play">تشغيل</string>
+    <string name="pause">إيقاف مؤقت</string>
+    <string name="original_audio">الصوت الأصلي</string>
+    <string name="isolated_vocals">الصوت البشري المعزول</string>
+    <string name="instrumental">الموسيقى فقط (كاريوكي)</string>
+    <string name="onnx_model_info">محرك Deezer Spleeter / UVR MDX-Net الذكي</string>
+    <string name="export_btn">تصدير</string>
+    <string name="processing">جاري المعالجة…</string>
+    <string name="ready">جاهز</string>
+    <string name="failed">فشل</string>
+    <string name="queued">قيد الانتظار</string>
+    <string name="storage_folders">مجلدات التخزين</string>
+    <string name="ai_model_settings">إعدادات نموذج الذكاء الاصطناعي</string>
+    <string name="confirm">تأكيد</string>
+    <string name="delete_confirm_title">حذف العنصر؟</string>
+    <string name="delete_confirm_msg">هل أنت متأكد من رغبتك في حذف هذا الملف؟</string>
+</resources>

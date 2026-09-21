@@ -12,6 +12,7 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.math.sqrt
 
 class DeezerSpleeterInferenceEngine(private val context: Context) : SeparationEngine {
 
@@ -125,162 +126,302 @@ class DeezerSpleeterInferenceEngine(private val context: Context) : SeparationEn
             val vocalInputName = vocalSession.inputNames.first()
             val accInputName = accSession?.inputNames?.first()
 
-            val totalSamples = decodedAudio.totalFrames.toInt()
-            if (totalSamples <= 0) {
+            val totalSamples = decodedAudio.totalFrames
+            if (totalSamples <= 0L) {
                 throw IllegalArgumentException("Audio track has 0 samples")
             }
 
             onProgress(0.05f)
 
-            // Step 1: Compute STFT for Left and Right channels
-            Log.i(TAG, "Computing 4096-point STFT on $totalSamples stereo samples...")
-            val leftStft = processor.computeStft(decodedAudio.leftChannel)
-            onProgress(0.12f)
-            val rightStft = processor.computeStft(decodedAudio.rightChannel)
-            onProgress(0.18f)
+            // Streaming Chunk Architecture:
+            // Spleeter operates on 512 frames per chunk (dimT = 512, hopLength = 1024 => genSize = 524,288 samples ≈ 11.89 seconds).
+            // Each chunk requires:
+            // chunkInputSamples = (dimT - 1) * hopLength + nFft = 511 * 1024 + 4096 = 527,360 samples.
+            // By processing audio in 512-frame chunks with streaming disk writers, memory usage is O(1) regardless of duration.
+            val genSize = DIM_T * HOP_LENGTH // 524,288 samples
+            val nFft = N_FFT // 4096
+            val hopLength = HOP_LENGTH // 1024
+            val dimT = DIM_T // 512
+            val dimF = DIM_F // 1024
+            val numBins = processor.numBins // 2049
+            val chunkInputSamples = (dimT - 1) * hopLength + nFft // 527,360 samples
 
-            val numFrames = leftStft.numFrames
-            val paddedFrames = leftStft.paddedFrames
-            val numSplits = paddedFrames / processor.dimT
-            val numBins = processor.numBins
+            val totalChunks = ((totalSamples + genSize - 1) / genSize).toInt().coerceAtLeast(1)
+            Log.i(TAG, "Streaming Deezer Spleeter separation: $totalSamples samples, $totalChunks chunks of $genSize samples (O(1) memory)")
 
-            Log.i(TAG, "Audio STFT completed: $numFrames frames ($numSplits chunks of ${processor.dimT} frames)")
+            // Reusable buffers for chunk processing (never reallocated during loop)
+            val audioChunkL = FloatArray(chunkInputSamples)
+            val audioChunkR = FloatArray(chunkInputSamples)
 
-            // Allocate buffers for separated complex frequency bins
-            val vocalRealLeft = FloatArray(numFrames * numBins)
-            val vocalImagLeft = FloatArray(numFrames * numBins)
-            val vocalRealRight = FloatArray(numFrames * numBins)
-            val vocalImagRight = FloatArray(numFrames * numBins)
+            val leftReal = FloatArray(dimT * numBins)
+            val leftImag = FloatArray(dimT * numBins)
+            val leftMag = FloatArray(dimT * dimF)
 
-            val accRealLeft = FloatArray(numFrames * numBins)
-            val accImagLeft = FloatArray(numFrames * numBins)
-            val accRealRight = FloatArray(numFrames * numBins)
-            val accImagRight = FloatArray(numFrames * numBins)
+            val rightReal = FloatArray(dimT * numBins)
+            val rightImag = FloatArray(dimT * numBins)
+            val rightMag = FloatArray(dimT * dimF)
 
-            // Reusable direct buffer for input tensor: shape [2, 1, 512, 1024]
-            val tensorElementCount = 2 * 1 * processor.dimT * processor.dimF
-            val byteBuffer = ByteBuffer.allocateDirect(tensorElementCount * 4).order(ByteOrder.nativeOrder())
+            val vocalRealL = FloatArray(dimT * numBins)
+            val vocalImagL = FloatArray(dimT * numBins)
+            val vocalRealR = FloatArray(dimT * numBins)
+            val vocalImagR = FloatArray(dimT * numBins)
+
+            val accRealL = FloatArray(dimT * numBins)
+            val accImagL = FloatArray(dimT * numBins)
+            val accRealR = FloatArray(dimT * numBins)
+            val accImagR = FloatArray(dimT * numBins)
+
+            // FFT scratchpads
+            val reScratch = FloatArray(nFft)
+            val imScratch = FloatArray(nFft)
+
+            // iSTFT output buffers
+            val istftOutWaveL = FloatArray(genSize + nFft + hopLength)
+            val istftOutWaveR = FloatArray(genSize + nFft + hopLength)
+            val istftWeights = FloatArray(genSize + nFft + hopLength)
+
+            val vocalOutChunkL = FloatArray(genSize)
+            val vocalOutChunkR = FloatArray(genSize)
+            val accOutChunkL = FloatArray(genSize)
+            val accOutChunkR = FloatArray(genSize)
+
+            // Direct buffer for ONNX tensor [2, 1, 512, 1024]
+            val splitDimElements = dimT * dimF
+            val tensorCapacity = 2 * 1 * splitDimElements
+            val byteBuffer = ByteBuffer.allocateDirect(tensorCapacity * 4).order(ByteOrder.nativeOrder())
             val floatBuffer = byteBuffer.asFloatBuffer()
-            val inputShape = longArrayOf(2L, 1L, processor.dimT.toLong(), processor.dimF.toLong())
+            val inputShape = longArrayOf(2L, 1L, dimT.toLong(), dimF.toLong())
 
-            val splitDimElements = processor.dimT * processor.dimF
+            outputVocalFile.parentFile?.mkdirs()
+            outputInstrumentalFile?.parentFile?.mkdirs()
 
-            for (split in 0 until numSplits) {
-                floatBuffer.clear()
+            val vocalWavWriter = WavWriter.createStreamingWriter(outputVocalFile, SAMPLE_RATE, 2)
+            val instWavWriter = if (outputInstrumentalFile != null) {
+                WavWriter.createStreamingWriter(outputInstrumentalFile, SAMPLE_RATE, 2)
+            } else null
 
-                // Channel 0: Left magnitude
-                val leftSrcOffset = split * splitDimElements
-                floatBuffer.put(leftStft.mag1024, leftSrcOffset, splitDimElements)
+            try {
+                var chunkIdx = 0
+                var samplePos = 0L
 
-                // Channel 1: Right magnitude
-                val rightSrcOffset = split * splitDimElements
-                floatBuffer.put(rightStft.mag1024, rightSrcOffset, splitDimElements)
+                while (samplePos < totalSamples) {
+                    val progress = 0.08f + 0.88f * (chunkIdx.toFloat() / totalChunks)
+                    onProgress(progress)
 
-                floatBuffer.flip()
+                    val validOutputFrames = minOf(genSize.toLong(), totalSamples - samplePos).toInt()
 
-                val inputTensor = OnnxTensor.createTensor(ortEnvironment, floatBuffer, inputShape)
+                    // 1. Read input audio chunk from DecodedAudio (streaming from disk or memory)
+                    java.util.Arrays.fill(audioChunkL, 0f)
+                    java.util.Arrays.fill(audioChunkR, 0f)
 
-                val vocalResult = vocalSession.run(mapOf(vocalInputName to inputTensor))
-                val vocalOutTensor = vocalResult.get(0) as OnnxTensor
-                val vocalOutBuffer = vocalOutTensor.floatBuffer
+                    val samplesToRead = minOf(chunkInputSamples.toLong(), totalSamples - samplePos).toInt()
+                    if (samplesToRead > 0) {
+                        decodedAudio.readStereoChunk(
+                            startFrame = samplePos,
+                            count = samplesToRead,
+                            destL = audioChunkL,
+                            destR = audioChunkR,
+                            destOffset = 0
+                        )
+                    }
 
-                val accResult = if (accSession != null && accInputName != null) {
-                    accSession.run(mapOf(accInputName to inputTensor))
-                } else null
-                val accOutTensor = accResult?.get(0) as? OnnxTensor
-                val accOutBuffer = accOutTensor?.floatBuffer
-
-                // Apply Deezer Spleeter soft ratio mask
-                for (channel in 0 until 2) {
-                    val channelTensorOffset = channel * splitDimElements
-                    for (t in 0 until processor.dimT) {
-                        val globalFrame = split * processor.dimT + t
-                        if (globalFrame >= numFrames) continue
-
-                        val frameBinOffset = globalFrame * numBins
-                        val magFrameOffset = channelTensorOffset + t * processor.dimF
-
-                        for (k in 0 until processor.dimF) {
-                            val vVal = vocalOutBuffer.get(magFrameOffset + k)
-                            val aVal = accOutBuffer?.get(magFrameOffset + k) ?: (1f - vVal).coerceAtLeast(0f)
-
-                            val v2 = vVal * vVal
-                            val a2 = aVal * aVal
-                            val sum = v2 + a2 + 1e-10f
-                            val maskV = (v2 + 5e-11f) / sum
-                            val maskA = (a2 + 5e-11f) / sum
-
-                            if (channel == 0) {
-                                val r = leftStft.real[frameBinOffset + k]
-                                val im = leftStft.imag[frameBinOffset + k]
-                                vocalRealLeft[frameBinOffset + k] = maskV * r
-                                vocalImagLeft[frameBinOffset + k] = maskV * im
-                                accRealLeft[frameBinOffset + k] = maskA * r
-                                accImagLeft[frameBinOffset + k] = maskA * im
-                            } else {
-                                val r = rightStft.real[frameBinOffset + k]
-                                val im = rightStft.imag[frameBinOffset + k]
-                                vocalRealRight[frameBinOffset + k] = maskV * r
-                                vocalImagRight[frameBinOffset + k] = maskV * im
-                                accRealRight[frameBinOffset + k] = maskA * r
-                                accImagRight[frameBinOffset + k] = maskA * im
-                            }
+                    // 2. Compute 512-frame STFT for Left channel
+                    for (t in 0 until dimT) {
+                        val startSample = t * hopLength
+                        for (i in 0 until nFft) {
+                            val sIdx = startSample + i
+                            val s = if (sIdx < chunkInputSamples) audioChunkL[sIdx] else 0f
+                            // Hann window
+                            val w = (0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / nFft))).toFloat()
+                            reScratch[i] = s * w
+                            imScratch[i] = 0f
                         }
+                        processor.fft(reScratch, imScratch, inverse = false)
 
-                        // Frequencies above 11kHz (bins 1024..2048): Vocals = 0, Instrumental = original mix
-                        for (k in processor.dimF until numBins) {
-                            if (channel == 0) {
-                                vocalRealLeft[frameBinOffset + k] = 0f
-                                vocalImagLeft[frameBinOffset + k] = 0f
-                                accRealLeft[frameBinOffset + k] = leftStft.real[frameBinOffset + k]
-                                accImagLeft[frameBinOffset + k] = leftStft.imag[frameBinOffset + k]
-                            } else {
-                                vocalRealRight[frameBinOffset + k] = 0f
-                                vocalImagRight[frameBinOffset + k] = 0f
-                                accRealRight[frameBinOffset + k] = rightStft.real[frameBinOffset + k]
-                                accImagRight[frameBinOffset + k] = rightStft.imag[frameBinOffset + k]
+                        val frameOffset = t * numBins
+                        val magOffset = t * dimF
+                        for (k in 0 until numBins) {
+                            val r = reScratch[k]
+                            val im = imScratch[k]
+                            leftReal[frameOffset + k] = r
+                            leftImag[frameOffset + k] = im
+                            if (k < dimF) {
+                                leftMag[magOffset + k] = sqrt(r * r + im * im)
                             }
                         }
                     }
+
+                    // 3. Compute 512-frame STFT for Right channel
+                    for (t in 0 until dimT) {
+                        val startSample = t * hopLength
+                        for (i in 0 until nFft) {
+                            val sIdx = startSample + i
+                            val s = if (sIdx < chunkInputSamples) audioChunkR[sIdx] else 0f
+                            val w = (0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / nFft))).toFloat()
+                            reScratch[i] = s * w
+                            imScratch[i] = 0f
+                        }
+                        processor.fft(reScratch, imScratch, inverse = false)
+
+                        val frameOffset = t * numBins
+                        val magOffset = t * dimF
+                        for (k in 0 until numBins) {
+                            val r = reScratch[k]
+                            val im = imScratch[k]
+                            rightReal[frameOffset + k] = r
+                            rightImag[frameOffset + k] = im
+                            if (k < dimF) {
+                                rightMag[magOffset + k] = sqrt(r * r + im * im)
+                            }
+                        }
+                    }
+
+                    // 4. Fill direct float buffer: Left mag [1, 512, 1024] then Right mag [1, 512, 1024]
+                    floatBuffer.clear()
+                    floatBuffer.put(leftMag, 0, splitDimElements)
+                    floatBuffer.put(rightMag, 0, splitDimElements)
+                    floatBuffer.flip()
+
+                    // 5. Run ONNX neural inference
+                    val inputTensor = OnnxTensor.createTensor(ortEnvironment, floatBuffer, inputShape)
+
+                    val vocalResult = vocalSession.run(mapOf(vocalInputName to inputTensor))
+                    val vocalOutTensor = vocalResult.get(0) as OnnxTensor
+                    val vocalOutBuffer = vocalOutTensor.floatBuffer
+
+                    val accResult = if (accSession != null && accInputName != null) {
+                        accSession.run(mapOf(accInputName to inputTensor))
+                    } else null
+                    val accOutTensor = accResult?.get(0) as? OnnxTensor
+                    val accOutBuffer = accOutTensor?.floatBuffer
+
+                    // 6. Apply Deezer Spleeter soft ratio mask
+                    for (channel in 0 until 2) {
+                        val channelTensorOffset = channel * splitDimElements
+                        for (t in 0 until dimT) {
+                            val frameBinOffset = t * numBins
+                            val magFrameOffset = channelTensorOffset + t * dimF
+
+                            for (k in 0 until dimF) {
+                                val vVal = vocalOutBuffer.get(magFrameOffset + k)
+                                val aVal = accOutBuffer?.get(magFrameOffset + k) ?: (1f - vVal).coerceAtLeast(0f)
+
+                                val v2 = vVal * vVal
+                                val a2 = aVal * aVal
+                                val sum = v2 + a2 + 1e-10f
+                                val maskV = (v2 + 5e-11f) / sum
+                                val maskA = (a2 + 5e-11f) / sum
+
+                                if (channel == 0) {
+                                    val r = leftReal[frameBinOffset + k]
+                                    val im = leftImag[frameBinOffset + k]
+                                    vocalRealL[frameBinOffset + k] = maskV * r
+                                    vocalImagL[frameBinOffset + k] = maskV * im
+                                    accRealL[frameBinOffset + k] = maskA * r
+                                    accImagL[frameBinOffset + k] = maskA * im
+                                } else {
+                                    val r = rightReal[frameBinOffset + k]
+                                    val im = rightImag[frameBinOffset + k]
+                                    vocalRealR[frameBinOffset + k] = maskV * r
+                                    vocalImagR[frameBinOffset + k] = maskV * im
+                                    accRealR[frameBinOffset + k] = maskA * r
+                                    accImagR[frameBinOffset + k] = maskA * im
+                                }
+                            }
+
+                            // Frequencies above 11kHz (bins 1024..2048): Vocals = 0, Instrumental = original mix
+                            for (k in dimF until numBins) {
+                                if (channel == 0) {
+                                    vocalRealL[frameBinOffset + k] = 0f
+                                    vocalImagL[frameBinOffset + k] = 0f
+                                    accRealL[frameBinOffset + k] = leftReal[frameBinOffset + k]
+                                    accImagL[frameBinOffset + k] = leftImag[frameBinOffset + k]
+                                } else {
+                                    vocalRealR[frameBinOffset + k] = 0f
+                                    vocalImagR[frameBinOffset + k] = 0f
+                                    accRealR[frameBinOffset + k] = rightReal[frameBinOffset + k]
+                                    accImagR[frameBinOffset + k] = rightImag[frameBinOffset + k]
+                                }
+                            }
+                        }
+                    }
+
+                    inputTensor.close()
+                    vocalResult.close()
+                    accResult?.close()
+
+                    // 7. iSTFT reconstruction for Vocals
+                    computeIstftInto(
+                        real = vocalRealL,
+                        imag = vocalImagL,
+                        dimT = dimT,
+                        numBins = numBins,
+                        hopLength = hopLength,
+                        nFft = nFft,
+                        targetLength = genSize,
+                        outWave = vocalOutChunkL,
+                        istftOutWave = istftOutWaveL,
+                        istftWeights = istftWeights,
+                        reScratch = reScratch,
+                        imScratch = imScratch
+                    )
+                    computeIstftInto(
+                        real = vocalRealR,
+                        imag = vocalImagR,
+                        dimT = dimT,
+                        numBins = numBins,
+                        hopLength = hopLength,
+                        nFft = nFft,
+                        targetLength = genSize,
+                        outWave = vocalOutChunkR,
+                        istftOutWave = istftOutWaveR,
+                        istftWeights = istftWeights,
+                        reScratch = reScratch,
+                        imScratch = imScratch
+                    )
+
+                    // Write isolated vocal chunk directly to disk
+                    vocalWavWriter.writeStereoChunk(vocalOutChunkL, vocalOutChunkR, 0, validOutputFrames)
+
+                    // 8. iSTFT reconstruction for Instrumental if requested
+                    if (instWavWriter != null) {
+                        computeIstftInto(
+                            real = accRealL,
+                            imag = accImagL,
+                            dimT = dimT,
+                            numBins = numBins,
+                            hopLength = hopLength,
+                            nFft = nFft,
+                            targetLength = genSize,
+                            outWave = accOutChunkL,
+                            istftOutWave = istftOutWaveL,
+                            istftWeights = istftWeights,
+                            reScratch = reScratch,
+                            imScratch = imScratch
+                        )
+                        computeIstftInto(
+                            real = accRealR,
+                            imag = accImagR,
+                            dimT = dimT,
+                            numBins = numBins,
+                            hopLength = hopLength,
+                            nFft = nFft,
+                            targetLength = genSize,
+                            outWave = accOutChunkR,
+                            istftOutWave = istftOutWaveR,
+                            istftWeights = istftWeights,
+                            reScratch = reScratch,
+                            imScratch = imScratch
+                        )
+                        instWavWriter.writeStereoChunk(accOutChunkL, accOutChunkR, 0, validOutputFrames)
+                    }
+
+                    samplePos += genSize
+                    chunkIdx++
                 }
-
-                inputTensor.close()
-                vocalResult.close()
-                accResult?.close()
-
-                val progress = 0.20f + 0.65f * ((split + 1).toFloat() / numSplits)
-                onProgress(progress)
-            }
-
-            // Step 2: Inverse STFT reconstruction
-            Log.i(TAG, "Reconstructing time-domain waveforms with 4096-point iSTFT...")
-            onProgress(0.86f)
-            val vocalWaveLeft = processor.computeIstft(vocalRealLeft, vocalImagLeft, numFrames, totalSamples)
-            val vocalWaveRight = processor.computeIstft(vocalRealRight, vocalImagRight, numFrames, totalSamples)
-            onProgress(0.92f)
-
-            val accWaveLeft = processor.computeIstft(accRealLeft, accImagLeft, numFrames, totalSamples)
-            val accWaveRight = processor.computeIstft(accRealRight, accImagRight, numFrames, totalSamples)
-            onProgress(0.96f)
-
-            // Step 3: Write Output WAV files
-            Log.i(TAG, "Writing separated audio stems to WAV...")
-            outputVocalFile.parentFile?.mkdirs()
-            WavWriter.writeWavFile(
-                leftChannel = vocalWaveLeft,
-                rightChannel = vocalWaveRight,
-                sampleRate = SAMPLE_RATE,
-                outputFile = outputVocalFile
-            )
-
-            if (outputInstrumentalFile != null) {
-                outputInstrumentalFile.parentFile?.mkdirs()
-                WavWriter.writeWavFile(
-                    leftChannel = accWaveLeft,
-                    rightChannel = accWaveRight,
-                    sampleRate = SAMPLE_RATE,
-                    outputFile = outputInstrumentalFile
-                )
+            } finally {
+                try { vocalWavWriter.close() } catch (_: Exception) {}
+                try { instWavWriter?.close() } catch (_: Exception) {}
             }
 
             onProgress(1.0f)
@@ -292,6 +433,65 @@ class DeezerSpleeterInferenceEngine(private val context: Context) : SeparationEn
         } finally {
             try { vocalSession.close() } catch (_: Exception) {}
             try { accSession?.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun computeIstftInto(
+        real: FloatArray,
+        imag: FloatArray,
+        dimT: Int,
+        numBins: Int,
+        hopLength: Int,
+        nFft: Int,
+        targetLength: Int,
+        outWave: FloatArray,
+        istftOutWave: FloatArray,
+        istftWeights: FloatArray,
+        reScratch: FloatArray,
+        imScratch: FloatArray
+    ) {
+        val totalSize = targetLength + nFft + hopLength
+        java.util.Arrays.fill(istftOutWave, 0, totalSize, 0f)
+        java.util.Arrays.fill(istftWeights, 0, totalSize, 0f)
+
+        for (frame in 0 until dimT) {
+            val frameOffset = frame * numBins
+
+            reScratch[0] = real[frameOffset]
+            imScratch[0] = 0f
+
+            for (k in 1 until numBins - 1) {
+                val r = real[frameOffset + k]
+                val im = imag[frameOffset + k]
+                reScratch[k] = r
+                imScratch[k] = im
+                reScratch[nFft - k] = r
+                imScratch[nFft - k] = -im
+            }
+
+            reScratch[numBins - 1] = real[frameOffset + numBins - 1]
+            imScratch[numBins - 1] = 0f
+
+            processor.fft(reScratch, imScratch, inverse = true)
+
+            val startSample = frame * hopLength
+            for (i in 0 until nFft) {
+                val idx = startSample + i
+                if (idx < totalSize) {
+                    val w = (0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / nFft))).toFloat()
+                    istftOutWave[idx] += reScratch[i] * w
+                    istftWeights[idx] += w * w
+                }
+            }
+        }
+
+        for (i in 0 until targetLength) {
+            val weight = istftWeights[i]
+            outWave[i] = if (weight > 1e-4f) {
+                istftOutWave[i] / weight
+            } else {
+                istftOutWave[i]
+            }
         }
     }
 }

@@ -52,7 +52,8 @@ object VideoVocalsExporter {
         val exportDir = File(context.filesDir, "exports")
         if (!exportDir.exists()) exportDir.mkdirs()
 
-        val sanitizedTitle = outputTitle.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val cleaned = outputTitle.replace(Regex("""[\\/:*?"<>|\r\n\t]"""), "_").trim()
+        val sanitizedTitle = if (cleaned.isBlank()) "media" else cleaned.take(60)
         val timestamp = System.currentTimeMillis()
         val tempExportFile = File(exportDir, "${sanitizedTitle}_vocals_$timestamp.mp4")
 

@@ -62,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -426,7 +427,7 @@ fun VideoPlayerScreen(
                         FilterChip(
                             selected = selectedAudioTrack == PlaybackAudioTrack.VOCALS,
                             onClick = { selectedAudioTrack = PlaybackAudioTrack.VOCALS },
-                            label = { Text("Vocals") },
+                            label = { Text(stringResource(com.example.R.string.isolated_vocals)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.GraphicEq,
@@ -448,7 +449,7 @@ fun VideoPlayerScreen(
                             FilterChip(
                                 selected = selectedAudioTrack == PlaybackAudioTrack.INSTRUMENTAL,
                                 onClick = { selectedAudioTrack = PlaybackAudioTrack.INSTRUMENTAL },
-                                label = { Text("Instrumental") },
+                                label = { Text(stringResource(com.example.R.string.instrumental)) },
                                 leadingIcon = {
                                     Icon(
                                         imageVector = Icons.Default.Audiotrack,
@@ -470,7 +471,7 @@ fun VideoPlayerScreen(
                         FilterChip(
                             selected = selectedAudioTrack == PlaybackAudioTrack.ORIGINAL,
                             onClick = { selectedAudioTrack = PlaybackAudioTrack.ORIGINAL },
-                            label = { Text("Original") },
+                            label = { Text(stringResource(com.example.R.string.original_audio)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.VolumeUp,
@@ -622,7 +623,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Export Video (Vocals Only)",
+                                text = stringResource(com.example.R.string.export_btn),
                                 color = Color.Black,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp

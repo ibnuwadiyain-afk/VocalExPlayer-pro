@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -258,7 +259,7 @@ fun VideoListScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Folders", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(stringResource(com.example.R.string.folders), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 ExtendedFloatingActionButton(
@@ -270,11 +271,11 @@ fun VideoListScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Link,
-                        contentDescription = "From Link",
+                        contentDescription = stringResource(com.example.R.string.link),
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(stringResource(com.example.R.string.link), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 FloatingActionButton(
@@ -296,9 +297,9 @@ fun VideoListScreen(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Import Audio/Video")
+                        Icon(Icons.Default.Add, contentDescription = stringResource(com.example.R.string.import_video))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(stringResource(com.example.R.string.import_video), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -650,7 +651,7 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         Text(
-                            text = "No Audio or Video Added Yet",
+                            text = stringResource(com.example.R.string.no_videos_found),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
@@ -661,7 +662,7 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "Import audio tracks (MP3, WAV, FLAC, M4A) or music videos to isolate vocals or instrumental backings using AI neural separation.",
+                            text = stringResource(com.example.R.string.tap_to_import),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,

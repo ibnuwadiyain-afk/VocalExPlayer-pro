@@ -107,7 +107,8 @@ object AudioExporter {
         val exportDir = File(context.filesDir, "exports")
         if (!exportDir.exists()) exportDir.mkdirs()
 
-        val sanitizedTitle = video.title.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(40)
+        val cleaned = video.title.replace(Regex("""[\\/:*?"<>|\r\n\t]"""), "_").trim()
+        val sanitizedTitle = if (cleaned.isBlank()) "media" else cleaned.take(60)
         val timestamp = System.currentTimeMillis()
 
         try {
