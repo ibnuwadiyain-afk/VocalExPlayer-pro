@@ -562,7 +562,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("MainViewModel", "Imported media $mediaId: $resolvedTitle (hasVideo=$hasVideo, ext=$resolvedExt)")
 
                 withContext(Dispatchers.Main) {
+                    com.example.service.VocalProcessingManager.resetState()
                     _selectedVideo.value = newMedia
+                    startSeparation(newMedia)
                 }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error importing media from $uri", e)

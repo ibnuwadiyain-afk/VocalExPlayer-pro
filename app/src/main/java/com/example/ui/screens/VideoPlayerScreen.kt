@@ -107,6 +107,7 @@ fun VideoPlayerScreen(
     isProcessing: Boolean,
     processingProgress: Float,
     activeModelName: String,
+    engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
     elapsedTime: String = "00:00",
@@ -655,7 +656,7 @@ fun VideoPlayerScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Hardware: $hardwareBackend • ONNX UVR MDX-Net 1",
+                                text = "Hardware: $hardwareBackend • ${engineType.displayName}",
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
@@ -665,11 +666,21 @@ fun VideoPlayerScreen(
             }
         }
 
+        // Dynamic overlay separation title based on selected engine
+        val separationOverlayMessage = when (engineType) {
+            com.example.onnx.SeparationEngineType.DEEZER_SPLEETER ->
+                "Separating stems with Deezer Spleeter ($activeModelName)…"
+            com.example.onnx.SeparationEngineType.UVR_MDXNET ->
+                "Isolating vocals with UVR-MDX-Net 1 ($activeModelName)…"
+            com.example.onnx.SeparationEngineType.CUSTOM ->
+                "Separating audio with Custom Model ($activeModelName)…"
+        }
+
         // Centered Processing Overlay if video is NEW or PROCESSING
         ProcessingOverlay(
             isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
             progress = processingProgress,
-            message = "Extracting vocals with UVR AI ($activeModelName)…",
+            message = separationOverlayMessage,
             elapsedTime = elapsedTime,
             estimatedRemaining = estimatedRemaining,
             isBackgroundProtected = isBackgroundProtected,

@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
                             isProcessing = isProcessing,
                             processingProgress = progress,
                             activeModelName = modelName,
+                            engineType = engineType,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
                             elapsedTime = processingElapsedFormatted,

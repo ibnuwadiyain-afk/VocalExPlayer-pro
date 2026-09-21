@@ -167,39 +167,50 @@ fun ProcessingOverlay(
                             .fillMaxWidth()
                             .testTag("processing_timer_badge")
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.HourglassTop,
-                                contentDescription = "Elapsed Time",
-                                tint = StatusProcessing,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Elapsed: ",
-                                color = TextSecondary,
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = elapsedTime,
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp
-                            )
-
-                            if (!estimatedRemaining.isNullOrBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.HourglassTop,
+                                    contentDescription = "Elapsed Time",
+                                    tint = StatusProcessing,
+                                    modifier = Modifier.size(16.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "• $estimatedRemaining",
-                                    color = AccentTeal,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
+                                    text = "Elapsed: ",
+                                    color = TextSecondary,
+                                    fontSize = 13.sp
                                 )
+                                Text(
+                                    text = elapsedTime,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 14.sp
+                                )
+                            }
+
+                            if (!estimatedRemaining.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = AccentTeal.copy(alpha = 0.15f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal.copy(alpha = 0.3f))
+                                ) {
+                                    Text(
+                                        text = estimatedRemaining,
+                                        color = AccentTeal,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
                             }
                         }
                     }

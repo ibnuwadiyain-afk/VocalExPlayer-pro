@@ -88,6 +88,21 @@ object VocalProcessingManager {
     }
 
     /**
+     * Resets any stale state from prior operations.
+     */
+    fun resetState() {
+        _isProcessing.value = false
+        _progress.value = 0f
+        _message.value = ""
+        _elapsedSeconds.value = 0L
+        _elapsedTimeFormatted.value = "00:00"
+        _estimatedRemainingFormatted.value = null
+        _activeVideoId.value = null
+        _activeVideoTitle.value = null
+        _isBackgroundProtected.value = false
+    }
+
+    /**
      * Starts AI vocal separation with active elapsed timer and background stability service.
      */
     fun startSeparation(
@@ -214,7 +229,11 @@ object VocalProcessingManager {
                     val totalEstimatedMs = (elapsedMs / currentProgress).toLong()
                     val remainingMs = (totalEstimatedMs - elapsedMs).coerceAtLeast(0L)
                     val remainingSec = remainingMs / 1000
-                    _estimatedRemainingFormatted.value = "~${formatSeconds(remainingSec)} left"
+                    _estimatedRemainingFormatted.value = if (remainingSec < 60) {
+                        "~${remainingSec}s left"
+                    } else {
+                        "~${formatSeconds(remainingSec)} left"
+                    }
                 } else if (currentProgress >= 0.99f) {
                     _estimatedRemainingFormatted.value = "Finishing up…"
                 }
