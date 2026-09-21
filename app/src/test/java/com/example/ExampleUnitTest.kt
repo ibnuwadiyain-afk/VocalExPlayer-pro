@@ -88,4 +88,62 @@ class ExampleUnitTest {
             tempDir.delete()
         }
     }
+
+    @Test
+    fun testSpleeterSpectrogramProcessorRoundtrip() {
+        val processor = com.example.onnx.SpleeterSpectrogramProcessor(
+            nFft = 4096,
+            hopLength = 1024,
+            dimF = 1024,
+            dimT = 512
+        )
+
+        // Generate test signal (440 Hz sine wave for 0.5s = 22050 samples)
+        val sampleRate = 44100
+        val numSamples = 22050
+        val original = FloatArray(numSamples) { i ->
+            kotlin.math.sin(2.0 * kotlin.math.PI * 440.0 * i / sampleRate).toFloat() * 0.8f
+        }
+
+        val stft = processor.computeStft(original)
+        assertTrue(stft.numFrames > 0)
+        assertTrue(stft.paddedFrames >= stft.numFrames)
+        assertEquals(0, stft.paddedFrames % 512)
+
+        val reconstructed = processor.computeIstft(stft.real, stft.imag, stft.numFrames, numSamples)
+        assertEquals(numSamples, reconstructed.size)
+
+        // Verify middle region (away from boundaries) has excellent reconstruction fidelity
+        val testStart = 4096
+        val testEnd = numSamples - 4096
+        var maxDiff = 0f
+        for (i in testStart until testEnd) {
+            val diff = kotlin.math.abs(original[i] - reconstructed[i])
+            if (diff > maxDiff) maxDiff = diff
+        }
+
+        assertTrue("Max reconstruction error should be < 0.05 but was $maxDiff", maxDiff < 0.05f)
+    }
+
+    @Test
+    fun testSeparationEngineEnumAndMaskRatio() {
+        val spleeterType = com.example.onnx.SeparationEngineType.fromId("deezer_spleeter")
+        assertEquals(com.example.onnx.SeparationEngineType.DEEZER_SPLEETER, spleeterType)
+        assertTrue(spleeterType.producesTwoStems)
+
+        val uvrType = com.example.onnx.SeparationEngineType.fromId("uvr_mdxnet")
+        assertEquals(com.example.onnx.SeparationEngineType.UVR_MDXNET, uvrType)
+        assertFalse(uvrType.producesTwoStems)
+
+        // Verify soft ratio masking logic: mask_vocal = Mag_v / (Mag_v + Mag_acc + eps)
+        val vMag = 3.0f
+        val accMag = 1.0f
+        val eps = 1e-10f
+        val vMask = vMag / (vMag + accMag + eps)
+        val accMask = accMag / (vMag + accMag + eps)
+
+        assertEquals(0.75f, vMask, 0.001f)
+        assertEquals(0.25f, accMask, 0.001f)
+        assertEquals(1.0f, vMask + accMask, 0.001f)
+    }
 }

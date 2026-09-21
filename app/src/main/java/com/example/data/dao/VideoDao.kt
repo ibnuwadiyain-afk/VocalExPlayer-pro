@@ -27,12 +27,13 @@ interface VideoDao {
     @Update
     suspend fun updateVideo(video: VideoItemEntity)
 
-    @Query("UPDATE videos SET status = :status, progress = :progress, vocalUri = :vocalUri, errorMessage = :errorMessage WHERE id = :id")
+    @Query("UPDATE videos SET status = :status, progress = :progress, vocalUri = :vocalUri, instrumentalUri = :instrumentalUri, errorMessage = :errorMessage WHERE id = :id")
     suspend fun updateSeparationStatus(
         id: String,
         status: VideoStatus,
         progress: Float,
         vocalUri: String?,
+        instrumentalUri: String? = null,
         errorMessage: String?
     )
 

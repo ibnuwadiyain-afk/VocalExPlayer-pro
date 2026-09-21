@@ -81,7 +81,6 @@ import com.example.data.model.VideoStatus
 import com.example.export.ExportFormat
 import com.example.media.DownloadProgressState
 import com.example.onnx.AccelerationMode
-import com.example.onnx.SeparationMethod
 import com.example.storage.GrantedFolder
 import com.example.storage.StorageMediaItem
 import com.example.ui.components.ExportConfirmDialog
@@ -106,10 +105,9 @@ fun VideoListScreen(
     activeModelName: String,
     customModelPath: String?,
     modelInfoMessage: String?,
+    engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
-    separationMethod: SeparationMethod = SeparationMethod.STREAMING_NEURAL,
-    onSelectSeparationMethod: (SeparationMethod) -> Unit = {},
     downloadProgressState: DownloadProgressState? = null,
     isDownloadingMedia: Boolean = false,
     downloadErrorMessage: String? = null,
@@ -137,6 +135,7 @@ fun VideoListScreen(
     onDeleteVideo: (VideoItemEntity) -> Unit,
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
+    onSelectEngineType: (com.example.onnx.SeparationEngineType) -> Unit = {},
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
     resolutionState: com.example.MainViewModel.WebImportResolutionState? = null,
     onSubmitMediaUrl: (String) -> Unit = {},
@@ -397,7 +396,7 @@ fun VideoListScreen(
                                     color = AccentTeal.copy(alpha = 0.2f)
                                 ) {
                                     Text(
-                                        text = separationMethod.speedBadge,
+                                        text = "REAL ONNX",
                                         color = AccentTeal,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
@@ -406,7 +405,7 @@ fun VideoListScreen(
                                 }
                             }
                             Text(
-                                text = "${separationMethod.displayName} • $activeModelName",
+                                text = activeModelName,
                                 color = TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -872,12 +871,12 @@ fun VideoListScreen(
         ModelSettingsDialog(
             activeModelName = activeModelName,
             customModelPath = customModelPath,
+            engineType = engineType,
             accelerationMode = accelerationMode,
             hardwareBackend = hardwareBackend,
-            separationMethod = separationMethod,
             onDismiss = { showModelDialog = false },
+            onSelectEngineType = onSelectEngineType,
             onSelectAccelerationMode = onSelectAccelerationMode,
-            onSelectSeparationMethod = onSelectSeparationMethod,
             onImportCustomModel = { uri ->
                 onImportCustomModel(uri)
                 showModelDialog = false

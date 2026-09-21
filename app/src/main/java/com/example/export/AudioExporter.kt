@@ -137,8 +137,14 @@ object AudioExporter {
                 ExportFormat.AUDIO_INSTRUMENTAL_WAV -> {
                     onProgress(0.1f)
                     val targetFile = File(exportDir, "${sanitizedTitle}_instrumental_$timestamp.wav")
-                    createInstrumentalWav(context, video, File(vocalPath), targetFile) { p ->
-                        onProgress(0.1f + p * 0.7f)
+                    val hasDirectInst = !video.instrumentalUri.isNullOrBlank() && File(video.instrumentalUri).exists()
+                    if (hasDirectInst) {
+                        File(video.instrumentalUri).copyTo(targetFile, overwrite = true)
+                        onProgress(0.8f)
+                    } else {
+                        createInstrumentalWav(context, video, File(vocalPath), targetFile) { p ->
+                            onProgress(0.1f + p * 0.7f)
+                        }
                     }
                     onProgress(0.85f)
                     val mediaStoreResult = saveAudioToMediaStore(context, targetFile, "${sanitizedTitle}_instrumental", "audio/wav", "wav")
@@ -148,15 +154,22 @@ object AudioExporter {
 
                 ExportFormat.AUDIO_INSTRUMENTAL_M4A -> {
                     onProgress(0.1f)
-                    val tempWav = File(context.cacheDir, "temp_inst_$timestamp.wav")
-                    createInstrumentalWav(context, video, File(vocalPath), tempWav) { p ->
-                        onProgress(0.1f + p * 0.4f)
-                    }
                     val targetFile = File(exportDir, "${sanitizedTitle}_instrumental_$timestamp.m4a")
-                    encodeWavToM4a(tempWav, targetFile) { p ->
-                        onProgress(0.5f + p * 0.35f)
+                    val hasDirectInst = !video.instrumentalUri.isNullOrBlank() && File(video.instrumentalUri).exists()
+                    if (hasDirectInst) {
+                        encodeWavToM4a(File(video.instrumentalUri), targetFile) { p ->
+                            onProgress(0.1f + p * 0.75f)
+                        }
+                    } else {
+                        val tempWav = File(context.cacheDir, "temp_inst_$timestamp.wav")
+                        createInstrumentalWav(context, video, File(vocalPath), tempWav) { p ->
+                            onProgress(0.1f + p * 0.4f)
+                        }
+                        encodeWavToM4a(tempWav, targetFile) { p ->
+                            onProgress(0.5f + p * 0.35f)
+                        }
+                        try { tempWav.delete() } catch (_: Exception) {}
                     }
-                    try { tempWav.delete() } catch (_: Exception) {}
                     onProgress(0.9f)
                     val mediaStoreResult = saveAudioToMediaStore(context, targetFile, "${sanitizedTitle}_instrumental", "audio/mp4", "m4a")
                     onProgress(1.0f)
@@ -175,18 +188,27 @@ object AudioExporter {
 
                 ExportFormat.VIDEO_INSTRUMENTAL_MP4 -> {
                     onProgress(0.05f)
-                    val instWav = File(context.cacheDir, "inst_video_$timestamp.wav")
-                    createInstrumentalWav(context, video, File(vocalPath), instWav) { p ->
-                        onProgress(0.05f + p * 0.25f)
+                    val hasDirectInst = !video.instrumentalUri.isNullOrBlank() && File(video.instrumentalUri).exists()
+                    val instWavPath = if (hasDirectInst) {
+                        video.instrumentalUri
+                    } else {
+                        val instWav = File(context.cacheDir, "inst_video_$timestamp.wav")
+                        createInstrumentalWav(context, video, File(vocalPath), instWav) { p ->
+                            onProgress(0.05f + p * 0.25f)
+                        }
+                        instWav.absolutePath
                     }
+
                     val videoResult = VideoVocalsExporter.exportVideoWithVocals(
                         context = context,
                         videoUriString = video.videoUri,
-                        vocalWavPath = instWav.absolutePath,
+                        vocalWavPath = instWavPath,
                         outputTitle = "${video.title}_karaoke",
                         onProgress = { p -> onProgress(0.3f + p * 0.7f) }
                     )
-                    try { instWav.delete() } catch (_: Exception) {}
+                    if (!hasDirectInst) {
+                        try { File(instWavPath).delete() } catch (_: Exception) {}
+                    }
                     videoResult
                 }
             }
@@ -326,7 +348,7 @@ object AudioExporter {
     /**
      * Saves audio file to MediaStore under Music/VocalExtractor.
      */
-    internal fun saveAudioToMediaStore(
+    private fun saveAudioToMediaStore(
         context: Context,
         sourceFile: File,
         baseName: String,

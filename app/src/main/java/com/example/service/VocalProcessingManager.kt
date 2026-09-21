@@ -12,7 +12,6 @@ import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
 import com.example.onnx.AccelerationMode
 import com.example.onnx.AudioSeparationPipeline
-import com.example.onnx.SeparationMethod
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -94,9 +93,9 @@ object VocalProcessingManager {
     fun startSeparation(
         context: Context,
         video: VideoItemEntity,
+        engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
-        separationMethod: SeparationMethod = SeparationMethod.STREAMING_NEURAL,
         forceRecompute: Boolean = false,
         onComplete: ((Result<File>) -> Unit)? = null
     ) {
@@ -117,7 +116,7 @@ object VocalProcessingManager {
         _activeVideoId.value = video.id
         _activeVideoTitle.value = video.title
         _progress.value = 0.05f
-        _message.value = "Separating vocals with ${separationMethod.displayName}…"
+        _message.value = "Separating audio with ${engineType.displayName} (${accelerationMode.displayName})…"
         _elapsedSeconds.value = 0L
         _elapsedTimeFormatted.value = "00:00"
         _estimatedRemainingFormatted.value = null
@@ -140,14 +139,14 @@ object VocalProcessingManager {
 
             val result = pipeline.processVideo(
                 video = video,
+                engineType = engineType,
                 customModelPath = customModelPath,
                 accelerationMode = accelerationMode,
-                separationMethod = separationMethod,
                 forceRecompute = forceRecompute,
                 onProgress = { currentProgress ->
                     _progress.value = currentProgress
                     val pct = (currentProgress * 100).toInt()
-                    _message.value = "Separating vocals [${separationMethod.speedBadge}]… $pct%"
+                    _message.value = "Separating with ${engineType.displayName}… $pct%"
                     notifyServiceProgress()
                 }
             )

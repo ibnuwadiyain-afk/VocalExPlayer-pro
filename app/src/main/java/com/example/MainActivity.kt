@@ -46,8 +46,8 @@ class MainActivity : ComponentActivity() {
                     val modelName by viewModel.customModelName.collectAsState()
                     val customModelPath by viewModel.customModelPath.collectAsState()
                     val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
+                    val engineType by viewModel.engineType.collectAsState()
                     val accelerationMode by viewModel.accelerationMode.collectAsState()
-                    val separationMethod by viewModel.separationMethod.collectAsState()
                     val hardwareBackend = viewModel.hardwareBackend
 
                     val processingElapsedFormatted by viewModel.processingElapsedTimeFormatted.collectAsState()
@@ -95,7 +95,6 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
-                            separationMethod = separationMethod,
                             elapsedTime = processingElapsedFormatted,
                             estimatedRemaining = processingEstimatedRemaining,
                             isBackgroundProtected = isBackgroundProtected,
@@ -112,10 +111,9 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             customModelPath = customModelPath,
                             modelInfoMessage = modelInfoMessage,
+                            engineType = engineType,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
-                            separationMethod = separationMethod,
-                            onSelectSeparationMethod = { method -> viewModel.setSeparationMethod(method) },
                             downloadProgressState = downloadProgressState,
                             isDownloadingMedia = isDownloadingMedia,
                             downloadErrorMessage = downloadErrorMessage,
@@ -143,6 +141,7 @@ class MainActivity : ComponentActivity() {
                             onDeleteVideo = { video -> viewModel.deleteVideo(video) },
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
+                            onSelectEngineType = { engine -> viewModel.setEngineType(engine) },
                             onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
                             resolutionState = webImportResolutionState,
                             onSubmitMediaUrl = { url -> viewModel.processSocialMediaUrl(url) },

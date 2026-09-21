@@ -15,7 +15,7 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.sqrt
 
-class UvrMdxInferenceEngine(private val context: Context) {
+class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
 
     companion object {
         private const val TAG = "UvrMdxInference"
@@ -29,6 +29,8 @@ class UvrMdxInferenceEngine(private val context: Context) {
         const val COMPENSATION = 1.035f // Official UVR compensation for UVR-MDX-NET 1
     }
 
+    override val engineType: SeparationEngineType = SeparationEngineType.UVR_MDXNET
+
     private val ortEnvironment: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val processor = MdxSpectrogramProcessor(
         nFft = N_FFT,
@@ -37,8 +39,55 @@ class UvrMdxInferenceEngine(private val context: Context) {
         hopLength = HOP_LENGTH
     )
 
-    var activeHardwareBackend: String = "Multi-Core CPU"
+    override var activeHardwareBackend: String = "Multi-Core CPU"
         private set
+
+    override fun separate(
+        decodedAudio: DecodedAudio,
+        outputVocalFile: File,
+        outputInstrumentalFile: File?,
+        customModelPath: String?,
+        accelerationMode: AccelerationMode,
+        onProgress: (Float) -> Unit
+    ): SeparationResult {
+        separateVocals(
+            decodedAudio = decodedAudio,
+            outputWavFile = outputVocalFile,
+            customModelPath = customModelPath,
+            accelerationMode = accelerationMode,
+            onProgress = onProgress
+        )
+
+        if (outputInstrumentalFile != null) {
+            try {
+                val numFrames = minOf(decodedAudio.leftChannel.size, decodedAudio.rightChannel.size)
+                val vocalDecoded = com.example.audio.AudioExtractor.readWavDirectly(context, android.net.Uri.fromFile(outputVocalFile))
+                if (vocalDecoded != null) {
+                    val instLeft = FloatArray(numFrames)
+                    val instRight = FloatArray(numFrames)
+                    val vSizeL = vocalDecoded.leftChannel.size
+                    val vSizeR = vocalDecoded.rightChannel.size
+                    for (i in 0 until numFrames) {
+                        val vl = if (i < vSizeL) vocalDecoded.leftChannel[i] else 0f
+                        val vr = if (i < vSizeR) vocalDecoded.rightChannel[i] else 0f
+                        instLeft[i] = (decodedAudio.leftChannel[i] - vl).coerceIn(-1.0f, 1.0f)
+                        instRight[i] = (decodedAudio.rightChannel[i] - vr).coerceIn(-1.0f, 1.0f)
+                    }
+                    WavWriter.writeWavFile(
+                        leftChannel = instLeft,
+                        rightChannel = instRight,
+                        sampleRate = decodedAudio.sampleRate,
+                        outputFile = outputInstrumentalFile
+                    )
+                    vocalDecoded.close()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not generate instrumental wave from UVR: ${e.message}")
+            }
+        }
+
+        return SeparationResult(outputVocalFile, outputInstrumentalFile)
+    }
 
     /**
      * Ensures the UVR MDX-Net ONNX model is extracted from assets to internal storage.

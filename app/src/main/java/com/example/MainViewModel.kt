@@ -34,11 +34,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences("model_prefs", android.content.Context.MODE_PRIVATE)
 
+    private val _engineType = MutableStateFlow<com.example.onnx.SeparationEngineType>(
+        com.example.onnx.SeparationEngineType.fromId(prefs.getString("separation_engine_type", com.example.onnx.SeparationEngineType.DEEZER_SPLEETER.id))
+    )
+    val engineType: StateFlow<com.example.onnx.SeparationEngineType> = _engineType.asStateFlow()
+
+    fun setEngineType(type: com.example.onnx.SeparationEngineType) {
+        _engineType.value = type
+        prefs.edit().putString("separation_engine_type", type.id).apply()
+        _modelInfoMessage.value = "Separation engine set to: ${type.displayName}"
+    }
+
     private val _customModelPath = MutableStateFlow<String?>(prefs.getString("custom_model_path", null))
     val customModelPath: StateFlow<String?> = _customModelPath.asStateFlow()
 
     private val _customModelName = MutableStateFlow<String>(
-        prefs.getString("custom_model_name", null) ?: "UVR-MDX-NET 1 (Built-in 29.7MB Neural Network)"
+        prefs.getString("custom_model_name", null) ?: "Deezer Spleeter 2-Stem (Built-in Dual Neural Network)"
     )
     val customModelName: StateFlow<String> = _customModelName.asStateFlow()
 
@@ -50,11 +61,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val accelerationMode: StateFlow<com.example.onnx.AccelerationMode> = _accelerationMode.asStateFlow()
 
-    private val _separationMethod = MutableStateFlow<com.example.onnx.SeparationMethod>(
-        com.example.onnx.SeparationMethod.fromId(prefs.getString("separation_method", com.example.onnx.SeparationMethod.STREAMING_NEURAL.id))
-    )
-    val separationMethod: StateFlow<com.example.onnx.SeparationMethod> = _separationMethod.asStateFlow()
-
     val hardwareBackend: String
         get() = separationPipeline.activeHardwareBackend
 
@@ -62,12 +68,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _accelerationMode.value = mode
         prefs.edit().putString("acceleration_mode", mode.id).apply()
         _modelInfoMessage.value = "Acceleration set to: ${mode.displayName} (${mode.speedBadge})"
-    }
-
-    fun setSeparationMethod(method: com.example.onnx.SeparationMethod) {
-        _separationMethod.value = method
-        prefs.edit().putString("separation_method", method.id).apply()
-        _modelInfoMessage.value = "Method set to: ${method.displayName} [${method.speedBadge}]"
     }
 
     val videoList: StateFlow<List<VideoItemEntity>> = videoDao.getAllVideos()
@@ -591,19 +591,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startSeparation(
-        video: VideoItemEntity,
-        forceRecompute: Boolean = false,
-        overrideMethod: com.example.onnx.SeparationMethod? = null
-    ) {
-        val method = overrideMethod ?: _separationMethod.value
+    fun startSeparation(video: VideoItemEntity, forceRecompute: Boolean = false) {
         val context = getApplication<Application>()
         com.example.service.VocalProcessingManager.startSeparation(
             context = context,
             video = video,
+            engineType = _engineType.value,
             customModelPath = _customModelPath.value,
             accelerationMode = _accelerationMode.value,
-            separationMethod = method,
             forceRecompute = forceRecompute,
             onComplete = {
                 viewModelScope.launch {
@@ -621,12 +616,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         com.example.service.VocalProcessingManager.cancelActiveProcessing(context)
     }
 
-    fun retrySeparation(video: VideoItemEntity, overrideMethod: com.example.onnx.SeparationMethod? = null) {
-        startSeparation(video, forceRecompute = true, overrideMethod = overrideMethod)
+    fun retrySeparation(video: VideoItemEntity) {
+        startSeparation(video, forceRecompute = true)
     }
 
-    fun reprocessVideo(video: VideoItemEntity, overrideMethod: com.example.onnx.SeparationMethod? = null) {
-        startSeparation(video, forceRecompute = true, overrideMethod = overrideMethod)
+    fun reprocessVideo(video: VideoItemEntity) {
+        startSeparation(video, forceRecompute = true)
     }
 
     fun deleteVideo(video: VideoItemEntity) {
