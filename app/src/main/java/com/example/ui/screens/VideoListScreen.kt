@@ -201,7 +201,7 @@ fun VideoListScreen(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "VocalExtractor",
+                            text = AppStrings.appName(currentLanguage),
                             color = TextPrimary,
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
@@ -215,7 +215,7 @@ fun VideoListScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.FolderOpen,
-                            contentDescription = "Storage Folders",
+                            contentDescription = AppStrings.storageFolders(currentLanguage),
                             tint = AccentTeal
                         )
                     }
@@ -225,7 +225,7 @@ fun VideoListScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CloudDownload,
-                            contentDescription = "Import from YouTube or Social Media",
+                            contentDescription = AppStrings.importUrl(currentLanguage),
                             tint = AccentTeal
                         )
                     }
@@ -235,7 +235,7 @@ fun VideoListScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Psychology,
-                            contentDescription = "AI Model Settings",
+                            contentDescription = AppStrings.aiModelSettings(currentLanguage),
                             tint = AccentTeal
                         )
                     }
@@ -245,7 +245,7 @@ fun VideoListScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Translate,
-                            contentDescription = "Language Preferences",
+                            contentDescription = AppStrings.languagePreferences(currentLanguage),
                             tint = AccentTeal
                         )
                     }
@@ -269,11 +269,11 @@ fun VideoListScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.FolderOpen,
-                        contentDescription = "Folders",
+                        contentDescription = AppStrings.fabFolders(currentLanguage),
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Folders", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(AppStrings.fabFolders(currentLanguage), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 ExtendedFloatingActionButton(
@@ -285,11 +285,11 @@ fun VideoListScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Link,
-                        contentDescription = "From Link",
+                        contentDescription = AppStrings.fabLink(currentLanguage),
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(AppStrings.fabLink(currentLanguage), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 FloatingActionButton(
@@ -311,9 +311,9 @@ fun VideoListScreen(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Import Audio/Video")
+                        Icon(Icons.Default.Add, contentDescription = AppStrings.fabImport(currentLanguage))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(AppStrings.fabImport(currentLanguage), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -399,7 +399,7 @@ fun VideoListScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "AI SEPARATION ENGINE",
+                                    text = AppStrings.aiSeparationEngine(currentLanguage),
                                     color = AccentTeal,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
@@ -411,7 +411,7 @@ fun VideoListScreen(
                                     color = AccentTeal.copy(alpha = 0.2f)
                                 ) {
                                     Text(
-                                        text = "REAL ONNX",
+                                        text = AppStrings.spleeterBadge(currentLanguage),
                                         color = AccentTeal,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
@@ -429,7 +429,7 @@ fun VideoListScreen(
                         }
                         Icon(
                             imageVector = Icons.Default.Tune,
-                            contentDescription = "Change Model",
+                            contentDescription = AppStrings.changeModel(currentLanguage),
                             tint = TextSecondary,
                             modifier = Modifier.size(18.dp)
                         )
@@ -468,9 +468,9 @@ fun VideoListScreen(
                                     Column {
                                         Text(
                                             text = when (downloadProgressState) {
-                                                is DownloadProgressState.Downloading -> "Downloading Web Media (${(downloadProgressState.progress * 100).toInt()}%)"
+                                                is DownloadProgressState.Downloading -> "${AppStrings.downloadingWebMedia(currentLanguage)} (${(downloadProgressState.progress * 100).toInt()}%)"
                                                 is DownloadProgressState.Resolving -> downloadProgressState.message
-                                                else -> "Downloading in Background…"
+                                                else -> AppStrings.downloadingInBackground(currentLanguage)
                                             },
                                             color = TextPrimary,
                                             fontWeight = FontWeight.Bold,
@@ -479,7 +479,7 @@ fun VideoListScreen(
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "⏱ Elapsed: $downloadElapsedFormatted • Tap to view details",
+                                            text = "⏱ ${AppStrings.elapsedLabel(currentLanguage)}$downloadElapsedFormatted • ${AppStrings.tapToViewDetails(currentLanguage)}",
                                             color = TextSecondary,
                                             fontSize = 11.sp
                                         )
@@ -491,7 +491,7 @@ fun VideoListScreen(
                                         onClick = { showUrlDialog = true },
                                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
-                                        Text("View", color = AccentTeal, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(AppStrings.viewButton(currentLanguage), color = AccentTeal, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                     IconButton(
                                         onClick = onCancelDownload,
@@ -499,7 +499,7 @@ fun VideoListScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Cancel Download",
+                                            contentDescription = AppStrings.cancelDownload(currentLanguage),
                                             tint = StatusError,
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -557,7 +557,7 @@ fun VideoListScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = activeProcessingVideoTitle?.let { "Extracting: $it" } ?: "AI Vocal Extraction Active",
+                                        text = activeProcessingVideoTitle?.let { AppStrings.extractingVocalsBanner(currentLanguage, it) } ?: AppStrings.aiVocalExtractionActive(currentLanguage),
                                         color = TextPrimary,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
@@ -602,7 +602,7 @@ fun VideoListScreen(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "Elapsed: $processingElapsedFormatted",
+                                        text = "${AppStrings.elapsedLabel(currentLanguage)}$processingElapsedFormatted",
                                         color = TextPrimary,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 11.sp
@@ -626,7 +626,7 @@ fun VideoListScreen(
                                     )
                                     Spacer(modifier = Modifier.width(3.dp))
                                     Text(
-                                        text = "Background safe",
+                                        text = AppStrings.backgroundSafe(currentLanguage),
                                         color = AccentTeal,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Medium
@@ -665,18 +665,19 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         Text(
-                            text = "No Audio or Video Added Yet",
+                            text = AppStrings.emptyStateTitle(currentLanguage),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp
-                            )
+                            ),
+                            textAlign = TextAlign.Center
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "Import audio tracks (MP3, WAV, FLAC, M4A) or music videos to isolate vocals or instrumental backings using AI neural separation.",
+                            text = AppStrings.emptyStateDescription(currentLanguage),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
@@ -698,7 +699,7 @@ fun VideoListScreen(
                         ) {
                             Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color.Black)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Browse Storage Folders", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text(AppStrings.browseStorageFolders(currentLanguage), color = Color.Black, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -716,7 +717,7 @@ fun VideoListScreen(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, tint = AccentTeal)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Import Audio or Video File", color = TextPrimary, fontWeight = FontWeight.Bold)
+                            Text(AppStrings.importAudioOrVideoFile(currentLanguage), color = TextPrimary, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -732,7 +733,7 @@ fun VideoListScreen(
                         ) {
                             Icon(Icons.Default.CloudDownload, contentDescription = null, tint = AccentTeal)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("From YouTube / Social Link", color = TextPrimary, fontWeight = FontWeight.Bold)
+                            Text(AppStrings.fromYoutubeOrLink(currentLanguage), color = TextPrimary, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -748,7 +749,7 @@ fun VideoListScreen(
                         ) {
                             Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = AccentTeal)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Load Demo Music Video", fontWeight = FontWeight.SemiBold)
+                            Text(AppStrings.loadDemoMusicVideo(currentLanguage), fontWeight = FontWeight.SemiBold)
                         }
                     }
                 } else {
@@ -779,7 +780,7 @@ fun VideoListScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Tap to play with vocal extractor. Long-press for options & re-extraction.",
+                                        text = AppStrings.listTip(currentLanguage),
                                         color = TextSecondary,
                                         fontSize = 12.sp
                                     )
@@ -815,7 +816,7 @@ fun VideoListScreen(
             text = {
                 Column {
                     Text(
-                        text = "Choose an action for this video track:",
+                        text = AppStrings.chooseActionTitle(currentLanguage),
                         color = TextSecondary,
                         fontSize = 14.sp
                     )
@@ -833,7 +834,7 @@ fun VideoListScreen(
                         ) {
                             Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color.Black)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Export Video (Vocals Only)", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text(AppStrings.exportVideoVocalsOnly(currentLanguage), color = Color.Black, fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -850,7 +851,7 @@ fun VideoListScreen(
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, tint = AccentTeal)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Re-extract Vocals with AI", color = AccentTeal, fontWeight = FontWeight.Bold)
+                        Text(AppStrings.reextractVocalsWithAi(currentLanguage), color = AccentTeal, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -866,14 +867,14 @@ fun VideoListScreen(
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = null, tint = StatusError)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Delete Video", color = StatusError, fontWeight = FontWeight.Bold)
+                        Text(AppStrings.deleteVideo(currentLanguage), color = StatusError, fontWeight = FontWeight.Bold)
                     }
                 }
             },
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { videoForAction = null }) {
-                    Text("Cancel", color = TextSecondary)
+                    Text(AppStrings.cancel(currentLanguage), color = TextSecondary)
                 }
             },
             containerColor = DarkSurface,

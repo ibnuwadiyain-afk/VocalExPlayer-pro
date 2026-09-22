@@ -15,7 +15,7 @@ object SampleVideoGenerator {
 
     /**
      * Creates a lightweight sample MP4 video with a musical audio tone so the emulator user can
-     * immediately test the UVR MDX-Net ONNX separation pipeline without manual file transfers.
+     * immediately test the Spleeter 2-stem separation pipeline without manual file transfers.
      */
     fun getOrCreateSampleVideo(context: Context): File {
         val sampleFile = File(context.filesDir, "sample_vocal_track_v2.mp4")

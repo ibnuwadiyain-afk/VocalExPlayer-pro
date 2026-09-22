@@ -40,7 +40,8 @@ class MainActivity : ComponentActivity() {
             val currentLanguage by viewModel.currentLanguage.collectAsState()
 
             CompositionLocalProvider(
-                LocalLayoutDirection provides currentLanguage.layoutDirection
+                LocalLayoutDirection provides currentLanguage.layoutDirection,
+                com.example.ui.locale.LocalAppLanguage provides currentLanguage
             ) {
                 MyApplicationTheme {
                     Surface(

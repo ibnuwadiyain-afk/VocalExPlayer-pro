@@ -44,6 +44,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.onnx.AccelerationMode
+import com.example.ui.locale.AppStrings
+import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -62,6 +64,7 @@ fun ModelSettingsDialog(
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltIn: () -> Unit
 ) {
+    val lang = LocalAppLanguage.current
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -84,7 +87,7 @@ fun ModelSettingsDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "AI Engine & Acceleration",
+                    text = AppStrings.modelSettingsTitle(lang),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
@@ -116,7 +119,7 @@ fun ModelSettingsDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "ACTIVE HARDWARE ACCELERATION",
+                                text = AppStrings.activeHardwareAcceleration(lang),
                                 color = AccentTeal,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -135,7 +138,7 @@ fun ModelSettingsDialog(
 
                 // Processing Acceleration Modes
                 Text(
-                    text = "SEPARATION SPEED PROFILE",
+                    text = AppStrings.speedProfileHeader(lang),
                     color = TextSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -222,7 +225,7 @@ fun ModelSettingsDialog(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (isCustom) "CUSTOM MODEL" else "BUILT-IN NEURAL NETWORK",
+                                text = if (isCustom) AppStrings.customModelBadge(lang) else AppStrings.builtInModelBadge(lang),
                                 color = AccentTeal,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -259,7 +262,7 @@ fun ModelSettingsDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Import Custom UVR Model (.onnx)",
+                        text = AppStrings.importCustomModelButton(lang),
                         color = Color.Black,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
@@ -285,7 +288,7 @@ fun ModelSettingsDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Reset to Built-in UVR-MDX-NET 1",
+                            text = AppStrings.resetToBuiltInModelButton(lang),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -298,7 +301,7 @@ fun ModelSettingsDialog(
                 onClick = onDismiss,
                 modifier = Modifier.testTag("dismiss_model_dialog_button")
             ) {
-                Text("Close", color = AccentTeal, fontWeight = FontWeight.Bold)
+                Text(AppStrings.closeButton(lang), color = AccentTeal, fontWeight = FontWeight.Bold)
             }
         },
         containerColor = DarkBackground,

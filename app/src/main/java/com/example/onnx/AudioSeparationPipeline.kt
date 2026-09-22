@@ -22,7 +22,7 @@ class AudioSeparationPipeline(
         private const val WAKELOCK_TAG = "AudioSeparationPipeline:CPU"
     }
 
-    private val inferenceEngine = UvrMdxInferenceEngine(context)
+    private val inferenceEngine = SpleeterInferenceEngine(context)
 
     val activeHardwareBackend: String
         get() = inferenceEngine.activeHardwareBackend

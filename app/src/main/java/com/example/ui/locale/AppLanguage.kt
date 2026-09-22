@@ -40,6 +40,30 @@ enum class AppLanguage(
         nativeName = "Deutsch",
         englishName = "German",
         isRtl = false
+    ),
+    JAPANESE(
+        code = "ja",
+        nativeName = "日本語",
+        englishName = "Japanese",
+        isRtl = false
+    ),
+    CHINESE(
+        code = "zh",
+        nativeName = "中文 (简体)",
+        englishName = "Chinese (Simplified)",
+        isRtl = false
+    ),
+    RUSSIAN(
+        code = "ru",
+        nativeName = "Русский",
+        englishName = "Russian",
+        isRtl = false
+    ),
+    PORTUGUESE(
+        code = "pt",
+        nativeName = "Português",
+        englishName = "Portuguese",
+        isRtl = false
     );
 
     val layoutDirection: LayoutDirection
@@ -51,3 +75,6 @@ enum class AppLanguage(
         }
     }
 }
+
+val LocalAppLanguage = androidx.compose.runtime.compositionLocalOf { AppLanguage.ENGLISH }
+

@@ -12,5 +12,5 @@
     <string name="pause">Pause</string>
     <string name="original_audio">Original Audio</string>
     <string name="isolated_vocals">Isolated Vocals (AI)</string>
-    <string name="onnx_model_info">UVR MDX-Net ONNX Model</string>
+    <string name="onnx_model_info">Spleeter 2-Stem Neural Engine</string>
 </resources>

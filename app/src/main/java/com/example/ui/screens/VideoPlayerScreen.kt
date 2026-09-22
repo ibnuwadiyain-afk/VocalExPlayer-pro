@@ -605,7 +605,7 @@ fun VideoPlayerScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Hardware: $hardwareBackend • ONNX UVR MDX-Net 1",
+                                text = "Hardware: $hardwareBackend • Spleeter 2-Stem Neural Engine",
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )

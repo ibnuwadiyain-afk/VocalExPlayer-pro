@@ -40,7 +40,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val customModelPath: StateFlow<String?> = _customModelPath.asStateFlow()
 
     private val _customModelName = MutableStateFlow<String>(
-        prefs.getString("custom_model_name", null) ?: "UVR-MDX-NET 1 (Built-in 29.7MB Neural Network)"
+        prefs.getString("custom_model_name", null) ?: "Spleeter 2-Stem (Built-in Neural Engine)"
     )
     val customModelName: StateFlow<String> = _customModelName.asStateFlow()
 
@@ -469,8 +469,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .remove("custom_model_name")
             .apply()
         _customModelPath.value = null
-        _customModelName.value = "UVR-MDX-NET 1 (Built-in 29.7MB Neural Network)"
-        _modelInfoMessage.value = "Reset to built-in UVR-MDX-NET 1 model."
+        _customModelName.value = "Spleeter 2-Stem (Built-in Neural Engine)"
+        _modelInfoMessage.value = "Reset to built-in Spleeter 2-Stem model."
     }
 
     fun clearModelInfoMessage() {

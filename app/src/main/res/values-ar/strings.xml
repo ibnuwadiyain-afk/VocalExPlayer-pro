@@ -13,5 +13,5 @@
     <string name="pause">إيقاف مؤقت</string>
     <string name="original_audio">الصوت الأصلي</string>
     <string name="isolated_vocals">الصوت المعزول (ذكاء اصطناعي)</string>
-    <string name="onnx_model_info">نموذج UVR MDX-Net العصبي</string>
+    <string name="onnx_model_info">محرك سبليتر العصبي لعزل المسارين</string>
 </resources>

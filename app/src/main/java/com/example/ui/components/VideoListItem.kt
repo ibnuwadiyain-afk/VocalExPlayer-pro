@@ -48,6 +48,8 @@ import com.example.ui.theme.StatusProcessing
 import com.example.ui.theme.StatusReady
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.locale.AppStrings
+import com.example.ui.locale.LocalAppLanguage
 import java.util.Locale
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -60,6 +62,7 @@ fun VideoListItem(
     isActiveProcessing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val lang = LocalAppLanguage.current
     val isAudio = remember(video) {
         val path = video.videoUri.lowercase()
         path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".m4a") ||
@@ -143,7 +146,7 @@ fun VideoListItem(
                         color = if (isAudio) Color(0xFF38BDF8).copy(alpha = 0.15f) else AccentTeal.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = if (isAudio) "AUDIO" else "VIDEO",
+                            text = if (isAudio) AppStrings.badgeAudio(lang) else AppStrings.badgeVideo(lang),
                             color = if (isAudio) Color(0xFF38BDF8) else AccentTeal,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
@@ -177,35 +180,36 @@ fun StatusBadge(
     status: VideoStatus,
     elapsedTime: String = ""
 ) {
+    val lang = LocalAppLanguage.current
     val (bgColor, textColor, defaultText, icon) = when (status) {
         VideoStatus.READY -> Quadruple(
             StatusReady.copy(alpha = 0.15f),
             StatusReady,
-            "Ready",
+            AppStrings.badgeReady(lang),
             Icons.Default.CheckCircle
         )
         VideoStatus.PROCESSING -> Quadruple(
             StatusProcessing.copy(alpha = 0.15f),
             StatusProcessing,
-            if (elapsedTime.isNotBlank()) "Extracting $elapsedTime" else "Processing…",
+            AppStrings.badgeProcessing(lang, elapsedTime),
             Icons.Default.HourglassTop
         )
         VideoStatus.ERROR -> Quadruple(
             StatusError.copy(alpha = 0.15f),
             StatusError,
-            "Error",
+            AppStrings.badgeError(lang),
             Icons.Default.ErrorOutline
         )
         VideoStatus.NEW -> Quadruple(
             StatusNew.copy(alpha = 0.15f),
             StatusNew,
-            "New",
+            AppStrings.badgeNew(lang),
             Icons.Default.PlayArrow
         )
     }
 
     val displayText = if (status == VideoStatus.PROCESSING && elapsedTime.isNotBlank()) {
-        "Extracting $elapsedTime"
+        AppStrings.badgeProcessing(lang, elapsedTime)
     } else {
         defaultText
     }

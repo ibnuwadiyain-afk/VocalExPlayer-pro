@@ -20,6 +20,32 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `verify AppStrings translations for multiple languages`() {
+    val en = com.example.ui.locale.AppLanguage.ENGLISH
+    val ar = com.example.ui.locale.AppLanguage.ARABIC
+    val es = com.example.ui.locale.AppLanguage.SPANISH
+
+    assertEquals("VocalExtractor", com.example.ui.locale.AppStrings.appName(en))
+    assertEquals("مستخرج الأصوات", com.example.ui.locale.AppStrings.appName(ar))
+    assertEquals("Extractor de Voces", com.example.ui.locale.AppStrings.appName(es))
+
+    assertEquals("SPLEETER 2-STEM", com.example.ui.locale.AppStrings.spleeterBadge(en))
+    assertEquals("سبيليتر 2-STEM", com.example.ui.locale.AppStrings.spleeterBadge(ar))
+
+    assertEquals("No Audio or Video Added Yet", com.example.ui.locale.AppStrings.emptyStateTitle(en))
+    assertEquals("لم تتم إضافة أي وسائط حتى الآن", com.example.ui.locale.AppStrings.emptyStateTitle(ar))
+  }
+
+  @Test
+  fun `verify SpleeterInferenceEngine initialization and model extraction`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val engine = com.example.onnx.SpleeterInferenceEngine(context)
+    val modelFile = engine.getOrExtractModelFile()
+    org.junit.Assert.assertTrue("Model file should exist", modelFile.exists())
+    org.junit.Assert.assertTrue("Model file should have valid weights (> 20MB)", modelFile.length() > 20_000_000L)
+  }
+
+  @Test
   fun `verify MdxSpectrogramProcessor forward and inverse transforms`() {
     val processor = com.example.onnx.MdxSpectrogramProcessor()
     val signal = FloatArray(processor.chunkSize + processor.nFft) { i ->
