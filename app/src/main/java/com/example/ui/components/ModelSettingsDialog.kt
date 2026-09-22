@@ -55,11 +55,9 @@ import com.example.ui.theme.TextSecondary
 fun ModelSettingsDialog(
     activeModelName: String,
     customModelPath: String?,
-    engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
     accelerationMode: AccelerationMode,
     hardwareBackend: String,
     onDismiss: () -> Unit,
-    onSelectEngineType: (com.example.onnx.SeparationEngineType) -> Unit = {},
     onSelectAccelerationMode: (AccelerationMode) -> Unit,
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltIn: () -> Unit
@@ -129,68 +127,6 @@ fun ModelSettingsDialog(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Separation Engine Selector
-                Text(
-                    text = "NEURAL SEPARATION ENGINE",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val availableEngines = listOf(
-                    com.example.onnx.SeparationEngineType.DEEZER_SPLEETER to "Genuine Deezer 2-stem model • Vocals + Accompaniment tracks with soft mask filtering",
-                    com.example.onnx.SeparationEngineType.UVR_MDXNET to "MDX-Net 1 neural network • High-fidelity studio vocal isolation"
-                )
-
-                availableEngines.forEach { (eng, desc) ->
-                    val isSelected = engineType == eng
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) DarkSurfaceVariant else DarkSurface,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .then(
-                                if (isSelected) {
-                                    Modifier.border(1.dp, AccentTeal, RoundedCornerShape(12.dp))
-                                } else Modifier
-                            )
-                            .clickable { onSelectEngineType(eng) }
-                            .testTag("engine_${eng.id}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                                contentDescription = null,
-                                tint = if (isSelected) AccentTeal else TextSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = eng.displayName,
-                                    color = TextPrimary,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
-                                Text(
-                                    text = desc,
-                                    color = TextSecondary,
-                                    fontSize = 11.sp,
-                                    lineHeight = 15.sp
-                                )
-                            }
                         }
                     }
                 }

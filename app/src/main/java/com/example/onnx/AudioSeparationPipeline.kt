@@ -8,6 +8,7 @@ import com.example.audio.AudioExtractor
 import com.example.data.dao.VideoDao
 import com.example.data.model.VideoItemEntity
 import com.example.data.model.VideoStatus
+import com.example.export.ProgressiveVideoMerger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -21,19 +22,16 @@ class AudioSeparationPipeline(
         private const val WAKELOCK_TAG = "AudioSeparationPipeline:CPU"
     }
 
-    val spleeterEngine = DeezerSpleeterInferenceEngine(context)
-    val uvrEngine = UvrMdxInferenceEngine(context)
+    private val inferenceEngine = UvrMdxInferenceEngine(context)
 
     val activeHardwareBackend: String
-        get() = spleeterEngine.activeHardwareBackend
+        get() = inferenceEngine.activeHardwareBackend
 
     /**
      * Runs the real separation pipeline for the given video with CPU WakeLock stability.
-     * Supports genuine Deezer Spleeter (2-stem vocals + accompaniment) and UVR-MDX-Net.
      */
     suspend fun processVideo(
         video: VideoItemEntity,
-        engineType: SeparationEngineType = SeparationEngineType.DEEZER_SPLEETER,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
         forceRecompute: Boolean = false,
@@ -56,12 +54,10 @@ class AudioSeparationPipeline(
             val vocalsDir = File(context.filesDir, "vocals")
             if (!vocalsDir.exists()) vocalsDir.mkdirs()
             val vocalWavFile = File(vocalsDir, "vocal_${video.id}.wav")
-            val instWavFile = File(vocalsDir, "inst_${video.id}.wav")
 
-            if (forceRecompute) {
-                if (vocalWavFile.exists()) vocalWavFile.delete()
-                if (instWavFile.exists()) instWavFile.delete()
-                Log.d(TAG, "forceRecompute requested: deleted old cached separation files for ${video.id}")
+            if (forceRecompute && vocalWavFile.exists()) {
+                vocalWavFile.delete()
+                Log.d(TAG, "forceRecompute requested: deleted old cached vocal file at ${vocalWavFile.absolutePath}")
             }
 
             if (!forceRecompute && vocalWavFile.exists() && vocalWavFile.length() > 44) {
@@ -71,7 +67,6 @@ class AudioSeparationPipeline(
                     status = VideoStatus.READY,
                     progress = 1.0f,
                     vocalUri = vocalWavFile.absolutePath,
-                    instrumentalUri = if (instWavFile.exists() && instWavFile.length() > 44) instWavFile.absolutePath else null,
                     errorMessage = null
                 )
                 onProgress(1.0f)
@@ -84,7 +79,6 @@ class AudioSeparationPipeline(
                 status = VideoStatus.PROCESSING,
                 progress = 0.05f,
                 vocalUri = null,
-                instrumentalUri = null,
                 errorMessage = null
             )
             onProgress(0.05f)
@@ -95,43 +89,57 @@ class AudioSeparationPipeline(
                 context = context,
                 videoUri = videoUri,
                 onProgress = { extProgress ->
-                    val overall = 0.05f + (extProgress * 0.15f)
+                    val overall = 0.05f + (extProgress * 0.20f)
                     onProgress(overall)
                 }
             )
 
-            try {
-                // Step 2: Run Real ONNX Separation with selected Engine
-                val engine: SeparationEngine = when (engineType) {
-                    SeparationEngineType.DEEZER_SPLEETER -> spleeterEngine
-                    SeparationEngineType.UVR_MDXNET -> uvrEngine
-                    SeparationEngineType.CUSTOM -> if (!customModelPath.isNullOrBlank()) uvrEngine else spleeterEngine
-                }
+            // Step 2: Initialize Progressive Video Merger for zero-waiting video export
+            val videoCacheFile = ProgressiveVideoMerger.getCacheFileForVideo(context, video.id)
+            val progressiveMerger = ProgressiveVideoMerger(
+                context = context,
+                videoUriString = video.videoUri,
+                sampleRate = decodedAudio.sampleRate,
+                channels = 2,
+                outputCacheFile = videoCacheFile
+            )
 
-                Log.i(TAG, "Executing separation using engine: ${engine.engineType.displayName}")
-                engine.separate(
+            try {
+                // Launch progressive video merger in decoupled background worker
+                progressiveMerger.start()
+
+                // Step 3: Run Real ONNX Separation & stream separated chunks simultaneously
+                inferenceEngine.separateVocals(
                     decodedAudio = decodedAudio,
-                    outputVocalFile = vocalWavFile,
-                    outputInstrumentalFile = instWavFile,
+                    outputWavFile = vocalWavFile,
                     customModelPath = customModelPath,
                     accelerationMode = accelerationMode,
+                    onChunkAvailable = { left, right, offset, count, isEos ->
+                        progressiveMerger.feedSeparatedChunk(left, right, offset, count, isEos)
+                    },
                     onProgress = { sepProgress ->
-                        val overall = 0.20f + (sepProgress * 0.75f)
-                        onProgress(overall)
+                        onProgress(sepProgress)
                     }
                 )
+
+                // Await background finalization of video cache (typically completes in < 200ms)
+                progressiveMerger.awaitFinalization(timeoutMs = 3000L)
+                if (progressiveMerger.isCacheReady) {
+                    Log.i(TAG, "⚡ Progressive video cache ready for instant export: ${videoCacheFile.absolutePath}")
+                }
+            } catch (t: Throwable) {
+                progressiveMerger.cancel()
+                throw t
             } finally {
                 decodedAudio.close()
             }
 
-            // Step 3: Mark Ready in Database
-            val finalInstUri = if (instWavFile.exists() && instWavFile.length() > 44) instWavFile.absolutePath else null
+            // Step 4: Mark Ready
             videoDao.updateSeparationStatus(
                 id = video.id,
                 status = VideoStatus.READY,
                 progress = 1.0f,
                 vocalUri = vocalWavFile.absolutePath,
-                instrumentalUri = finalInstUri,
                 errorMessage = null
             )
             onProgress(1.0f)
@@ -145,7 +153,6 @@ class AudioSeparationPipeline(
                 status = VideoStatus.ERROR,
                 progress = 0f,
                 vocalUri = null,
-                instrumentalUri = null,
                 errorMessage = msg
             )
             Result.failure(e)

@@ -17,6 +17,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalLayoutDirection
+import com.example.ui.locale.AppLanguage
 import com.example.ui.components.ExportProgressDialog
 import com.example.ui.screens.VideoListScreen
 import com.example.ui.screens.VideoPlayerScreen
@@ -34,11 +37,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = DarkBackground
-                ) {
+            val currentLanguage by viewModel.currentLanguage.collectAsState()
+
+            CompositionLocalProvider(
+                LocalLayoutDirection provides currentLanguage.layoutDirection
+            ) {
+                MyApplicationTheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = DarkBackground
+                    ) {
                     val videos by viewModel.videoList.collectAsState()
                     val selectedVideo by viewModel.selectedVideo.collectAsState()
                     val isProcessing by viewModel.isProcessing.collectAsState()
@@ -46,7 +54,6 @@ class MainActivity : ComponentActivity() {
                     val modelName by viewModel.customModelName.collectAsState()
                     val customModelPath by viewModel.customModelPath.collectAsState()
                     val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
-                    val engineType by viewModel.engineType.collectAsState()
                     val accelerationMode by viewModel.accelerationMode.collectAsState()
                     val hardwareBackend = viewModel.hardwareBackend
 
@@ -93,7 +100,6 @@ class MainActivity : ComponentActivity() {
                             isProcessing = isProcessing,
                             processingProgress = progress,
                             activeModelName = modelName,
-                            engineType = engineType,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
                             elapsedTime = processingElapsedFormatted,
@@ -112,7 +118,6 @@ class MainActivity : ComponentActivity() {
                             activeModelName = modelName,
                             customModelPath = customModelPath,
                             modelInfoMessage = modelInfoMessage,
-                            engineType = engineType,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
                             downloadProgressState = downloadProgressState,
@@ -142,7 +147,6 @@ class MainActivity : ComponentActivity() {
                             onDeleteVideo = { video -> viewModel.deleteVideo(video) },
                             onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                             onResetToBuiltInModel = { viewModel.resetToBuiltInModel() },
-                            onSelectEngineType = { engine -> viewModel.setEngineType(engine) },
                             onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
                             resolutionState = webImportResolutionState,
                             onSubmitMediaUrl = { url -> viewModel.processSocialMediaUrl(url) },
@@ -157,7 +161,9 @@ class MainActivity : ComponentActivity() {
                             onReprocessVideo = { video -> viewModel.reprocessVideo(video) },
                             onExportVideo = { video, deleteOriginal -> viewModel.exportVideo(video, deleteOriginal) },
                             onExportMedia = { video, format, deleteOriginal -> viewModel.exportMedia(video, format, deleteOriginal) },
-                            onCancelProcessing = { viewModel.cancelSeparation() }
+                            onCancelProcessing = { viewModel.cancelSeparation() },
+                            currentLanguage = currentLanguage,
+                            onSelectLanguage = { lang -> viewModel.setLanguage(lang) }
                         )
                     }
 
@@ -175,6 +181,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

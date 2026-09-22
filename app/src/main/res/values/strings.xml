@@ -1,12 +1,10 @@
 <resources>
     <string name="app_name">VocalExtractor</string>
     <string name="app_tagline">AI Vocal Separator &amp; Video Player</string>
-    <string name="import_video">Import</string>
-    <string name="folders">Folders</string>
-    <string name="link">Link</string>
+    <string name="import_video">Import Video</string>
     <string name="extracting_vocals">Extracting vocals with AI…</string>
-    <string name="no_videos_found">No media imported yet</string>
-    <string name="tap_to_import">Tap the button below or import a file from your device</string>
+    <string name="no_videos_found">No videos imported yet</string>
+    <string name="tap_to_import">Tap the button below or import a video from your gallery</string>
     <string name="retry">Retry</string>
     <string name="delete">Delete</string>
     <string name="cancel">Cancel</string>
@@ -14,16 +12,5 @@
     <string name="pause">Pause</string>
     <string name="original_audio">Original Audio</string>
     <string name="isolated_vocals">Isolated Vocals (AI)</string>
-    <string name="instrumental">Instrumental / Music</string>
-    <string name="onnx_model_info">Deezer Spleeter / UVR MDX-Net ONNX Engine</string>
-    <string name="export_btn">Export</string>
-    <string name="processing">Processing…</string>
-    <string name="ready">Ready</string>
-    <string name="failed">Failed</string>
-    <string name="queued">Queued</string>
-    <string name="storage_folders">Storage Folders</string>
-    <string name="ai_model_settings">AI Model Settings</string>
-    <string name="confirm">Confirm</string>
-    <string name="delete_confirm_title">Delete Item?</string>
-    <string name="delete_confirm_msg">Are you sure you want to delete this media item?</string>
+    <string name="onnx_model_info">UVR MDX-Net ONNX Model</string>
 </resources>

@@ -45,12 +45,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
 import com.example.export.ExportFormat
+import com.example.export.ExportNameSanitizer
+import com.example.export.ProgressiveVideoMerger
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -89,6 +92,14 @@ fun ExportOptionsDialog(
         mutableStateOf(if (isAudioSource) ExportFormat.AUDIO_VOCALS_WAV else ExportFormat.AUDIO_VOCALS_WAV)
     }
     var deleteOriginalAfterExport by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val hasPremergedVideoCache = remember(video) {
+        ProgressiveVideoMerger.isCacheReadyForVideo(context, video.id)
+    }
+    val previewSanitizedTitle = remember(video.title) {
+        ExportNameSanitizer.sanitizeTitle(video.title)
+    }
 
     val scrollState = rememberScrollState()
 
@@ -155,6 +166,19 @@ fun ExportOptionsDialog(
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1
                         )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "Output: ${previewSanitizedTitle}_vocals.${selectedFormat.extension}",
+                            color = AccentTeal,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "✓ Arabic & Unicode characters fully preserved",
+                            color = TextSecondary,
+                            fontSize = 9.sp
+                        )
                     }
                 }
 
@@ -206,13 +230,33 @@ fun ExportOptionsDialog(
                 // Video formats (if source is not strictly audio)
                 if (!isAudioSource) {
                     Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "VIDEO EXPORT FORMATS",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AccentTeal,
-                        letterSpacing = 0.5.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "VIDEO EXPORT FORMATS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentTeal,
+                            letterSpacing = 0.5.sp
+                        )
+                        if (hasPremergedVideoCache) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = AccentTeal.copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = "⚡ Instant Cache Ready",
+                                    color = AccentTeal,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
 
                     FormatOptionCard(

@@ -15,7 +15,7 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.sqrt
 
-class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
+class UvrMdxInferenceEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "UvrMdxInference"
@@ -29,8 +29,6 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
         const val COMPENSATION = 1.035f // Official UVR compensation for UVR-MDX-NET 1
     }
 
-    override val engineType: SeparationEngineType = SeparationEngineType.UVR_MDXNET
-
     private val ortEnvironment: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val processor = MdxSpectrogramProcessor(
         nFft = N_FFT,
@@ -39,55 +37,8 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
         hopLength = HOP_LENGTH
     )
 
-    override var activeHardwareBackend: String = "Multi-Core CPU"
+    var activeHardwareBackend: String = "Multi-Core CPU"
         private set
-
-    override fun separate(
-        decodedAudio: DecodedAudio,
-        outputVocalFile: File,
-        outputInstrumentalFile: File?,
-        customModelPath: String?,
-        accelerationMode: AccelerationMode,
-        onProgress: (Float) -> Unit
-    ): SeparationResult {
-        separateVocals(
-            decodedAudio = decodedAudio,
-            outputWavFile = outputVocalFile,
-            customModelPath = customModelPath,
-            accelerationMode = accelerationMode,
-            onProgress = onProgress
-        )
-
-        if (outputInstrumentalFile != null) {
-            try {
-                val numFrames = minOf(decodedAudio.leftChannel.size, decodedAudio.rightChannel.size)
-                val vocalDecoded = com.example.audio.AudioExtractor.readWavDirectly(context, android.net.Uri.fromFile(outputVocalFile))
-                if (vocalDecoded != null) {
-                    val instLeft = FloatArray(numFrames)
-                    val instRight = FloatArray(numFrames)
-                    val vSizeL = vocalDecoded.leftChannel.size
-                    val vSizeR = vocalDecoded.rightChannel.size
-                    for (i in 0 until numFrames) {
-                        val vl = if (i < vSizeL) vocalDecoded.leftChannel[i] else 0f
-                        val vr = if (i < vSizeR) vocalDecoded.rightChannel[i] else 0f
-                        instLeft[i] = (decodedAudio.leftChannel[i] - vl).coerceIn(-1.0f, 1.0f)
-                        instRight[i] = (decodedAudio.rightChannel[i] - vr).coerceIn(-1.0f, 1.0f)
-                    }
-                    WavWriter.writeWavFile(
-                        leftChannel = instLeft,
-                        rightChannel = instRight,
-                        sampleRate = decodedAudio.sampleRate,
-                        outputFile = outputInstrumentalFile
-                    )
-                    vocalDecoded.close()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not generate instrumental wave from UVR: ${e.message}")
-            }
-        }
-
-        return SeparationResult(outputVocalFile, outputInstrumentalFile)
-    }
 
     /**
      * Ensures the UVR MDX-Net ONNX model is extracted from assets to internal storage.
@@ -134,6 +85,7 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
         outputWavFile: File,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
+        onChunkAvailable: ((left: FloatArray, right: FloatArray, offset: Int, count: Int, isEos: Boolean) -> Unit)? = null,
         onProgress: (Float) -> Unit = {}
     ): File {
         val modelFile = getOrExtractModelFile(customModelPath)
@@ -199,6 +151,7 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                     decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
                     accelerationMode = accelerationMode,
+                    onChunkAvailable = onChunkAvailable,
                     onProgress = onProgress
                 )
             } else {
@@ -208,6 +161,7 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                     outputName = outputName,
                     decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
+                    onChunkAvailable = onChunkAvailable,
                     onProgress = onProgress
                 )
             }
@@ -231,6 +185,7 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
         decodedAudio: DecodedAudio,
         outputWavFile: File,
         accelerationMode: AccelerationMode,
+        onChunkAvailable: ((left: FloatArray, right: FloatArray, offset: Int, count: Int, isEos: Boolean) -> Unit)? = null,
         onProgress: (Float) -> Unit
     ) {
         val totalSamples = decodedAudio.totalFrames
@@ -323,6 +278,7 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                         skippedChunks++
                         if (validCount > 0) {
                             wavWriter.writeSilence(validCount)
+                            onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
                         }
                         samplePos += genSize
                         chunkIdx++
@@ -381,13 +337,20 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                             outChunkR[k] = if (wR > 1e-4f) (istftWaveR[srcIdx] / wR).coerceIn(-1.0f, 1.0f) else istftWaveR[srcIdx]
                         }
                         wavWriter.writeStereoChunk(outChunkL, outChunkR, 0, validCount)
+                        onChunkAvailable?.invoke(outChunkL, outChunkR, 0, validCount, false)
                     } else {
                         // Fallback silence if tensor type unexpected
-                        if (validCount > 0) wavWriter.writeSilence(validCount)
+                        if (validCount > 0) {
+                            wavWriter.writeSilence(validCount)
+                            onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error executing ONNX chunk inference at chunk $chunkIdx", e)
-                    if (validCount > 0) wavWriter.writeSilence(validCount)
+                    if (validCount > 0) {
+                        wavWriter.writeSilence(validCount)
+                        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
+                    }
                 } finally {
                     inputTensor.close()
                     ortResult?.close()
@@ -397,6 +360,9 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                 chunkIdx++
             }
         }
+
+        // Notify progressive muxer of stream completion
+        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, 0, true)
 
         if (skippedChunks > 0) {
             Log.i(TAG, "Turbo Mode: Fast-skipped $skippedChunks silent chunks (${skippedChunks * 5.78f}s of compute saved)")
@@ -417,6 +383,7 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
         outputName: String,
         decodedAudio: DecodedAudio,
         outputWavFile: File,
+        onChunkAvailable: ((left: FloatArray, right: FloatArray, offset: Int, count: Int, isEos: Boolean) -> Unit)? = null,
         onProgress: (Float) -> Unit
     ) {
         val totalSamples = decodedAudio.totalFrames
@@ -473,12 +440,15 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                             outR[i] = if (outBuf.hasRemaining()) outBuf.get().coerceIn(-1.0f, 1.0f) else 0f
                         }
                         wavWriter.writeStereoChunk(outL, outR, 0, currentChunkLen)
+                        onChunkAvailable?.invoke(outL, outR, 0, currentChunkLen, false)
                     } else {
                         wavWriter.writeSilence(currentChunkLen)
+                        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, currentChunkLen, false)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in waveform model inference at chunk $chunkIdx", e)
                     wavWriter.writeSilence(currentChunkLen)
+                    onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, currentChunkLen, false)
                 } finally {
                     inputTensor.close()
                     ortResult?.close()
@@ -488,6 +458,8 @@ class UvrMdxInferenceEngine(private val context: Context) : SeparationEngine {
                 chunkIdx++
             }
         }
+
+        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, 0, true)
 
         onProgress(0.97f)
         onProgress(1.0f)

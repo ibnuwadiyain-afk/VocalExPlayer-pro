@@ -14,6 +14,8 @@ import com.example.media.DownloadProgressState
 import com.example.media.ExtractedVideoInfo
 import com.example.media.SocialMediaVideoProcessor
 import com.example.onnx.AudioSeparationPipeline
+import com.example.ui.locale.AppLanguage
+import com.example.ui.locale.LanguageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,22 +36,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences("model_prefs", android.content.Context.MODE_PRIVATE)
 
-    private val _engineType = MutableStateFlow<com.example.onnx.SeparationEngineType>(
-        com.example.onnx.SeparationEngineType.fromId(prefs.getString("separation_engine_type", com.example.onnx.SeparationEngineType.DEEZER_SPLEETER.id))
-    )
-    val engineType: StateFlow<com.example.onnx.SeparationEngineType> = _engineType.asStateFlow()
-
-    fun setEngineType(type: com.example.onnx.SeparationEngineType) {
-        _engineType.value = type
-        prefs.edit().putString("separation_engine_type", type.id).apply()
-        _modelInfoMessage.value = "Separation engine set to: ${type.displayName}"
-    }
-
     private val _customModelPath = MutableStateFlow<String?>(prefs.getString("custom_model_path", null))
     val customModelPath: StateFlow<String?> = _customModelPath.asStateFlow()
 
     private val _customModelName = MutableStateFlow<String>(
-        prefs.getString("custom_model_name", null) ?: "Deezer Spleeter 2-Stem (Built-in Dual Neural Network)"
+        prefs.getString("custom_model_name", null) ?: "UVR-MDX-NET 1 (Built-in 29.7MB Neural Network)"
     )
     val customModelName: StateFlow<String> = _customModelName.asStateFlow()
 
@@ -143,7 +134,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isScanningFolder = MutableStateFlow(false)
     val isScanningFolder: StateFlow<Boolean> = _isScanningFolder.asStateFlow()
 
+    // Multilingual UI preferences
+    val currentLanguage: StateFlow<AppLanguage> = LanguageManager.currentLanguage
+
+    fun setLanguage(language: AppLanguage) {
+        LanguageManager.setLanguage(language)
+    }
+
     init {
+        LanguageManager.initialize(application)
         loadSavedFolders()
     }
 
@@ -562,9 +561,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("MainViewModel", "Imported media $mediaId: $resolvedTitle (hasVideo=$hasVideo, ext=$resolvedExt)")
 
                 withContext(Dispatchers.Main) {
-                    com.example.service.VocalProcessingManager.resetState()
                     _selectedVideo.value = newMedia
-                    startSeparation(newMedia)
                 }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error importing media from $uri", e)
@@ -598,7 +595,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         com.example.service.VocalProcessingManager.startSeparation(
             context = context,
             video = video,
-            engineType = _engineType.value,
             customModelPath = _customModelPath.value,
             accelerationMode = _accelerationMode.value,
             forceRecompute = forceRecompute,

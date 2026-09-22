@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -67,7 +68,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -90,6 +90,9 @@ import com.example.ui.components.ModelSettingsDialog
 import com.example.ui.components.StorageFolderBrowserSheet
 import com.example.ui.components.UrlImportDialog
 import com.example.ui.components.VideoListItem
+import com.example.ui.locale.AppLanguage
+import com.example.ui.locale.AppStrings
+import com.example.ui.locale.LanguageSelectionDialog
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -106,7 +109,6 @@ fun VideoListScreen(
     activeModelName: String,
     customModelPath: String?,
     modelInfoMessage: String?,
-    engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
     downloadProgressState: DownloadProgressState? = null,
@@ -136,7 +138,6 @@ fun VideoListScreen(
     onDeleteVideo: (VideoItemEntity) -> Unit,
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
-    onSelectEngineType: (com.example.onnx.SeparationEngineType) -> Unit = {},
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
     resolutionState: com.example.MainViewModel.WebImportResolutionState? = null,
     onSubmitMediaUrl: (String) -> Unit = {},
@@ -152,6 +153,8 @@ fun VideoListScreen(
     onExportVideo: (VideoItemEntity, Boolean) -> Unit,
     onExportMedia: ((VideoItemEntity, ExportFormat, Boolean) -> Unit)? = null,
     onCancelProcessing: (() -> Unit)? = null,
+    currentLanguage: AppLanguage = AppLanguage.ENGLISH,
+    onSelectLanguage: (AppLanguage) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var videoForAction by remember { mutableStateOf<VideoItemEntity?>(null) }
@@ -159,6 +162,7 @@ fun VideoListScreen(
     var showModelDialog by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
     var showStorageFolderBrowser by remember { mutableStateOf(false) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(sharedMediaUrl) {
         if (!sharedMediaUrl.isNullOrBlank()) {
@@ -235,6 +239,16 @@ fun VideoListScreen(
                             tint = AccentTeal
                         )
                     }
+                    IconButton(
+                        onClick = { showLanguageDialog = true },
+                        modifier = Modifier.testTag("language_selector_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Translate,
+                            contentDescription = "Language Preferences",
+                            tint = AccentTeal
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = DarkBackground
@@ -259,7 +273,7 @@ fun VideoListScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(com.example.R.string.folders), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Folders", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 ExtendedFloatingActionButton(
@@ -271,11 +285,11 @@ fun VideoListScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Link,
-                        contentDescription = stringResource(com.example.R.string.link),
+                        contentDescription = "From Link",
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(com.example.R.string.link), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 FloatingActionButton(
@@ -297,9 +311,9 @@ fun VideoListScreen(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = stringResource(com.example.R.string.import_video))
+                        Icon(Icons.Default.Add, contentDescription = "Import Audio/Video")
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(com.example.R.string.import_video), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Import", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -651,7 +665,7 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         Text(
-                            text = stringResource(com.example.R.string.no_videos_found),
+                            text = "No Audio or Video Added Yet",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
@@ -662,7 +676,7 @@ fun VideoListScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = stringResource(com.example.R.string.tap_to_import),
+                            text = "Import audio tracks (MP3, WAV, FLAC, M4A) or music videos to isolate vocals or instrumental backings using AI neural separation.",
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
@@ -872,11 +886,9 @@ fun VideoListScreen(
         ModelSettingsDialog(
             activeModelName = activeModelName,
             customModelPath = customModelPath,
-            engineType = engineType,
             accelerationMode = accelerationMode,
             hardwareBackend = hardwareBackend,
             onDismiss = { showModelDialog = false },
-            onSelectEngineType = onSelectEngineType,
             onSelectAccelerationMode = onSelectAccelerationMode,
             onImportCustomModel = { uri ->
                 onImportCustomModel(uri)
@@ -959,6 +971,17 @@ fun VideoListScreen(
                     }
                 }
             }
+        )
+    }
+
+    if (showLanguageDialog) {
+        LanguageSelectionDialog(
+            currentLanguage = currentLanguage,
+            onLanguageSelected = { lang ->
+                onSelectLanguage(lang)
+                showLanguageDialog = false
+            },
+            onDismiss = { showLanguageDialog = false }
         )
     }
 }

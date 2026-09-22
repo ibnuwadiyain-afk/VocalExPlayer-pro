@@ -88,27 +88,11 @@ object VocalProcessingManager {
     }
 
     /**
-     * Resets any stale state from prior operations.
-     */
-    fun resetState() {
-        _isProcessing.value = false
-        _progress.value = 0f
-        _message.value = ""
-        _elapsedSeconds.value = 0L
-        _elapsedTimeFormatted.value = "00:00"
-        _estimatedRemainingFormatted.value = null
-        _activeVideoId.value = null
-        _activeVideoTitle.value = null
-        _isBackgroundProtected.value = false
-    }
-
-    /**
      * Starts AI vocal separation with active elapsed timer and background stability service.
      */
     fun startSeparation(
         context: Context,
         video: VideoItemEntity,
-        engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
         forceRecompute: Boolean = false,
@@ -131,7 +115,7 @@ object VocalProcessingManager {
         _activeVideoId.value = video.id
         _activeVideoTitle.value = video.title
         _progress.value = 0.05f
-        _message.value = "Separating audio with ${engineType.displayName} (${accelerationMode.displayName})…"
+        _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})…"
         _elapsedSeconds.value = 0L
         _elapsedTimeFormatted.value = "00:00"
         _estimatedRemainingFormatted.value = null
@@ -154,14 +138,13 @@ object VocalProcessingManager {
 
             val result = pipeline.processVideo(
                 video = video,
-                engineType = engineType,
                 customModelPath = customModelPath,
                 accelerationMode = accelerationMode,
                 forceRecompute = forceRecompute,
                 onProgress = { currentProgress ->
                     _progress.value = currentProgress
                     val pct = (currentProgress * 100).toInt()
-                    _message.value = "Separating with ${engineType.displayName}… $pct%"
+                    _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})… $pct%"
                     notifyServiceProgress()
                 }
             )
@@ -229,11 +212,7 @@ object VocalProcessingManager {
                     val totalEstimatedMs = (elapsedMs / currentProgress).toLong()
                     val remainingMs = (totalEstimatedMs - elapsedMs).coerceAtLeast(0L)
                     val remainingSec = remainingMs / 1000
-                    _estimatedRemainingFormatted.value = if (remainingSec < 60) {
-                        "~${remainingSec}s left"
-                    } else {
-                        "~${formatSeconds(remainingSec)} left"
-                    }
+                    _estimatedRemainingFormatted.value = "~${formatSeconds(remainingSec)} left"
                 } else if (currentProgress >= 0.99f) {
                     _estimatedRemainingFormatted.value = "Finishing up…"
                 }

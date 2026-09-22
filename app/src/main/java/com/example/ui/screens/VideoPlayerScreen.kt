@@ -62,7 +62,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -94,12 +93,6 @@ import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
 
-enum class PlaybackAudioTrack {
-    VOCALS,
-    INSTRUMENTAL,
-    ORIGINAL
-}
-
 @OptIn(UnstableApi::class)
 @ExperimentalMaterial3Api
 @Composable
@@ -108,7 +101,6 @@ fun VideoPlayerScreen(
     isProcessing: Boolean,
     processingProgress: Float,
     activeModelName: String,
-    engineType: com.example.onnx.SeparationEngineType = com.example.onnx.SeparationEngineType.DEEZER_SPLEETER,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
     elapsedTime: String = "00:00",
@@ -128,7 +120,7 @@ fun VideoPlayerScreen(
     var duration by remember { mutableLongStateOf(video.duration.coerceAtLeast(1L)) }
     var isSliderDragging by remember { mutableStateOf(false) }
     var sliderPosition by remember { mutableFloatStateOf(0f) }
-    var selectedAudioTrack by remember { mutableStateOf(PlaybackAudioTrack.VOCALS) }
+    var useIsolatedVocals by remember { mutableStateOf(true) }
     var showExportConfirmDialog by remember { mutableStateOf(false) }
 
     val isAudioSource = remember(video) {
@@ -142,27 +134,18 @@ fun VideoPlayerScreen(
         ExoPlayer.Builder(context).build()
     }
 
-    fun selectTrack(track: PlaybackAudioTrack) {
+    fun selectTrack(vocalsOnly: Boolean) {
         val tracks = player.currentTracks
         val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (audioGroups.isEmpty()) return
-
-        // Group 0: Original Audio from file
-        // Group 1: AI Isolated Vocal Audio from separated WAV file
-        // Group 2: AI Isolated Instrumental / Accompaniment Audio (if Spleeter 2-stem)
-        val targetGroup = when (track) {
-            PlaybackAudioTrack.VOCALS -> {
-                if (audioGroups.size >= 2) audioGroups[1] else audioGroups[0]
-            }
-            PlaybackAudioTrack.INSTRUMENTAL -> {
-                if (audioGroups.size >= 3) audioGroups[2] else if (audioGroups.size >= 2) audioGroups[1] else audioGroups[0]
-            }
-            PlaybackAudioTrack.ORIGINAL -> audioGroups[0]
+        if (audioGroups.size >= 2) {
+            // Audio Group 0: Original Audio from video file
+            // Audio Group 1: AI Isolated Vocal Audio from separated WAV file
+            val targetGroup = if (vocalsOnly) audioGroups[1] else audioGroups[0]
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setOverrideForType(TrackSelectionOverride(targetGroup.mediaTrackGroup, 0))
+                .build()
         }
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .setOverrideForType(TrackSelectionOverride(targetGroup.mediaTrackGroup, 0))
-            .build()
     }
 
     DisposableEffect(Unit) {
@@ -171,31 +154,25 @@ fun VideoPlayerScreen(
         }
     }
 
-    // Update media sources based on video status & separated audio tracks
-    LaunchedEffect(video.status, video.videoUri, video.vocalUri, video.instrumentalUri) {
+    // Update media sources based on video status & vocal audio track
+    LaunchedEffect(video.status, video.videoUri, video.vocalUri) {
         if (video.status == VideoStatus.READY) {
             val videoUri = Uri.fromFile(File(video.videoUri)).let {
                 if (File(video.videoUri).exists()) it else Uri.parse(video.videoUri)
             }
 
             val hasVocalFile = !video.vocalUri.isNullOrBlank() && File(video.vocalUri).exists()
-            val hasInstFile = !video.instrumentalUri.isNullOrBlank() && File(video.instrumentalUri).exists()
             val dataSourceFactory = DefaultDataSource.Factory(context)
             val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(MediaItem.fromUri(videoUri))
 
-            val sources = mutableListOf<androidx.media3.exoplayer.source.MediaSource>(videoSource)
             if (hasVocalFile) {
+                // Merge video track and isolated vocal audio track into one hardware-clock synced stream
                 val vocalUri = Uri.fromFile(File(video.vocalUri))
-                sources.add(ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(MediaItem.fromUri(vocalUri)))
-            }
-            if (hasInstFile) {
-                val instUri = Uri.fromFile(File(video.instrumentalUri))
-                sources.add(ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(MediaItem.fromUri(instUri)))
-            }
-
-            if (sources.size > 1) {
-                player.setMediaSource(MergingMediaSource(*sources.toTypedArray()))
+                val vocalSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(vocalUri))
+                val mergedSource = MergingMediaSource(videoSource, vocalSource)
+                player.setMediaSource(mergedSource)
             } else {
                 player.setMediaSource(videoSource)
             }
@@ -215,12 +192,12 @@ fun VideoPlayerScreen(
                 if (playbackState == Player.STATE_READY) {
                     val d = player.duration
                     if (d > 0) duration = d
-                    selectTrack(selectedAudioTrack)
+                    selectTrack(useIsolatedVocals)
                 }
             }
 
             override fun onTracksChanged(tracks: Tracks) {
-                selectTrack(selectedAudioTrack)
+                selectTrack(useIsolatedVocals)
             }
         }
         player.addListener(listener)
@@ -229,9 +206,9 @@ fun VideoPlayerScreen(
         }
     }
 
-    // Switch between AI Vocals Only, Instrumental, and Original Audio
-    LaunchedEffect(selectedAudioTrack) {
-        selectTrack(selectedAudioTrack)
+    // Switch between AI Vocals Only and Original Audio
+    LaunchedEffect(useIsolatedVocals) {
+        selectTrack(useIsolatedVocals)
     }
 
     // Sync position tracker loop
@@ -330,11 +307,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = when (selectedAudioTrack) {
-                                    PlaybackAudioTrack.VOCALS -> "Playing: AI Isolated Vocals"
-                                    PlaybackAudioTrack.INSTRUMENTAL -> "Playing: Isolated Instrumental"
-                                    PlaybackAudioTrack.ORIGINAL -> "Playing: Original Audio"
-                                },
+                                text = if (useIsolatedVocals) "Playing: AI Isolated Vocals" else "Playing: Original Audio",
                                 color = AccentTeal,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -416,18 +389,16 @@ fun VideoPlayerScreen(
                         }
                     }
                 } else if (video.status == VideoStatus.READY) {
-                    val hasInst = !video.instrumentalUri.isNullOrBlank() && File(video.instrumentalUri).exists()
-
-                    // Audio Mode Switcher: AI Vocals vs Instrumental vs Original Audio
+                    // Audio Mode Switcher: AI Isolated Vocals vs Original Audio
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         FilterChip(
-                            selected = selectedAudioTrack == PlaybackAudioTrack.VOCALS,
-                            onClick = { selectedAudioTrack = PlaybackAudioTrack.VOCALS },
-                            label = { Text(stringResource(com.example.R.string.isolated_vocals)) },
+                            selected = useIsolatedVocals,
+                            onClick = { useIsolatedVocals = true },
+                            label = { Text("AI Vocals Only") },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.GraphicEq,
@@ -445,33 +416,10 @@ fun VideoPlayerScreen(
                             modifier = Modifier.testTag("vocals_mode_chip")
                         )
 
-                        if (hasInst) {
-                            FilterChip(
-                                selected = selectedAudioTrack == PlaybackAudioTrack.INSTRUMENTAL,
-                                onClick = { selectedAudioTrack = PlaybackAudioTrack.INSTRUMENTAL },
-                                label = { Text(stringResource(com.example.R.string.instrumental)) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Audiotrack,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AccentTeal,
-                                    selectedLabelColor = Color.Black,
-                                    selectedLeadingIconColor = Color.Black,
-                                    containerColor = DarkSurface,
-                                    labelColor = TextSecondary
-                                ),
-                                modifier = Modifier.testTag("instrumental_mode_chip")
-                            )
-                        }
-
                         FilterChip(
-                            selected = selectedAudioTrack == PlaybackAudioTrack.ORIGINAL,
-                            onClick = { selectedAudioTrack = PlaybackAudioTrack.ORIGINAL },
-                            label = { Text(stringResource(com.example.R.string.original_audio)) },
+                            selected = !useIsolatedVocals,
+                            onClick = { useIsolatedVocals = false },
+                            label = { Text("Original Audio") },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.VolumeUp,
@@ -623,7 +571,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = stringResource(com.example.R.string.export_btn),
+                                text = "Export Video (Vocals Only)",
                                 color = Color.Black,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
@@ -657,7 +605,7 @@ fun VideoPlayerScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Hardware: $hardwareBackend • ${engineType.displayName}",
+                                text = "Hardware: $hardwareBackend • ONNX UVR MDX-Net 1",
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
@@ -667,21 +615,11 @@ fun VideoPlayerScreen(
             }
         }
 
-        // Dynamic overlay separation title based on selected engine
-        val separationOverlayMessage = when (engineType) {
-            com.example.onnx.SeparationEngineType.DEEZER_SPLEETER ->
-                "Separating stems with Deezer Spleeter ($activeModelName)…"
-            com.example.onnx.SeparationEngineType.UVR_MDXNET ->
-                "Isolating vocals with UVR-MDX-Net 1 ($activeModelName)…"
-            com.example.onnx.SeparationEngineType.CUSTOM ->
-                "Separating audio with Custom Model ($activeModelName)…"
-        }
-
         // Centered Processing Overlay if video is NEW or PROCESSING
         ProcessingOverlay(
             isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
             progress = processingProgress,
-            message = separationOverlayMessage,
+            message = "Extracting vocals with UVR AI ($activeModelName)…",
             elapsedTime = elapsedTime,
             estimatedRemaining = estimatedRemaining,
             isBackgroundProtected = isBackgroundProtected,

@@ -29,7 +29,6 @@ data class VideoItemEntity(
     val duration: Long,
     val status: VideoStatus = VideoStatus.NEW,
     val vocalUri: String? = null,
-    val instrumentalUri: String? = null,
     val errorMessage: String? = null,
     val progress: Float = 0f,
     val dateAdded: Long = System.currentTimeMillis()

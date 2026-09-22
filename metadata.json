@@ -1,6 +1,6 @@
 {
   "name": "VocalExtractor",
-  "description": "AI vocal and instrumental isolation for audio and video files with internal storage folder browsing and multi-format audio/video export.",
+  "description": "AI vocal and instrumental isolation with multilingual UI preferences (English, Arabic, Spanish, French, etc.), Arabic export filenames, and accelerated zero-wait video merging.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

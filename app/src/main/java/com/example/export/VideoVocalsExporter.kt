@@ -42,6 +42,7 @@ object VideoVocalsExporter {
         videoUriString: String,
         vocalWavPath: String,
         outputTitle: String,
+        videoId: String? = null,
         onProgress: (Float) -> Unit = {}
     ): Result<ExportResult> = withContext(Dispatchers.IO) {
         val vocalWav = File(vocalWavPath)
@@ -52,9 +53,24 @@ object VideoVocalsExporter {
         val exportDir = File(context.filesDir, "exports")
         if (!exportDir.exists()) exportDir.mkdirs()
 
-        val cleaned = outputTitle.replace(Regex("""[\\/:*?"<>|\r\n\t]"""), "_").trim()
-        val sanitizedTitle = if (cleaned.isBlank()) "media" else cleaned.take(60)
+        // Unicode and Arabic safe filename sanitization
+        val sanitizedTitle = ExportNameSanitizer.sanitizeTitle(outputTitle)
         val timestamp = System.currentTimeMillis()
+
+        // Fast-path: Check if video was already simultaneously merged during separation
+        if (videoId != null && ProgressiveVideoMerger.isCacheReadyForVideo(context, videoId)) {
+            val cachedVideoFile = ProgressiveVideoMerger.getCacheFileForVideo(context, videoId)
+            if (cachedVideoFile.exists() && cachedVideoFile.length() > 50_000L) {
+                Log.i(TAG, "⚡ Instant video export: Premerged video cache available at ${cachedVideoFile.absolutePath}! Zero waiting time.")
+                onProgress(0.5f)
+                val fastExportFile = File(exportDir, "${sanitizedTitle}_vocals_$timestamp.mp4")
+                cachedVideoFile.copyTo(fastExportFile, overwrite = true)
+                val mediaStore = saveToMediaStore(context, fastExportFile, sanitizedTitle)
+                onProgress(1.0f)
+                return@withContext Result.success(ExportResult(fastExportFile, mediaStore.first, mediaStore.second))
+            }
+        }
+
         val tempExportFile = File(exportDir, "${sanitizedTitle}_vocals_$timestamp.mp4")
 
         val videoExtractor = MediaExtractor()
