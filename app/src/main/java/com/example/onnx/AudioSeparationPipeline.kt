@@ -115,7 +115,11 @@ class AudioSeparationPipeline(
                     customModelPath = customModelPath,
                     accelerationMode = accelerationMode,
                     onChunkAvailable = { left, right, offset, count, isEos ->
-                        progressiveMerger.feedSeparatedChunk(left, right, offset, count, isEos)
+                        try {
+                            progressiveMerger.feedSeparatedChunk(left, right, offset, count, isEos)
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "Progressive video merger chunk feed non-fatal error: ${t.message}")
+                        }
                     },
                     onProgress = { sepProgress ->
                         onProgress(sepProgress)

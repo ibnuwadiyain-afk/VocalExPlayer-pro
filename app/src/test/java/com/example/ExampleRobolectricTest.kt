@@ -152,4 +152,23 @@ class ExampleRobolectricTest {
     val firstPreset = com.example.media.SocialMediaVideoProcessor.SAMPLE_PRESETS.first()
     org.junit.Assert.assertTrue(firstPreset.url.startsWith("http"))
   }
+
+  @Test
+  fun `verify ProgressiveVideoMerger feedSeparatedChunk does not crash on empty arrays or silence`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val tempOut = java.io.File(context.cacheDir, "test_merger_out.mp4")
+    val merger = com.example.export.ProgressiveVideoMerger(
+      context = context,
+      videoUriString = "file:///non/existent.mp4",
+      sampleRate = 44100,
+      channels = 2,
+      outputCacheFile = tempOut
+    )
+
+    // Verify it handles empty arrays, silence chunks, and EOS safely without throwing ArrayIndexOutOfBoundsException
+    merger.feedSeparatedChunk(FloatArray(0), FloatArray(0), 0, 1024, false)
+    merger.feedSeparatedChunk(FloatArray(512), FloatArray(512), 0, 1024, false)
+    merger.feedSeparatedChunk(FloatArray(0), FloatArray(0), 0, 0, true)
+    merger.cancel()
+  }
 }

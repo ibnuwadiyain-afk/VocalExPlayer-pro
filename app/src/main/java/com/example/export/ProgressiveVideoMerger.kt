@@ -111,24 +111,29 @@ class ProgressiveVideoMerger(
 
         val pcmBytes: ByteArray = if (count > 0) {
             val bytes = ByteArray(count * channels * 2)
-            var byteIdx = 0
-            val hasRight = right.isNotEmpty() && channels == 2
+            // If left channel contains valid samples, convert them; otherwise bytes remain 0 (silence)
+            if (left.isNotEmpty() && offset in left.indices) {
+                var byteIdx = 0
+                val hasRight = right.isNotEmpty() && channels == 2
 
-            for (i in 0 until count) {
-                val srcIdx = offset + i
-                // Clamp and convert left sample
-                val sL = (left[srcIdx].coerceIn(-1.0f, 1.0f) * 32767f).toInt().toShort()
-                bytes[byteIdx++] = (sL.toInt() and 0xFF).toByte()
-                bytes[byteIdx++] = ((sL.toInt() shr 8) and 0xFF).toByte()
+                for (i in 0 until count) {
+                    val srcIdx = offset + i
+                    val sL = if (srcIdx in left.indices) {
+                        (left[srcIdx].coerceIn(-1.0f, 1.0f) * 32767f).toInt().toShort()
+                    } else {
+                        0.toShort()
+                    }
+                    bytes[byteIdx++] = (sL.toInt() and 0xFF).toByte()
+                    bytes[byteIdx++] = ((sL.toInt() shr 8) and 0xFF).toByte()
 
-                // Clamp and convert right sample
-                val sR = if (hasRight) {
-                    (right[srcIdx].coerceIn(-1.0f, 1.0f) * 32767f).toInt().toShort()
-                } else {
-                    sL
+                    val sR = if (hasRight && srcIdx in right.indices) {
+                        (right[srcIdx].coerceIn(-1.0f, 1.0f) * 32767f).toInt().toShort()
+                    } else {
+                        sL
+                    }
+                    bytes[byteIdx++] = (sR.toInt() and 0xFF).toByte()
+                    bytes[byteIdx++] = ((sR.toInt() shr 8) and 0xFF).toByte()
                 }
-                bytes[byteIdx++] = (sR.toInt() and 0xFF).toByte()
-                bytes[byteIdx++] = ((sR.toInt() shr 8) and 0xFF).toByte()
             }
             bytes
         } else {

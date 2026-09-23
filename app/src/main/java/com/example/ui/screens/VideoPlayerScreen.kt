@@ -335,7 +335,7 @@ fun VideoPlayerScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (video.status == VideoStatus.ERROR) "Playback unavailable" else "Preparing media…",
+                            text = if (video.status == VideoStatus.ERROR) AppStrings.playbackUnavailable(lang) else AppStrings.preparingMedia(lang),
                             color = TextSecondary,
                             style = MaterialTheme.typography.bodyMedium
                         )
@@ -387,7 +387,7 @@ fun VideoPlayerScreen(
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Retry Extraction", color = Color.Black)
+                                Text(AppStrings.retryExtraction(lang), color = Color.Black)
                             }
                         }
                     }
@@ -401,7 +401,7 @@ fun VideoPlayerScreen(
                         FilterChip(
                             selected = useIsolatedVocals,
                             onClick = { useIsolatedVocals = true },
-                            label = { Text("AI Vocals Only") },
+                            label = { Text(AppStrings.chipAiVocalsOnly(lang)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.GraphicEq,
@@ -422,7 +422,7 @@ fun VideoPlayerScreen(
                         FilterChip(
                             selected = !useIsolatedVocals,
                             onClick = { useIsolatedVocals = false },
-                            label = { Text("Original Audio") },
+                            label = { Text(AppStrings.chipOriginalAudio(lang)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.VolumeUp,
@@ -449,7 +449,7 @@ fun VideoPlayerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Model: $activeModelName",
+                            text = AppStrings.modelLabel(lang, activeModelName),
                             color = TextSecondary,
                             fontSize = 11.sp,
                             maxLines = 1,

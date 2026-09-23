@@ -279,7 +279,9 @@ class SpleeterInferenceEngine(private val context: Context) {
                         skippedChunks++
                         if (validCount > 0) {
                             wavWriter.writeSilence(validCount)
-                            onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
+                            outChunkL.fill(0f)
+                            outChunkR.fill(0f)
+                            onChunkAvailable?.invoke(outChunkL, outChunkR, 0, validCount, false)
                         }
                         samplePos += genSize
                         chunkIdx++
@@ -303,7 +305,11 @@ class SpleeterInferenceEngine(private val context: Context) {
 
                 try {
                     ortResult = session.run(mapOf(inputName to inputTensor))
-                    val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
+                    val resultValue = if (ortResult.get(outputName).isPresent) {
+                        ortResult.get(outputName).get()
+                    } else {
+                        ortResult.iterator().asSequence().firstOrNull()?.value
+                    }
 
                     if (resultValue is OnnxTensor) {
                         val outBuffer = resultValue.floatBuffer
@@ -326,14 +332,18 @@ class SpleeterInferenceEngine(private val context: Context) {
                     } else {
                         if (validCount > 0) {
                             wavWriter.writeSilence(validCount)
-                            onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
+                            outChunkL.fill(0f)
+                            outChunkR.fill(0f)
+                            onChunkAvailable?.invoke(outChunkL, outChunkR, 0, validCount, false)
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error executing Deezer Spleeter chunk inference at chunk $chunkIdx", e)
                     if (validCount > 0) {
                         wavWriter.writeSilence(validCount)
-                        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
+                        outChunkL.fill(0f)
+                        outChunkR.fill(0f)
+                        onChunkAvailable?.invoke(outChunkL, outChunkR, 0, validCount, false)
                     }
                 } finally {
                     inputTensor.close()
@@ -413,7 +423,11 @@ class SpleeterInferenceEngine(private val context: Context) {
 
                 try {
                     ortResult = session.run(mapOf(inputName to inputTensor))
-                    val resultValue = ortResult.get(outputName).orElse(ortResult.get(0))
+                    val resultValue = if (ortResult.get(outputName).isPresent) {
+                        ortResult.get(outputName).get()
+                    } else {
+                        ortResult.iterator().asSequence().firstOrNull()?.value
+                    }
                     if (resultValue is OnnxTensor) {
                         val outBuf = resultValue.floatBuffer
                         outBuf.position(0)
@@ -425,12 +439,16 @@ class SpleeterInferenceEngine(private val context: Context) {
                         onChunkAvailable?.invoke(outL, outR, 0, currentChunkLen, false)
                     } else {
                         wavWriter.writeSilence(currentChunkLen)
-                        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, currentChunkLen, false)
+                        outL.fill(0f)
+                        outR.fill(0f)
+                        onChunkAvailable?.invoke(outL, outR, 0, currentChunkLen, false)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in waveform Spleeter inference at chunk $chunkIdx", e)
                     wavWriter.writeSilence(currentChunkLen)
-                    onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, currentChunkLen, false)
+                    outL.fill(0f)
+                    outR.fill(0f)
+                    onChunkAvailable?.invoke(outL, outR, 0, currentChunkLen, false)
                 } finally {
                     inputTensor.close()
                     ortResult?.close()

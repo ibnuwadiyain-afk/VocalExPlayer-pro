@@ -1089,4 +1089,16 @@ object AppStrings {
         AppLanguage.PORTUGUESE -> "Suporte completo a RTL e exportação de vídeo"
         else -> "Full RTL layout and multi-language video export support"
     }
+
+    fun modelLabel(lang: AppLanguage, modelName: String) = when (lang) {
+        AppLanguage.ARABIC -> "النموذج: $modelName"
+        AppLanguage.SPANISH -> "Modelo: $modelName"
+        AppLanguage.FRENCH -> "Modèle : $modelName"
+        AppLanguage.GERMAN -> "Modell: $modelName"
+        AppLanguage.JAPANESE -> "モデル: $modelName"
+        AppLanguage.CHINESE -> "模型: $modelName"
+        AppLanguage.RUSSIAN -> "Модель: $modelName"
+        AppLanguage.PORTUGUESE -> "Modelo: $modelName"
+        else -> "Model: $modelName"
+    }
 }
