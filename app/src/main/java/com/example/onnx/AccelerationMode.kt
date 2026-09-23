@@ -12,7 +12,7 @@ enum class AccelerationMode(
         displayName = "Turbo Mode",
         speedBadge = "2x – 3x Faster",
         description = "Uses NNAPI hardware acceleration, all CPU cores, zero-allocation buffers, and smart silence skipping.",
-        silenceSkipThreshold = 0.0008f
+        silenceSkipThreshold = 0.00005f
     ),
     STUDIO(
         id = "studio",

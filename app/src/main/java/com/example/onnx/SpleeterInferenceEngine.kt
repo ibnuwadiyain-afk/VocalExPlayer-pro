@@ -72,9 +72,14 @@ class SpleeterInferenceEngine(private val context: Context) {
         }
 
         val destinationFile = File(modelsDir, DEFAULT_MODEL_NAME)
-        // Verify destination exists and has expected size (> 20MB)
-        if (!destinationFile.exists() || destinationFile.length() < 20_000_000L) {
+        // Genuine Deezer Spleeter 2-stem ONNX model size: exactly 19,681,017 bytes
+        val expectedSize = 19_681_017L
+        if (!destinationFile.exists() || destinationFile.length() != expectedSize) {
             try {
+                if (destinationFile.exists()) {
+                    Log.w(TAG, "Existing model file (${destinationFile.length()} bytes) does not match genuine Spleeter size ($expectedSize bytes). Removing and re-extracting...")
+                    destinationFile.delete()
+                }
                 Log.i(TAG, "Extracting bundled Deezer Spleeter 2-Stem ONNX model to ${destinationFile.absolutePath}...")
                 context.assets.open("models/$DEFAULT_MODEL_NAME").use { input ->
                     FileOutputStream(destinationFile).use { output ->
@@ -262,12 +267,13 @@ class SpleeterInferenceEngine(private val context: Context) {
                 }
 
                 // Turbo Optimization: Check if chunk is silence/background pause
-                if (accelerationMode.silenceSkipThreshold > 0f) {
+                if (accelerationMode.silenceSkipThreshold > 0f && activeLen > 0) {
                     var sumSq = 0.0
                     val step = 8
                     var sampleCount = 0
-                    var i = 0
-                    while (i < activeLen) {
+                    var i = destStart
+                    val endIdx = destStart + activeLen
+                    while (i < endIdx) {
                         val sL = chunkL[i]
                         val sR = chunkR[i]
                         sumSq += (sL * sL + sR * sR)

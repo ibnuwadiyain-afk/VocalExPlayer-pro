@@ -38,6 +38,12 @@ jobs:
           fi
           chmod +x ./gradlew
 
+      - name: Setup Gradle and Enable Build Cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          build-scan-publish: false
+
       - name: Setup Debug Keystore
         run: |
           if [ -f "debug.keystore.base64" ]; then
@@ -81,7 +87,7 @@ jobs:
           python3 scripts/setup_google_services.py
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --build-cache --stacktrace
 
       - name: Install rclone
         run: curl https://rclone.org/install.sh | sudo bash

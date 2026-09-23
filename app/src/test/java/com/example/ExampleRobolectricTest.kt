@@ -42,7 +42,7 @@ class ExampleRobolectricTest {
     val engine = com.example.onnx.SpleeterInferenceEngine(context)
     val modelFile = engine.getOrExtractModelFile()
     org.junit.Assert.assertTrue("Model file should exist", modelFile.exists())
-    org.junit.Assert.assertTrue("Model file should have valid weights (> 20MB)", modelFile.length() > 20_000_000L)
+    org.junit.Assert.assertEquals("Model file should be genuine Deezer Spleeter 2-stem model (19.68MB)", 19_681_017L, modelFile.length())
   }
 
   @Test
