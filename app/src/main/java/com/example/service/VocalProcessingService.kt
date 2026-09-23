@@ -171,7 +171,7 @@ class VocalProcessingService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Extracting Vocals with UVR AI")
+            .setContentTitle("Extracting Vocals with Spleeter AI")
             .setContentText("$progressPct% • ⏱ Elapsed: $elapsedText$etaPart")
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
             .setProgress(100, progressPct, progress <= 0.05f)

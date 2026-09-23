@@ -115,7 +115,7 @@ object VocalProcessingManager {
         _activeVideoId.value = video.id
         _activeVideoTitle.value = video.title
         _progress.value = 0.05f
-        _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})…"
+        _message.value = "Extracting vocals with Spleeter AI (${accelerationMode.displayName})…"
         _elapsedSeconds.value = 0L
         _elapsedTimeFormatted.value = "00:00"
         _estimatedRemainingFormatted.value = null
@@ -144,7 +144,7 @@ object VocalProcessingManager {
                 onProgress = { currentProgress ->
                     _progress.value = currentProgress
                     val pct = (currentProgress * 100).toInt()
-                    _message.value = "Extracting vocals with UVR AI (${accelerationMode.displayName})… $pct%"
+                    _message.value = "Extracting vocals with Spleeter AI (${accelerationMode.displayName})… $pct%"
                     notifyServiceProgress()
                 }
             )

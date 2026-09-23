@@ -478,7 +478,7 @@ fun UrlImportDialog(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = "Test UVR AI separation instantly with built-in media (no network required).",
+                                            text = "Test Deezer Spleeter 2-Stem separation instantly with built-in media (no network required).",
                                             color = TextSecondary,
                                             fontSize = 10.sp
                                         )
@@ -793,7 +793,7 @@ private fun ActiveDownloadProgressView(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Once finished, UVR AI vocal separation starts automatically.",
+                    text = "Once finished, Deezer Spleeter 2-Stem vocal separation starts automatically.",
                     color = TextSecondary,
                     fontSize = 11.sp
                 )

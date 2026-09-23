@@ -12,40 +12,39 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
 import kotlin.math.sqrt
 
 /**
- * High-performance Deezer Spleeter 2-Stem Neural Inference Engine.
+ * High-performance, genuine Deezer Spleeter 2-Stem Neural Inference Engine.
  *
  * Separates audio into two distinct stems:
  * 1. Vocals (Lead & Backing Vocals)
  * 2. Accompaniment (Instruments, Drums, Bass, Backing track)
  *
- * Features:
- * - Real ONNX Runtime inference with hardware acceleration (NNAPI / Multi-core CPU)
- * - Sample-accurate STFT -> 2-Stem Neural Mask Estimation -> iSTFT with Overlap-Add
+ * Deezer Spleeter Specifications:
+ * - Sampling rate: 44,100 Hz, 2 channels (Stereo)
+ * - Radix-2 4096-point STFT / iSTFT with 1024 hop length and Hann synthesis
+ * - Neural input shape: [2, 1, 512, 1024] (512 time frames x 1024 frequency bins)
+ * - Neural output: Spleeter U-Net 2-stem vocal mask estimation
+ * - Real ONNX Runtime inference with NNAPI hardware acceleration & Multi-Core CPU fallback
  * - Zero-allocation streaming buffer pipeline (strictly O(1) memory footprint < 15MB heap)
  * - Synchronous chunk streaming to ProgressiveVideoMerger for zero-wait video export
- * - Support for Spleeter 2-stem ONNX models, custom imported models, and turbo silence skipping
  */
 class SpleeterInferenceEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "SpleeterInference"
         const val DEFAULT_MODEL_NAME = "spleeter_2stems.onnx"
-        const val LEGACY_MODEL_NAME = "UVR_MDXNET_1_9703.onnx"
 
-        // Spleeter 2-stem spectrogram hyperparameters
-        const val N_FFT = 6144
-        const val DIM_F = 2048
-        const val DIM_T = 256
+        // Genuine Deezer Spleeter 2-stem spectrogram hyperparameters
+        const val N_FFT = 4096
+        const val DIM_F = 1024 // 1024 frequency bins (0 to 11,025 Hz)
+        const val DIM_T = 512  // 512 time frames per forward chunk
         const val HOP_LENGTH = 1024
-        const val COMPENSATION = 1.035f // Calibration compensation for clean vocal isolation
     }
 
     private val ortEnvironment: OrtEnvironment by lazy { OrtEnvironment.getEnvironment() }
-    private val processor = MdxSpectrogramProcessor(
+    private val processor = SpleeterSpectrogramProcessor(
         nFft = N_FFT,
         dimF = DIM_F,
         dimT = DIM_T,
@@ -76,21 +75,13 @@ class SpleeterInferenceEngine(private val context: Context) {
         // Verify destination exists and has expected size (> 20MB)
         if (!destinationFile.exists() || destinationFile.length() < 20_000_000L) {
             try {
-                Log.i(TAG, "Extracting bundled Spleeter 2-Stem ONNX model to ${destinationFile.absolutePath}...")
-                // Try primary spleeter_2stems.onnx asset, then fallback to legacy asset name if needed
-                val assetName = try {
-                    context.assets.open("models/$DEFAULT_MODEL_NAME").close()
-                    DEFAULT_MODEL_NAME
-                } catch (e: Exception) {
-                    LEGACY_MODEL_NAME
-                }
-
-                context.assets.open("models/$assetName").use { input ->
+                Log.i(TAG, "Extracting bundled Deezer Spleeter 2-Stem ONNX model to ${destinationFile.absolutePath}...")
+                context.assets.open("models/$DEFAULT_MODEL_NAME").use { input ->
                     FileOutputStream(destinationFile).use { output ->
                         input.copyTo(output)
                     }
                 }
-                Log.i(TAG, "Extracted Spleeter 2-Stem ONNX model successfully: ${destinationFile.length()} bytes")
+                Log.i(TAG, "Extracted genuine Spleeter 2-Stem ONNX model successfully: ${destinationFile.length()} bytes")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to copy bundled Spleeter asset model", e)
                 throw IllegalStateException("Failed to load Spleeter 2-Stem ONNX model from assets: ${e.message}", e)
@@ -132,7 +123,7 @@ class SpleeterInferenceEngine(private val context: Context) {
                     Log.i(TAG, "NNAPI not active, fallback to optimized Multi-Core CPU: ${e.message}")
                 }
             }
-            Log.i(TAG, "Opening Spleeter 2-Stem Session: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
+            Log.i(TAG, "Opening Deezer Spleeter 2-Stem Session: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
             ortEnvironment.createSession(modelFile.absolutePath, sessionOptions)
         } catch (e: Throwable) {
             Log.w(TAG, "Accelerated Spleeter session init failed (${e.message}), using safe CPU mode")
@@ -153,22 +144,22 @@ class SpleeterInferenceEngine(private val context: Context) {
 
             val inputInfo = session.inputInfo[inputName]?.info
             val inputShape = if (inputInfo is TensorInfo) inputInfo.shape else longArrayOf()
-            Log.i(TAG, "Spleeter 2-Stem Model Inputs: $inputNames (shape: ${inputShape.contentToString()}), Outputs: $outputNames")
+            Log.i(TAG, "Deezer Spleeter 2-Stem Model Inputs: $inputNames (shape: ${inputShape.contentToString()}), Outputs: $outputNames")
 
             val totalSamples = decodedAudio.totalFrames
             if (totalSamples <= 0L) {
                 throw IllegalArgumentException("Audio track has 0 samples")
             }
 
-            // Check if model uses STFT spectrogram representation or raw waveform
-            val isSpectrogramModel = inputShape.size >= 4 && (inputShape[1] == 4L || inputShape[inputShape.size - 3] == 4L)
-                    || (inputShape.isEmpty() || inputShape.size == 4)
+            // Spectrogram model check: Spleeter standard shape [2, 1, 512, 1024] or 4D tensor
+            val isSpectrogramModel = inputShape.size >= 4 || inputShape.isEmpty()
 
             if (isSpectrogramModel) {
                 runSpleeterSpectrogramPipeline(
                     session = session,
                     inputName = inputName,
                     outputName = outputName,
+                    inputShape = inputShape,
                     decodedAudio = decodedAudio,
                     outputWavFile = outputWavFile,
                     accelerationMode = accelerationMode,
@@ -194,13 +185,14 @@ class SpleeterInferenceEngine(private val context: Context) {
     }
 
     /**
-     * Executes the Spleeter 2-Stem STFT -> Neural Separation -> iSTFT pipeline.
+     * Executes the genuine Deezer Spleeter 2-Stem STFT -> Neural U-Net -> iSTFT pipeline.
      * Uses zero-allocation circular scratchpads for strictly O(1) memory footprint (< 15MB heap).
      */
     private fun runSpleeterSpectrogramPipeline(
         session: OrtSession,
         inputName: String,
         outputName: String,
+        inputShape: LongArray,
         decodedAudio: DecodedAudio,
         outputWavFile: File,
         accelerationMode: AccelerationMode,
@@ -210,37 +202,31 @@ class SpleeterInferenceEngine(private val context: Context) {
         val totalSamples = decodedAudio.totalFrames
         val sampleRate = decodedAudio.sampleRate
         val trim = processor.trim
-        val genSize = processor.genSize
         val chunkSize = processor.chunkSize
+        val genSize = processor.genSize
 
         val remainder = (totalSamples % genSize).toInt()
         val pad = if (remainder == 0) 0L else (genSize - remainder).toLong()
         val totalChunks = ((totalSamples + pad) / genSize).toInt()
 
-        Log.i(TAG, "Running Spleeter 2-Stem Engine [${accelerationMode.displayName}]: $totalSamples samples, $totalChunks chunks")
+        Log.i(TAG, "Running Deezer Spleeter 2-Stem Engine [${accelerationMode.displayName}]: $totalSamples samples, $totalChunks chunks")
 
-        val scratchL = processor.createScratchpad()
-        val scratchR = processor.createScratchpad()
+        val scratch = processor.createScratchpad()
 
-        val chunkL = FloatArray(chunkSize + processor.nFft)
-        val chunkR = FloatArray(chunkSize + processor.nFft)
+        val chunkL = FloatArray(chunkSize)
+        val chunkR = FloatArray(chunkSize)
 
-        val specReL = Array(DIM_F) { FloatArray(DIM_T) }
-        val specImL = Array(DIM_F) { FloatArray(DIM_T) }
-        val specReR = Array(DIM_F) { FloatArray(DIM_T) }
-        val specImR = Array(DIM_F) { FloatArray(DIM_T) }
+        // Spleeter tensor shape: [2, 1, 512, 1024]
+        val tensorShape = if (inputShape.size == 4 && inputShape[0] == 1L && inputShape[1] == 2L) {
+            longArrayOf(1, 2, DIM_T.toLong(), DIM_F.toLong())
+        } else {
+            longArrayOf(2, 1, DIM_T.toLong(), DIM_F.toLong())
+        }
 
-        val tensorCapacity = 1 * 4 * DIM_F * DIM_T
+        val tensorCapacity = 2 * 1 * DIM_T * DIM_F
         val inputFloatBuffer = ByteBuffer.allocateDirect(tensorCapacity * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
-
-        val tensorShape = longArrayOf(1, 4, DIM_F.toLong(), DIM_T.toLong())
-
-        val istftWaveL = FloatArray(chunkSize + processor.nFft)
-        val istftWaveR = FloatArray(chunkSize + processor.nFft)
-        val istftWeightL = FloatArray(chunkSize + processor.nFft)
-        val istftWeightR = FloatArray(chunkSize + processor.nFft)
 
         val outChunkL = FloatArray(genSize)
         val outChunkR = FloatArray(genSize)
@@ -256,8 +242,8 @@ class SpleeterInferenceEngine(private val context: Context) {
 
                 val validCount = minOf(genSize.toLong(), totalSamples - samplePos).coerceAtLeast(0L).toInt()
 
-                java.util.Arrays.fill(chunkL, 0f)
-                java.util.Arrays.fill(chunkR, 0f)
+                chunkL.fill(0f)
+                chunkR.fill(0f)
 
                 val audioStart = samplePos - trim
                 val srcStart = maxOf(0L, audioStart)
@@ -301,14 +287,17 @@ class SpleeterInferenceEngine(private val context: Context) {
                     }
                 }
 
-                // 1. Compute STFT for Left and Right channels with zero-allocation scratchpads
-                processor.computeChannelStft(chunkL, specReL, specImL, scratchL)
-                processor.computeChannelStft(chunkR, specReR, specImR, scratchR)
+                // 1. Compute Deezer Spleeter 4096-point STFT and pack magnitude spectrogram
+                processor.computeSpleeterInput(
+                    pcmLeft = chunkL,
+                    pcmRight = chunkR,
+                    pcmOffset = 0,
+                    pcmLength = chunkSize,
+                    scratch = scratch,
+                    onnxInputBuffer = inputFloatBuffer
+                )
 
-                // 2. Pack into ONNX FloatBuffer
-                processor.packToFloatBuffer(specReL, specImL, specReR, specImR, inputFloatBuffer)
-
-                // 3. Run Spleeter 2-Stem ONNX neural network
+                // 2. Run Deezer Spleeter 2-Stem ONNX neural network
                 val inputTensor = OnnxTensor.createTensor(ortEnvironment, inputFloatBuffer, tensorShape)
                 var ortResult: OrtSession.Result? = null
 
@@ -318,38 +307,19 @@ class SpleeterInferenceEngine(private val context: Context) {
 
                     if (resultValue is OnnxTensor) {
                         val outBuffer = resultValue.floatBuffer
-                        outBuffer.position(0)
 
-                        // Read out separated vocal channels: outReL, outImL, outReR, outImR
-                        for (f in 0 until DIM_F) {
-                            outBuffer.get(specReL[f], 0, DIM_T)
-                        }
-                        for (f in 0 until DIM_F) {
-                            outBuffer.get(specImL[f], 0, DIM_T)
-                        }
-                        for (f in 0 until DIM_F) {
-                            outBuffer.get(specReR[f], 0, DIM_T)
-                        }
-                        for (f in 0 until DIM_F) {
-                            outBuffer.get(specImR[f], 0, DIM_T)
-                        }
+                        // 3. Synthesize separated vocal stems with inverse STFT and Hann overlap-add
+                        processor.synthesizeSeparatedStems(
+                            onnxOutputBuffer = outBuffer,
+                            scratch = scratch,
+                            totalSamplesNeeded = chunkSize
+                        )
 
-                        // 4. Compute Inverse STFT with zero-allocation scratchpads
-                        java.util.Arrays.fill(istftWaveL, 0f)
-                        java.util.Arrays.fill(istftWaveR, 0f)
-                        java.util.Arrays.fill(istftWeightL, 0f)
-                        java.util.Arrays.fill(istftWeightR, 0f)
-
-                        processor.computeChannelIstft(specReL, specImL, istftWaveL, istftWeightL, COMPENSATION, scratchL)
-                        processor.computeChannelIstft(specReR, specImR, istftWaveR, istftWeightR, COMPENSATION, scratchR)
-
-                        // 5. Normalize interior window weight and stream directly to disk
+                        // 4. Stream valid interior audio samples directly to disk and merger
                         for (k in 0 until validCount) {
                             val srcIdx = trim + k
-                            val wL = istftWeightL[srcIdx]
-                            val wR = istftWeightR[srcIdx]
-                            outChunkL[k] = if (wL > 1e-4f) (istftWaveL[srcIdx] / wL).coerceIn(-1.0f, 1.0f) else istftWaveL[srcIdx]
-                            outChunkR[k] = if (wR > 1e-4f) (istftWaveR[srcIdx] / wR).coerceIn(-1.0f, 1.0f) else istftWaveR[srcIdx]
+                            outChunkL[k] = scratch.vocalWaveform[0][srcIdx].coerceIn(-1.0f, 1.0f)
+                            outChunkR[k] = scratch.vocalWaveform[1][srcIdx].coerceIn(-1.0f, 1.0f)
                         }
                         wavWriter.writeStereoChunk(outChunkL, outChunkR, 0, validCount)
                         onChunkAvailable?.invoke(outChunkL, outChunkR, 0, validCount, false)
@@ -360,7 +330,7 @@ class SpleeterInferenceEngine(private val context: Context) {
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error executing Spleeter chunk inference at chunk $chunkIdx", e)
+                    Log.e(TAG, "Error executing Deezer Spleeter chunk inference at chunk $chunkIdx", e)
                     if (validCount > 0) {
                         wavWriter.writeSilence(validCount)
                         onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, validCount, false)
@@ -378,11 +348,11 @@ class SpleeterInferenceEngine(private val context: Context) {
         onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, 0, true)
 
         if (skippedChunks > 0) {
-            Log.i(TAG, "Turbo Spleeter Mode: Fast-skipped $skippedChunks silent chunks")
+            Log.i(TAG, "Turbo Deezer Spleeter Mode: Fast-skipped $skippedChunks silent chunks")
         }
 
         onProgress(0.97f)
-        Log.i(TAG, "Finished Spleeter 2-stem vocal WAV: ${outputWavFile.absolutePath} ($totalSamples samples at $sampleRate Hz)")
+        Log.i(TAG, "Finished Deezer Spleeter 2-stem vocal WAV: ${outputWavFile.absolutePath} ($totalSamples samples at $sampleRate Hz)")
         System.gc()
         onProgress(1.0f)
     }
@@ -422,8 +392,8 @@ class SpleeterInferenceEngine(private val context: Context) {
                 onProgress(progressStart)
 
                 val currentChunkLen = minOf(chunkSize.toLong(), totalSamples - samplePos).toInt()
-                java.util.Arrays.fill(tempL, 0f)
-                java.util.Arrays.fill(tempR, 0f)
+                tempL.fill(0f)
+                tempR.fill(0f)
                 decodedAudio.readStereoChunk(samplePos, currentChunkLen, tempL, tempR, 0)
 
                 floatBuffer.clear()

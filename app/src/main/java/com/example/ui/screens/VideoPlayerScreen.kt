@@ -83,6 +83,8 @@ import com.example.export.ExportFormat
 import com.example.ui.components.ExportConfirmDialog
 import com.example.ui.components.ExportOptionsDialog
 import com.example.ui.components.ProcessingOverlay
+import com.example.ui.locale.AppStrings
+import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -115,6 +117,7 @@ fun VideoPlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lang = LocalAppLanguage.current
     var isPlaying by remember { mutableStateOf(false) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(video.duration.coerceAtLeast(1L)) }
@@ -367,7 +370,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Vocal extraction encountered an issue",
+                                text = AppStrings.vocalExtractionIssue(lang),
                                 color = TextPrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -464,7 +467,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Re-extract Vocals",
+                                text = AppStrings.reextractVocals(lang),
                                 color = AccentTeal,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -571,7 +574,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Export Video (Vocals Only)",
+                                text = AppStrings.exportVideoVocalsOnly(lang),
                                 color = Color.Black,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
@@ -619,7 +622,7 @@ fun VideoPlayerScreen(
         ProcessingOverlay(
             isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
             progress = processingProgress,
-            message = "Extracting vocals with UVR AI ($activeModelName)…",
+            message = AppStrings.extractingVocalsWithSpleeter(lang, activeModelName),
             elapsedTime = elapsedTime,
             estimatedRemaining = estimatedRemaining,
             isBackgroundProtected = isBackgroundProtected,
