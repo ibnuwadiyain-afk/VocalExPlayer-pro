@@ -626,6 +626,7 @@ fun VideoPlayerScreen(
             elapsedTime = elapsedTime,
             estimatedRemaining = estimatedRemaining,
             isBackgroundProtected = isBackgroundProtected,
+            lang = lang,
             onCancel = onCancelProcessing
         )
 

@@ -1030,16 +1030,71 @@ object AppStrings {
     }
 
     // Processing Overlay
-    fun extractingVocalsWithSpleeter(lang: AppLanguage, modelName: String) = when (lang) {
-        AppLanguage.ARABIC -> "جارٍ عزل الأصوات بمحرك Spleeter 2-Stem ($modelName)…"
-        AppLanguage.SPANISH -> "Extrayendo voces con Spleeter 2-Stem ($modelName)…"
-        AppLanguage.FRENCH -> "Extraction des voix avec Spleeter 2-Stem ($modelName)…"
-        AppLanguage.GERMAN -> "Gesang wird mit Spleeter 2-Stem extrahiert ($modelName)…"
-        AppLanguage.JAPANESE -> "Spleeter 2-Stem AI でボーカルを抽出中 ($modelName)…"
-        AppLanguage.CHINESE -> "正在使用 Spleeter 双音轨引擎提取人声 ($modelName)…"
-        AppLanguage.RUSSIAN -> "Извлечение вокала с Spleeter 2-Stem ($modelName)…"
-        AppLanguage.PORTUGUESE -> "Extraindo vocais com Spleeter 2-Stem ($modelName)…"
-        else -> "Extracting vocals with Spleeter AI ($modelName)…"
+    fun extractingVocalsWithSpleeter(lang: AppLanguage, modelName: String): String {
+        val cleanModel = if (modelName.contains("Spleeter", ignoreCase = true)) {
+            modelName
+        } else {
+            "Spleeter ($modelName)"
+        }
+        return when (lang) {
+            AppLanguage.ARABIC -> "جارٍ عزل الأصوات بمحرك $cleanModel…"
+            AppLanguage.SPANISH -> "Extrayendo voces con $cleanModel…"
+            AppLanguage.FRENCH -> "Extraction des voix avec $cleanModel…"
+            AppLanguage.GERMAN -> "Gesang wird mit $cleanModel extrahiert…"
+            AppLanguage.JAPANESE -> "$cleanModel でボーカルを抽出中…"
+            AppLanguage.CHINESE -> "正在使用 $cleanModel 提取人声…"
+            AppLanguage.RUSSIAN -> "Извлечение вокала с $cleanModel…"
+            AppLanguage.PORTUGUESE -> "Extraindo vocais com $cleanModel…"
+            else -> "Extracting vocals with $cleanModel…"
+        }
+    }
+
+    fun progressLabel(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "التقدم"
+        AppLanguage.SPANISH -> "Progreso"
+        AppLanguage.FRENCH -> "Progression"
+        AppLanguage.GERMAN -> "Fortschritt"
+        AppLanguage.JAPANESE -> "進捗"
+        AppLanguage.CHINESE -> "进度"
+        AppLanguage.RUSSIAN -> "Прогресс"
+        AppLanguage.PORTUGUESE -> "Progresso"
+        else -> "Progress"
+    }
+
+    fun remainingTime(lang: AppLanguage, formattedTime: String) = when (lang) {
+        AppLanguage.ARABIC -> "المتبقي: $formattedTime"
+        AppLanguage.SPANISH -> "Restante: ~$formattedTime"
+        AppLanguage.FRENCH -> "Restant : ~$formattedTime"
+        AppLanguage.GERMAN -> "Verbleibend: ~$formattedTime"
+        AppLanguage.JAPANESE -> "残り ~$formattedTime"
+        AppLanguage.CHINESE -> "剩余 ~$formattedTime"
+        AppLanguage.RUSSIAN -> "Осталось: ~$formattedTime"
+        AppLanguage.PORTUGUESE -> "Restante: ~$formattedTime"
+        else -> "~$formattedTime left"
+    }
+
+    fun finishingUp(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "جاري الإنهاء…"
+        AppLanguage.SPANISH -> "Finalizando…"
+        AppLanguage.FRENCH -> "Finalisation…"
+        AppLanguage.GERMAN -> "Wird abgeschlossen…"
+        AppLanguage.JAPANESE -> "仕上げ中…"
+        AppLanguage.CHINESE -> "正在完成…"
+        AppLanguage.RUSSIAN -> "Завершение…"
+        AppLanguage.PORTUGUESE -> "Finalizando…"
+        else -> "Finishing up…"
+    }
+
+    fun runningAiSeparation(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "جاري العزل بالذكاء الاصطناعي"
+        AppLanguage.SPANISH -> "Ejecutando separación por IA"
+        AppLanguage.FRENCH -> "Séparation IA en cours"
+        AppLanguage.GERMAN -> "KI-Trennung läuft"
+        AppLanguage.JAPANESE -> "AI音源分離を実行中"
+        AppLanguage.CHINESE -> "正在进行 AI 音频分离"
+        AppLanguage.RUSSIAN -> "Идет разделение ИИ"
+        AppLanguage.PORTUGUESE -> "Executando separação por IA"
+        else -> "Running AI separation"
     }
 
     fun elapsedLabel(lang: AppLanguage) = when (lang) {

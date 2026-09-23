@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.locale.AppLanguage
+import com.example.ui.locale.AppStrings
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
@@ -59,6 +61,7 @@ fun ProcessingOverlay(
     elapsedTime: String = "00:00",
     estimatedRemaining: String? = null,
     isBackgroundProtected: Boolean = true,
+    lang: AppLanguage = AppLanguage.ARABIC,
     onCancel: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -145,7 +148,7 @@ fun ProcessingOverlay(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Progress",
+                            text = AppStrings.progressLabel(lang),
                             color = TextSecondary,
                             fontSize = 12.sp
                         )
@@ -180,22 +183,22 @@ fun ProcessingOverlay(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Elapsed: ",
-                                color = TextSecondary,
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = elapsedTime,
+                                text = "${AppStrings.elapsedLabel(lang)}$elapsedTime",
                                 color = TextPrimary,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp
+                                fontSize = 13.sp
                             )
 
                             if (!estimatedRemaining.isNullOrBlank()) {
                                 Spacer(modifier = Modifier.width(6.dp))
+                                val etaDisplay = if (estimatedRemaining == "FINISHING") {
+                                    AppStrings.finishingUp(lang)
+                                } else {
+                                    AppStrings.remainingTime(lang, estimatedRemaining)
+                                }
                                 Text(
-                                    text = "• $estimatedRemaining",
+                                    text = "• $etaDisplay",
                                     color = AccentTeal,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium
@@ -228,9 +231,9 @@ fun ProcessingOverlay(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = if (isBackgroundProtected) {
-                                    "Protected in background • Safe to switch apps"
+                                    AppStrings.backgroundProtectedNotice(lang)
                                 } else {
-                                    "Running AI separation"
+                                    AppStrings.runningAiSeparation(lang)
                                 },
                                 color = if (isBackgroundProtected) AccentTeal else TextSecondary,
                                 fontSize = 11.sp,
@@ -254,7 +257,7 @@ fun ProcessingOverlay(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Cancel Extraction",
+                                text = AppStrings.cancelExtraction(lang),
                                 color = TextSecondary,
                                 fontSize = 13.sp
                             )

@@ -609,8 +609,13 @@ fun VideoListScreen(
                                     )
                                     if (!processingEstimatedRemaining.isNullOrBlank()) {
                                         Spacer(modifier = Modifier.width(6.dp))
+                                        val etaText = if (processingEstimatedRemaining == "FINISHING") {
+                                            AppStrings.finishingUp(currentLanguage)
+                                        } else {
+                                            AppStrings.remainingTime(currentLanguage, processingEstimatedRemaining)
+                                        }
                                         Text(
-                                            text = "• $processingEstimatedRemaining",
+                                            text = "• $etaText",
                                             color = AccentTeal,
                                             fontSize = 11.sp
                                         )

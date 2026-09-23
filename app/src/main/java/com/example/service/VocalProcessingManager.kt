@@ -212,9 +212,9 @@ object VocalProcessingManager {
                     val totalEstimatedMs = (elapsedMs / currentProgress).toLong()
                     val remainingMs = (totalEstimatedMs - elapsedMs).coerceAtLeast(0L)
                     val remainingSec = remainingMs / 1000
-                    _estimatedRemainingFormatted.value = "~${formatSeconds(remainingSec)} left"
+                    _estimatedRemainingFormatted.value = formatSeconds(remainingSec)
                 } else if (currentProgress >= 0.99f) {
-                    _estimatedRemainingFormatted.value = "Finishing up…"
+                    _estimatedRemainingFormatted.value = "FINISHING"
                 }
 
                 notifyServiceProgress()
@@ -224,10 +224,16 @@ object VocalProcessingManager {
     }
 
     private fun notifyServiceProgress() {
+        val remaining = _estimatedRemainingFormatted.value
+        val notifRemaining = when (remaining) {
+            null -> null
+            "FINISHING" -> "Finishing up…"
+            else -> "~$remaining left"
+        }
         onNotificationUpdateRequested?.invoke(
             _progress.value,
             _elapsedTimeFormatted.value,
-            _estimatedRemainingFormatted.value
+            notifRemaining
         )
     }
 
