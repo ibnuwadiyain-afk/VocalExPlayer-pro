@@ -579,7 +579,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val sampleVideo = VideoItemEntity(
                     id = videoId,
                     videoUri = sampleFile.absolutePath,
-                    title = "Sample Vocal Track (UVR Demo)",
+                    title = "Sample Vocal Track (Spleeter Demo)",
                     duration = 4000L,
                     status = VideoStatus.NEW
                 )

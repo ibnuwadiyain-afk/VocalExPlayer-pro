@@ -46,28 +46,37 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verify MdxSpectrogramProcessor forward and inverse transforms`() {
-    val processor = com.example.onnx.MdxSpectrogramProcessor()
-    val signal = FloatArray(processor.chunkSize + processor.nFft) { i ->
+  fun `verify SpleeterSpectrogramProcessor forward and inverse transforms`() {
+    val processor = com.example.onnx.SpleeterSpectrogramProcessor()
+    val signal = FloatArray(processor.chunkSize) { i ->
       kotlin.math.sin(2.0 * kotlin.math.PI * 440.0 * i / 44100.0).toFloat()
     }
-    val specRe = Array(processor.dimF) { FloatArray(processor.dimT) }
-    val specIm = Array(processor.dimF) { FloatArray(processor.dimT) }
+    val scratch = processor.createScratchpad()
+    val byteBuf = java.nio.ByteBuffer.allocateDirect(2 * 1 * processor.dimT * processor.dimF * 4)
+      .order(java.nio.ByteOrder.nativeOrder())
+      .asFloatBuffer()
 
-    processor.computeChannelStft(signal, specRe, specIm)
+    processor.computeSpleeterInput(
+      pcmLeft = signal,
+      pcmRight = signal,
+      pcmOffset = 0,
+      pcmLength = processor.chunkSize,
+      scratch = scratch,
+      onnxInputBuffer = byteBuf
+    )
 
-    // Check that 440Hz has energy in the corresponding bin
-    // Bin resolution: 44100 / 6144 ≈ 7.177 Hz/bin => 440Hz ≈ bin 61
+    // Check that 440Hz has peak energy in the corresponding bin
+    // Bin resolution: 44100 / 4096 ≈ 10.766 Hz/bin => 440Hz ≈ bin 41
     var maxBin = 0
     var maxMag = 0f
     for (f in 0 until processor.dimF) {
-      val mag = specRe[f][10] * specRe[f][10] + specIm[f][10] * specIm[f][10]
+      val mag = byteBuf.get(f) // First frame of channel 0
       if (mag > maxMag) {
         maxMag = mag
         maxBin = f
       }
     }
-    org.junit.Assert.assertTrue("Peak bin ($maxBin) should be near 61 for 440Hz", kotlin.math.abs(maxBin - 61) <= 2)
+    org.junit.Assert.assertTrue("Peak bin ($maxBin) should be near 41 for 440Hz", kotlin.math.abs(maxBin - 41) <= 2)
   }
 
   @Test
