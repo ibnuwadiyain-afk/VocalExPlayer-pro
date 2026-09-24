@@ -314,8 +314,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _isDownloadingMedia.value = false
                     _downloadProgressState.value = null
                     _sharedMediaUrl.value = null
-                    _modelInfoMessage.value = "Downloaded \"${info.title}\" successfully! Ready for separation."
+                    _modelInfoMessage.value = "Downloaded \"${info.title}\" successfully! Extracting vocals…"
                     withContext(Dispatchers.Main) {
+                        // State Reset Guarantee: Clean reset to 0% and auto-start separation
+                        com.example.service.VocalProcessingManager.resetState(videoId = newVideo.id, videoTitle = newVideo.title)
                         selectVideo(newVideo)
                     }
                 }.onFailure { error ->
@@ -493,6 +495,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importMediaFromUri(uri: Uri, customTitle: String? = null) {
+        val initialTitle = customTitle ?: uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')
+        // State Reset Guarantee: Immediately reset progress manager to 0% and clear buffers
+        com.example.service.VocalProcessingManager.resetState(videoTitle = initialTitle)
+
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -561,15 +567,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("MainViewModel", "Imported media $mediaId: $resolvedTitle (hasVideo=$hasVideo, ext=$resolvedExt)")
 
                 withContext(Dispatchers.Main) {
-                    _selectedVideo.value = newMedia
+                    // Seamless Auto-Start: reset progress manager state to 0% and immediately trigger separation
+                    com.example.service.VocalProcessingManager.resetState(videoId = newMedia.id, videoTitle = newMedia.title)
+                    selectVideo(newMedia)
                 }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error importing media from $uri", e)
+                withContext(Dispatchers.Main) {
+                    com.example.service.VocalProcessingManager.cancelActiveProcessing(getApplication())
+                }
             }
         }
     }
 
     fun importSampleVideo() {
+        // State Reset Guarantee: reset state to 0% immediately
+        com.example.service.VocalProcessingManager.resetState(videoTitle = "Sample Vocal Track (Spleeter Demo)")
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -584,14 +597,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     status = VideoStatus.NEW
                 )
                 videoDao.insertVideo(sampleVideo)
+                withContext(Dispatchers.Main) {
+                    // Seamless Auto-Start: reset progress manager state to 0% and immediately trigger separation
+                    com.example.service.VocalProcessingManager.resetState(videoId = sampleVideo.id, videoTitle = sampleVideo.title)
+                    selectVideo(sampleVideo)
+                }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error creating sample video", e)
+                withContext(Dispatchers.Main) {
+                    com.example.service.VocalProcessingManager.cancelActiveProcessing(getApplication())
+                }
             }
         }
     }
 
     fun startSeparation(video: VideoItemEntity, forceRecompute: Boolean = false) {
         val context = getApplication<Application>()
+        // State Reset Guarantee: clear prior elapsed time, progress percentages, and estimation buffers immediately
+        com.example.service.VocalProcessingManager.resetState(videoId = video.id, videoTitle = video.title)
         com.example.service.VocalProcessingManager.startSeparation(
             context = context,
             video = video,

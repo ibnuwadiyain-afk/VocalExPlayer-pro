@@ -88,6 +88,33 @@ object VocalProcessingManager {
     }
 
     /**
+     * State Reset Guarantee: Clears prior elapsed time, progress percentages,
+     * estimation buffers, active video details, and status messages the moment a new
+     * task is created or queued, guaranteeing that no stale data is observed by the UI.
+     */
+    fun resetState(videoId: String? = null, videoTitle: String? = null) {
+        timerJob?.cancel()
+        timerJob = null
+        startTimeRealtime = 0L
+
+        _progress.value = 0f
+        _elapsedSeconds.value = 0L
+        _elapsedTimeFormatted.value = "00:00"
+        _estimatedRemainingFormatted.value = null
+        _activeVideoId.value = videoId
+        _activeVideoTitle.value = videoTitle
+        _message.value = if (videoTitle != null) {
+            "Preparing vocal separation for \"$videoTitle\"… 0%"
+        } else {
+            "Preparing vocal separation… 0%"
+        }
+        _isProcessing.value = false
+        _isBackgroundProtected.value = false
+
+        notifyServiceProgress()
+    }
+
+    /**
      * Starts AI vocal separation with active elapsed timer and background stability service.
      */
     fun startSeparation(
@@ -109,18 +136,27 @@ object VocalProcessingManager {
         // Cancel previous if actively running
         if (_isProcessing.value) {
             cancelActiveProcessing(appContext)
+        } else {
+            timerJob?.cancel()
+            timerJob = null
         }
 
-        _isProcessing.value = true
-        _activeVideoId.value = video.id
-        _activeVideoTitle.value = video.title
-        _progress.value = 0.05f
-        _message.value = "Extracting vocals with Spleeter AI (${accelerationMode.displayName})…"
+        // State Reset Guarantee: Instantly clear prior elapsed time, progress percentages,
+        // and estimation buffers the moment a new task is created or queued.
+        _progress.value = 0f
         _elapsedSeconds.value = 0L
         _elapsedTimeFormatted.value = "00:00"
         _estimatedRemainingFormatted.value = null
+        _activeVideoId.value = video.id
+        _activeVideoTitle.value = video.title
+        _message.value = "Extracting vocals with Spleeter AI (${accelerationMode.displayName})… 0%"
+        _isProcessing.value = true
+        _isBackgroundProtected.value = false
 
         startTimeRealtime = SystemClock.elapsedRealtime()
+
+        // Notify initial 0% state to listeners immediately
+        notifyServiceProgress()
 
         // 1. Acquire Partial WakeLock to prevent CPU sleep during inference
         acquireWakeLock(appContext)
@@ -142,8 +178,9 @@ object VocalProcessingManager {
                 accelerationMode = accelerationMode,
                 forceRecompute = forceRecompute,
                 onProgress = { currentProgress ->
-                    _progress.value = currentProgress
-                    val pct = (currentProgress * 100).toInt()
+                    val clamped = currentProgress.coerceIn(0f, 1f)
+                    _progress.value = clamped
+                    val pct = (clamped * 100).toInt().coerceIn(0, 100)
                     _message.value = "Extracting vocals with Spleeter AI (${accelerationMode.displayName})… $pct%"
                     notifyServiceProgress()
                 }
@@ -153,9 +190,13 @@ object VocalProcessingManager {
             _progress.value = if (result.isSuccess) 1.0f else 0f
             _isProcessing.value = false
             _isBackgroundProtected.value = false
+            if (result.isFailure) {
+                _estimatedRemainingFormatted.value = null
+            }
 
             // Stop timer & release wakelock
             timerJob?.cancel()
+            timerJob = null
             releaseWakeLock()
 
             // Notify Foreground Service to show completion or stop
@@ -173,14 +214,20 @@ object VocalProcessingManager {
         activeProcessingJob = null
         timerJob?.cancel()
         timerJob = null
+        startTimeRealtime = 0L
 
         releaseWakeLock()
         _isProcessing.value = false
         _isBackgroundProtected.value = false
         _activeVideoId.value = null
         _activeVideoTitle.value = null
+        _progress.value = 0f
+        _elapsedSeconds.value = 0L
+        _elapsedTimeFormatted.value = "00:00"
         _estimatedRemainingFormatted.value = null
+        _message.value = "Separation cancelled"
 
+        notifyServiceProgress()
         stopForegroundService(context, null, false)
     }
 
@@ -206,15 +253,17 @@ object VocalProcessingManager {
                     }
                 }
 
-                // Calculate estimated remaining time if progress > 5%
+                // Calculate estimated remaining time if progress > 5% and running > 2 seconds
                 val currentProgress = _progress.value
                 if (currentProgress > 0.05f && currentProgress < 0.99f && elapsedMs > 2000L) {
                     val totalEstimatedMs = (elapsedMs / currentProgress).toLong()
                     val remainingMs = (totalEstimatedMs - elapsedMs).coerceAtLeast(0L)
                     val remainingSec = remainingMs / 1000
-                    _estimatedRemainingFormatted.value = formatSeconds(remainingSec)
+                    _estimatedRemainingFormatted.value = "~${formatSeconds(remainingSec)} left"
                 } else if (currentProgress >= 0.99f) {
-                    _estimatedRemainingFormatted.value = "FINISHING"
+                    _estimatedRemainingFormatted.value = "Finishing up…"
+                } else {
+                    _estimatedRemainingFormatted.value = null
                 }
 
                 notifyServiceProgress()
@@ -224,16 +273,10 @@ object VocalProcessingManager {
     }
 
     private fun notifyServiceProgress() {
-        val remaining = _estimatedRemainingFormatted.value
-        val notifRemaining = when (remaining) {
-            null -> null
-            "FINISHING" -> "Finishing up…"
-            else -> "~$remaining left"
-        }
         onNotificationUpdateRequested?.invoke(
             _progress.value,
             _elapsedTimeFormatted.value,
-            notifRemaining
+            _estimatedRemainingFormatted.value
         )
     }
 

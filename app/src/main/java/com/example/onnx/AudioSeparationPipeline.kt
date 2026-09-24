@@ -73,23 +73,23 @@ class AudioSeparationPipeline(
                 return@withContext Result.success(vocalWavFile)
             }
 
-            // Update status to processing
+            // Update status to processing starting from 0%
             videoDao.updateSeparationStatus(
                 id = video.id,
                 status = VideoStatus.PROCESSING,
-                progress = 0.05f,
+                progress = 0f,
                 vocalUri = null,
                 errorMessage = null
             )
-            onProgress(0.05f)
+            onProgress(0f)
 
-            // Step 1: Extract Audio from Video
+            // Step 1: Extract Audio from Video (scales progress 0.00 -> 0.20)
             val videoUri = Uri.parse(video.videoUri)
             val decodedAudio = AudioExtractor.extractAudioFromVideo(
                 context = context,
                 videoUri = videoUri,
                 onProgress = { extProgress ->
-                    val overall = 0.05f + (extProgress * 0.20f)
+                    val overall = (extProgress * 0.20f).coerceIn(0f, 0.20f)
                     onProgress(overall)
                 }
             )

@@ -171,4 +171,30 @@ class ExampleRobolectricTest {
     merger.feedSeparatedChunk(FloatArray(0), FloatArray(0), 0, 0, true)
     merger.cancel()
   }
+
+  @Test
+  fun `verify VocalProcessingManager state reset guarantee clears progress elapsed time and buffers`() {
+    val manager = com.example.service.VocalProcessingManager
+
+    // Trigger resetState with mock video information
+    manager.resetState(videoId = "test_vid_123", videoTitle = "Test Song")
+
+    assertEquals(0.0f, manager.progress.value, 0.0001f)
+    assertEquals(0L, manager.elapsedSeconds.value)
+    assertEquals("00:00", manager.elapsedTimeFormatted.value)
+    assertEquals(null, manager.estimatedRemainingFormatted.value)
+    assertEquals("test_vid_123", manager.activeVideoId.value)
+    assertEquals("Test Song", manager.activeVideoTitle.value)
+    org.junit.Assert.assertFalse(manager.isProcessing.value)
+    org.junit.Assert.assertFalse(manager.isBackgroundProtected.value)
+
+    // Trigger resetState with null parameters (e.g. before initial import inspection)
+    manager.resetState()
+    assertEquals(0.0f, manager.progress.value, 0.0001f)
+    assertEquals(0L, manager.elapsedSeconds.value)
+    assertEquals("00:00", manager.elapsedTimeFormatted.value)
+    assertEquals(null, manager.estimatedRemainingFormatted.value)
+    assertEquals(null, manager.activeVideoId.value)
+    assertEquals(null, manager.activeVideoTitle.value)
+  }
 }
