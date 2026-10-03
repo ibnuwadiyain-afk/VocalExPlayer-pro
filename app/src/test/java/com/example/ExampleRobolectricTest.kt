@@ -278,4 +278,14 @@ class ExampleRobolectricTest {
     val whisperSmall = allModels.firstOrNull { it.id == "whisper_small" }
     org.junit.Assert.assertNotNull("Whisper Small should exist", whisperSmall)
   }
+
+  @Test
+  fun `verify WhisperAudioPreprocessor mel spectrogram computation`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val preprocessor = com.example.whisper.WhisperAudioPreprocessor(context)
+    val dummyAudio = FloatArray(480000) { (it % 100) / 100.0f }
+    val mel = preprocessor.computeMelSpectrogram(dummyAudio)
+    assertEquals(80, mel.size)
+    assertEquals(3000, mel[0].size)
+  }
 }

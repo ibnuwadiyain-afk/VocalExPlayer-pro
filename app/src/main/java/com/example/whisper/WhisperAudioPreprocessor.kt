@@ -38,6 +38,20 @@ class WhisperAudioPreprocessor(private val context: Context) {
     // Precomputed Slaney Mel filterbank matrix: [N_MELS (80), N_FFT/2 + 1 (201)]
     private val melFilterBank: Array<FloatArray> = createMelFilterBank(N_MELS, N_FFT, SAMPLE_RATE)
 
+    // Precomputed DFT Cosine and Sine Basis Matrices: [numFreqs (201), N_FFT (400)]
+    // Window multiplication is folded into the basis matrices for zero-overhead windowing!
+    private val cosBasis: Array<FloatArray> = Array(N_FFT / 2 + 1) { k ->
+        FloatArray(N_FFT) { n ->
+            (cos(2.0 * PI * k * n / N_FFT) * hannWindow[n]).toFloat()
+        }
+    }
+
+    private val sinBasis: Array<FloatArray> = Array(N_FFT / 2 + 1) { k ->
+        FloatArray(N_FFT) { n ->
+            (-sin(2.0 * PI * k * n / N_FFT) * hannWindow[n]).toFloat()
+        }
+    }
+
     data class AudioChunk(
         val windowIndex: Int,
         val startSample: Long,
@@ -137,35 +151,52 @@ class WhisperAudioPreprocessor(private val context: Context) {
     fun computeMelSpectrogram(samples30s: FloatArray): Array<FloatArray> {
         // [80][3000]
         val melSpec = Array(N_MELS) { FloatArray(CHUNK_FRAMES) }
-        val fftReal = FloatArray(N_FFT)
-        val fftImag = FloatArray(N_FFT)
-        val powerSpectrum = FloatArray(N_FFT / 2 + 1)
+        val numFreqs = N_FFT / 2 + 1
+        val powerSpectrum = FloatArray(numFreqs)
+        val windowBuffer = FloatArray(N_FFT)
 
         for (frame in 0 until CHUNK_FRAMES) {
             val start = frame * HOP_LENGTH
 
-            // Windowing
+            // Check if frame has any audio (skip silence optimization)
+            var hasEnergy = false
             for (i in 0 until N_FFT) {
                 val sampleIdx = start + i
                 val s = if (sampleIdx < samples30s.size) samples30s[sampleIdx] else 0f
-                fftReal[i] = s * hannWindow[i]
-                fftImag[i] = 0f
+                windowBuffer[i] = s
+                if (s != 0f) hasEnergy = true
             }
 
-            // FFT
-            fft(fftReal, fftImag, N_FFT)
+            if (!hasEnergy) {
+                for (m in 0 until N_MELS) {
+                    melSpec[m][frame] = -5.0f // log10(1e-5)
+                }
+                continue
+            }
 
-            // Power spectrum: real^2 + imag^2
-            for (k in 0..N_FFT / 2) {
-                powerSpectrum[k] = fftReal[k] * fftReal[k] + fftImag[k] * fftImag[k]
+            // Exact 400-point STFT via precomputed Hann-weighted basis
+            for (k in 0 until numFreqs) {
+                val cRow = cosBasis[k]
+                val sRow = sinBasis[k]
+                var realSum = 0f
+                var imagSum = 0f
+                for (n in 0 until N_FFT) {
+                    val s = windowBuffer[n]
+                    realSum += s * cRow[n]
+                    imagSum += s * sRow[n]
+                }
+                powerSpectrum[k] = realSum * realSum + imagSum * imagSum
             }
 
             // Apply 80 Mel filterbanks
             for (m in 0 until N_MELS) {
                 var melEnergy = 0f
                 val filter = melFilterBank[m]
-                for (k in 0..N_FFT / 2) {
-                    melEnergy += powerSpectrum[k] * filter[k]
+                for (k in 0 until numFreqs) {
+                    val w = filter[k]
+                    if (w > 0f) {
+                        melEnergy += powerSpectrum[k] * w
+                    }
                 }
                 // Log compression
                 val logMel = log10(melEnergy.coerceAtLeast(1e-5f))
@@ -207,46 +238,6 @@ class WhisperAudioPreprocessor(private val context: Context) {
             output[i] = s0 + frac * (s1 - s0)
         }
         return output
-    }
-
-    private fun fft(real: FloatArray, imag: FloatArray, n: Int) {
-        var j = 0
-        for (i in 0 until n - 1) {
-            if (i < j) {
-                val tr = real[i]; real[i] = real[j]; real[j] = tr
-                val ti = imag[i]; imag[i] = imag[j]; imag[j] = ti
-            }
-            var k = n shr 1
-            while (k <= j) {
-                j -= k
-                k = k shr 1
-            }
-            j += k
-        }
-
-        var step = 1
-        while (step < n) {
-            val step2 = step shl 1
-            val theta = -PI / step
-            var w = 0
-            while (w < step) {
-                val wr = cos(theta * w).toFloat()
-                val wi = sin(theta * w).toFloat()
-                var i = w
-                while (i < n) {
-                    val k = i + step
-                    val tr = wr * real[k] - wi * imag[k]
-                    val ti = wr * imag[k] + wi * real[k]
-                    real[k] = real[i] - tr
-                    imag[k] = imag[i] - ti
-                    real[i] += tr
-                    imag[i] += ti
-                    i += step2
-                }
-                w++
-            }
-            step = step2
-        }
     }
 
     private fun createMelFilterBank(nMels: Int, nFft: Int, sampleRate: Int): Array<FloatArray> {
