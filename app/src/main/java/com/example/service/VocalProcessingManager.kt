@@ -115,7 +115,8 @@ object VocalProcessingManager {
     }
 
     /**
-     * Starts AI vocal separation with active elapsed timer and background stability service.
+     * Starts AI vocal separation with optional subtitle transcription, active elapsed timer,
+     * and background stability service.
      */
     fun startSeparation(
         context: Context,
@@ -123,6 +124,8 @@ object VocalProcessingManager {
         customModelPath: String? = null,
         accelerationMode: AccelerationMode = AccelerationMode.TURBO,
         forceRecompute: Boolean = false,
+        transcribeToSubtitles: Boolean = false,
+        whisperLanguage: String = "auto",
         onComplete: ((Result<File>) -> Unit)? = null
     ) {
         val appContext = context.applicationContext
@@ -172,13 +175,15 @@ object VocalProcessingManager {
             val db = AppDatabase.getInstance(appContext)
             val pipeline = AudioSeparationPipeline(appContext, db.videoDao())
 
+            val sepMaxProgress = if (transcribeToSubtitles) 0.60f else 1.0f
+
             val result = pipeline.processVideo(
                 video = video,
                 customModelPath = customModelPath,
                 accelerationMode = accelerationMode,
                 forceRecompute = forceRecompute,
                 onProgress = { currentProgress ->
-                    val clamped = currentProgress.coerceIn(0f, 1f)
+                    val clamped = (currentProgress * sepMaxProgress).coerceIn(0f, sepMaxProgress)
                     _progress.value = clamped
                     val pct = (clamped * 100).toInt().coerceIn(0, 100)
                     _message.value = "Extracting vocals with Spleeter AI (${accelerationMode.displayName})… $pct%"
@@ -186,11 +191,52 @@ object VocalProcessingManager {
                 }
             )
 
+            var finalResult = result
+
+            // If vocal separation succeeded and transcription toggle is ON: run local Whisper inference
+            if (result.isSuccess && transcribeToSubtitles) {
+                val vocalFile = result.getOrNull() ?: File(appContext.filesDir, "vocals/vocal_${video.id}.wav")
+                val modelManager = com.example.model.AppModelManager.getInstance(appContext)
+                val whisperModel = modelManager.getSelectedWhisperModel()
+
+                if (whisperModel != null && vocalFile.exists()) {
+                    _message.value = "Preparing audio for Whisper transcription…"
+                    _progress.value = 0.62f
+                    notifyServiceProgress()
+
+                    val whisperEngine = com.example.whisper.WhisperInferenceEngine(appContext)
+                    val transResult = whisperEngine.transcribeAudio(
+                        vocalWavFile = vocalFile,
+                        videoId = video.id,
+                        whisperModel = whisperModel,
+                        languageCode = whisperLanguage,
+                        onProgress = { wProgress, wMessage ->
+                            val scaled = 0.60f + (wProgress * 0.40f).coerceIn(0f, 0.40f)
+                            _progress.value = scaled
+                            _message.value = wMessage
+                            notifyServiceProgress()
+                        }
+                    )
+
+                    if (transResult.isSuccess) {
+                        val srt = transResult.getOrNull()?.srtFile
+                        if (srt != null) {
+                            db.videoDao().updateSubtitleUri(video.id, srt.absolutePath)
+                            Log.i(TAG, "Subtitles successfully generated and linked: ${srt.absolutePath}")
+                        }
+                    } else {
+                        Log.w(TAG, "Whisper transcription failed, but vocals are preserved: ${transResult.exceptionOrNull()?.message}")
+                    }
+                } else {
+                    Log.w(TAG, "Whisper transcription requested, but no Whisper model is installed.")
+                }
+            }
+
             // Finalize processing state
-            _progress.value = if (result.isSuccess) 1.0f else 0f
+            _progress.value = if (finalResult.isSuccess) 1.0f else 0f
             _isProcessing.value = false
             _isBackgroundProtected.value = false
-            if (result.isFailure) {
+            if (finalResult.isFailure) {
                 _estimatedRemainingFormatted.value = null
             }
 
@@ -200,9 +246,108 @@ object VocalProcessingManager {
             releaseWakeLock()
 
             // Notify Foreground Service to show completion or stop
-            stopForegroundService(appContext, video.title, result.isSuccess)
+            stopForegroundService(appContext, video.title, finalResult.isSuccess)
 
-            onComplete?.invoke(result)
+            onComplete?.invoke(finalResult)
+        }
+    }
+
+    /**
+     * Executes Whisper transcription ONLY on an existing vocal track.
+     * Guarantees that Spleeter vocal separation is NOT re-run, saving battery and CPU.
+     */
+    fun startTranscriptionOnly(
+        context: Context,
+        video: VideoItemEntity,
+        whisperLanguage: String = "auto",
+        onComplete: ((Result<File>) -> Unit)? = null
+    ) {
+        val appContext = context.applicationContext
+        val vocalFile = File(appContext.filesDir, "vocals/vocal_${video.id}.wav")
+
+        if (!vocalFile.exists() || vocalFile.length() < 44) {
+            val err = IllegalStateException("Vocal track does not exist for this video. Please extract vocals first.")
+            onComplete?.invoke(Result.failure(err))
+            return
+        }
+
+        val modelManager = com.example.model.AppModelManager.getInstance(appContext)
+        val whisperModel = modelManager.getSelectedWhisperModel()
+        if (whisperModel == null) {
+            val err = IllegalStateException("Whisper model not installed. Please download a Whisper model first.")
+            _message.value = "Whisper model not installed."
+            onComplete?.invoke(Result.failure(err))
+            return
+        }
+
+        // Cancel previous if running
+        if (_isProcessing.value) {
+            cancelActiveProcessing(appContext)
+        } else {
+            timerJob?.cancel()
+            timerJob = null
+        }
+
+        // Reset state for transcription
+        _progress.value = 0f
+        _elapsedSeconds.value = 0L
+        _elapsedTimeFormatted.value = "00:00"
+        _estimatedRemainingFormatted.value = null
+        _activeVideoId.value = video.id
+        _activeVideoTitle.value = video.title
+        _message.value = "Loading Whisper model (${whisperModel.displayName})… 0%"
+        _isProcessing.value = true
+        _isBackgroundProtected.value = false
+
+        startTimeRealtime = SystemClock.elapsedRealtime()
+        notifyServiceProgress()
+
+        acquireWakeLock(appContext)
+        startForegroundService(appContext, video.id, video.title)
+        startTimerTicker()
+
+        activeProcessingJob = applicationScope.launch(Dispatchers.IO) {
+            val db = AppDatabase.getInstance(appContext)
+            val whisperEngine = com.example.whisper.WhisperInferenceEngine(appContext)
+
+            val transResult = whisperEngine.transcribeAudio(
+                vocalWavFile = vocalFile,
+                videoId = video.id,
+                whisperModel = whisperModel,
+                languageCode = whisperLanguage,
+                onProgress = { wProgress, wMessage ->
+                    val clamped = wProgress.coerceIn(0f, 1f)
+                    _progress.value = clamped
+                    _message.value = wMessage
+                    notifyServiceProgress()
+                }
+            )
+
+            val srtResult: Result<File> = if (transResult.isSuccess) {
+                val srt = transResult.getOrNull()?.srtFile
+                if (srt != null) {
+                    db.videoDao().updateSubtitleUri(video.id, srt.absolutePath)
+                    _progress.value = 1.0f
+                    _message.value = "Subtitles generated successfully!"
+                    Result.success(srt)
+                } else {
+                    Result.failure(IllegalStateException("No SRT output file created"))
+                }
+            } else {
+                val ex = transResult.exceptionOrNull() ?: Exception("Transcription failed")
+                _progress.value = 0f
+                _message.value = "Transcription failed: ${ex.message}"
+                Result.failure(ex)
+            }
+
+            _isProcessing.value = false
+            _isBackgroundProtected.value = false
+            timerJob?.cancel()
+            timerJob = null
+            releaseWakeLock()
+            stopForegroundService(appContext, video.title, srtResult.isSuccess)
+
+            onComplete?.invoke(srtResult)
         }
     }
 

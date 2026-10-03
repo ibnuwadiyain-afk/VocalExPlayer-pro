@@ -36,6 +36,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences("model_prefs", android.content.Context.MODE_PRIVATE)
 
+    val modelManager = com.example.model.AppModelManager.getInstance(application)
+    val models: StateFlow<List<com.example.model.ModelEntity>> = modelManager.models
+    val selectedVocalModelId: StateFlow<String> = modelManager.selectedVocalModelId
+    val selectedWhisperModelId: StateFlow<String?> = modelManager.selectedWhisperModelId
+    val whisperLanguage: StateFlow<String> = modelManager.whisperLanguage
+
+    private val _isTranscriptionEnabled = MutableStateFlow(false)
+    val isTranscriptionEnabled: StateFlow<Boolean> = _isTranscriptionEnabled.asStateFlow()
+
     private val _customModelPath = MutableStateFlow<String?>(prefs.getString("custom_model_path", null))
     val customModelPath: StateFlow<String?> = _customModelPath.asStateFlow()
 
@@ -611,6 +620,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleTranscriptionEnabled(enabled: Boolean) {
+        _isTranscriptionEnabled.value = enabled
+    }
+
+    fun setWhisperLanguage(langCode: String) {
+        modelManager.setWhisperLanguage(langCode)
+    }
+
+    fun selectModel(id: String, type: com.example.model.ModelType) {
+        modelManager.selectModel(id, type)
+    }
+
+    fun downloadModel(id: String) {
+        viewModelScope.launch {
+            modelManager.downloadModel(id)
+        }
+    }
+
+    fun deleteModel(id: String) {
+        modelManager.deleteModel(id)
+    }
+
+    fun importCustomModelFile(uri: Uri, type: com.example.model.ModelType) {
+        viewModelScope.launch {
+            modelManager.importCustomModel(uri, type)
+        }
+    }
+
     fun startSeparation(video: VideoItemEntity, forceRecompute: Boolean = false) {
         val context = getApplication<Application>()
         // State Reset Guarantee: clear prior elapsed time, progress percentages, and estimation buffers immediately
@@ -621,6 +658,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             customModelPath = _customModelPath.value,
             accelerationMode = _accelerationMode.value,
             forceRecompute = forceRecompute,
+            transcribeToSubtitles = _isTranscriptionEnabled.value,
+            whisperLanguage = modelManager.whisperLanguage.value,
+            onComplete = {
+                viewModelScope.launch {
+                    val updated = videoDao.getVideoById(video.id)
+                    if (_selectedVideo.value?.id == video.id) {
+                        _selectedVideo.value = updated
+                    }
+                }
+            }
+        )
+    }
+
+    fun startTranscriptionOnly(video: VideoItemEntity) {
+        val context = getApplication<Application>()
+        com.example.service.VocalProcessingManager.startTranscriptionOnly(
+            context = context,
+            video = video,
+            whisperLanguage = modelManager.whisperLanguage.value,
             onComplete = {
                 viewModelScope.launch {
                     val updated = videoDao.getVideoById(video.id)

@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import com.example.ui.locale.AppLanguage
 import com.example.ui.components.ExportProgressDialog
@@ -69,6 +72,15 @@ class MainActivity : ComponentActivity() {
                     val exportResult by viewModel.exportResult.collectAsState()
                     val exportError by viewModel.exportError.collectAsState()
 
+                    val models by viewModel.models.collectAsState()
+                    val selectedVocalModelId by viewModel.selectedVocalModelId.collectAsState()
+                    val selectedWhisperModelId by viewModel.selectedWhisperModelId.collectAsState()
+                    val whisperLanguage by viewModel.whisperLanguage.collectAsState()
+                    val isTranscriptionEnabled by viewModel.isTranscriptionEnabled.collectAsState()
+                    val hasWhisperModelInstalled = models.any { it.type == com.example.model.ModelType.WHISPER_TRANSCRIPTION && it.isInstalled }
+
+                    var showModelSettingsDialogFromPlayer by remember { mutableStateOf(false) }
+
                     val savedFolders by viewModel.savedFolders.collectAsState()
                     val selectedFolder by viewModel.selectedFolder.collectAsState()
                     val folderMediaItems by viewModel.activeFolderMediaItems.collectAsState()
@@ -106,13 +118,41 @@ class MainActivity : ComponentActivity() {
                             elapsedTime = processingElapsedFormatted,
                             estimatedRemaining = processingEstimatedRemaining,
                             isBackgroundProtected = isBackgroundProtected,
+                            isTranscriptionEnabled = isTranscriptionEnabled,
+                            hasWhisperModelInstalled = hasWhisperModelInstalled,
                             onBack = { viewModel.clearSelectedVideo() },
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },
                             onExportVideo = { deleteOriginal -> viewModel.exportVideo(selectedVideo!!, deleteOriginal) },
                             onExportMedia = { format, deleteOriginal -> viewModel.exportMedia(selectedVideo!!, format, deleteOriginal) },
-                            onCancelProcessing = { viewModel.cancelSeparation() }
+                            onCancelProcessing = { viewModel.cancelSeparation() },
+                            onToggleTranscription = { viewModel.toggleTranscriptionEnabled(it) },
+                            onStartTranscription = { viewModel.startTranscriptionOnly(selectedVideo!!) },
+                            onOpenModelSettings = { showModelSettingsDialogFromPlayer = true }
                         )
+
+                        if (showModelSettingsDialogFromPlayer) {
+                            com.example.ui.components.ModelSettingsDialog(
+                                activeModelName = modelName,
+                                customModelPath = customModelPath,
+                                accelerationMode = accelerationMode,
+                                hardwareBackend = hardwareBackend,
+                                models = models,
+                                selectedVocalModelId = selectedVocalModelId,
+                                selectedWhisperModelId = selectedWhisperModelId,
+                                whisperLanguage = whisperLanguage,
+                                initialTabIndex = 1,
+                                onDismiss = { showModelSettingsDialogFromPlayer = false },
+                                onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
+                                onSelectModel = { id, type -> viewModel.selectModel(id, type) },
+                                onDownloadModel = { id -> viewModel.downloadModel(id) },
+                                onDeleteModel = { id -> viewModel.deleteModel(id) },
+                                onSetWhisperLanguage = { langCode -> viewModel.setWhisperLanguage(langCode) },
+                                onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
+                                onImportCustomModelWithType = { uri, type -> viewModel.importCustomModelFile(uri, type) },
+                                onResetToBuiltIn = { viewModel.resetToBuiltInModel() }
+                            )
+                        }
                     } else {
                         VideoListScreen(
                             videos = videos,
@@ -121,6 +161,15 @@ class MainActivity : ComponentActivity() {
                             modelInfoMessage = modelInfoMessage,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
+                            models = models,
+                            selectedVocalModelId = selectedVocalModelId,
+                            selectedWhisperModelId = selectedWhisperModelId,
+                            whisperLanguage = whisperLanguage,
+                            onSelectModel = { id, type -> viewModel.selectModel(id, type) },
+                            onDownloadModel = { id -> viewModel.downloadModel(id) },
+                            onDeleteModel = { id -> viewModel.deleteModel(id) },
+                            onSetWhisperLanguage = { langCode -> viewModel.setWhisperLanguage(langCode) },
+                            onImportCustomModelWithType = { uri, type -> viewModel.importCustomModelFile(uri, type) },
                             downloadProgressState = downloadProgressState,
                             isDownloadingMedia = isDownloadingMedia,
                             downloadErrorMessage = downloadErrorMessage,

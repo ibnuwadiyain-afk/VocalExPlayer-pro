@@ -139,6 +139,15 @@ fun VideoListScreen(
     onImportCustomModel: (Uri) -> Unit,
     onResetToBuiltInModel: () -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
+    models: List<com.example.model.ModelEntity> = emptyList(),
+    selectedVocalModelId: String = "spleeter_2stems",
+    selectedWhisperModelId: String? = null,
+    whisperLanguage: String = "auto",
+    onSelectModel: (String, com.example.model.ModelType) -> Unit = { _, _ -> },
+    onDownloadModel: (String) -> Unit = {},
+    onDeleteModel: (String) -> Unit = {},
+    onSetWhisperLanguage: (String) -> Unit = {},
+    onImportCustomModelWithType: (Uri, com.example.model.ModelType) -> Unit = { uri, _ -> onImportCustomModel(uri) },
     resolutionState: com.example.MainViewModel.WebImportResolutionState? = null,
     onSubmitMediaUrl: (String) -> Unit = {},
     onProbeResolutions: (String) -> Unit = {},
@@ -894,10 +903,22 @@ fun VideoListScreen(
             customModelPath = customModelPath,
             accelerationMode = accelerationMode,
             hardwareBackend = hardwareBackend,
+            models = models,
+            selectedVocalModelId = selectedVocalModelId,
+            selectedWhisperModelId = selectedWhisperModelId,
+            whisperLanguage = whisperLanguage,
             onDismiss = { showModelDialog = false },
             onSelectAccelerationMode = onSelectAccelerationMode,
+            onSelectModel = onSelectModel,
+            onDownloadModel = onDownloadModel,
+            onDeleteModel = onDeleteModel,
+            onSetWhisperLanguage = onSetWhisperLanguage,
             onImportCustomModel = { uri ->
                 onImportCustomModel(uri)
+                showModelDialog = false
+            },
+            onImportCustomModelWithType = { uri, type ->
+                onImportCustomModelWithType(uri, type)
                 showModelDialog = false
             },
             onResetToBuiltIn = {

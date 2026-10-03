@@ -31,5 +31,6 @@ data class VideoItemEntity(
     val vocalUri: String? = null,
     val errorMessage: String? = null,
     val progress: Float = 0f,
-    val dateAdded: Long = System.currentTimeMillis()
+    val dateAdded: Long = System.currentTimeMillis(),
+    val subtitleUri: String? = null
 )

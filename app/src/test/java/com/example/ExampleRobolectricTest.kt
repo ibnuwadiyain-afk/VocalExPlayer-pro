@@ -197,4 +197,85 @@ class ExampleRobolectricTest {
     assertEquals(null, manager.activeVideoId.value)
     assertEquals(null, manager.activeVideoTitle.value)
   }
+
+  @Test
+  fun `verify WhisperTokenizer timestamp and language tokens`() {
+    val enToken = com.example.whisper.WhisperTokenizer.getLanguageToken("en")
+    val arToken = com.example.whisper.WhisperTokenizer.getLanguageToken("ar")
+    val esToken = com.example.whisper.WhisperTokenizer.getLanguageToken("es")
+
+    assertEquals(50259, enToken)
+    assertEquals(50272, arToken)
+    assertEquals(50262, esToken)
+
+    // Timestamp tokens
+    org.junit.Assert.assertTrue(com.example.whisper.WhisperTokenizer.isTimestampToken(50364)) // <|0.00|>
+    org.junit.Assert.assertTrue(com.example.whisper.WhisperTokenizer.isTimestampToken(51864)) // <|30.00|>
+    org.junit.Assert.assertFalse(com.example.whisper.WhisperTokenizer.isTimestampToken(50258))
+
+    assertEquals(0.0f, com.example.whisper.WhisperTokenizer.timestampTokenToSeconds(50364), 0.0001f)
+    assertEquals(1.0f, com.example.whisper.WhisperTokenizer.timestampTokenToSeconds(50414), 0.0001f)
+    assertEquals(30.0f, com.example.whisper.WhisperTokenizer.timestampTokenToSeconds(51864), 0.0001f)
+  }
+
+  @Test
+  fun `verify SrtGenerator generates valid UTF-8 SRT with chronological order and Arabic preservation`() {
+    val rawSegments = listOf(
+      com.example.whisper.TranscriptionSegment(
+        index = 1,
+        startMs = 1200L,
+        endMs = 4350L,
+        text = "مرحبا بكم في هذا الفيديو"
+      ),
+      com.example.whisper.TranscriptionSegment(
+        index = 2,
+        startMs = 4600L,
+        endMs = 7900L,
+        text = "Welcome to the video."
+      )
+    )
+
+    val srtContent = com.example.whisper.SrtGenerator.generateSrtContent(rawSegments)
+
+    org.junit.Assert.assertTrue("SRT should contain 1", srtContent.contains("1\r\n00:00:01,200 --> 00:00:04,350"))
+    org.junit.Assert.assertTrue("SRT should contain Arabic text preserved", srtContent.contains("مرحبا بكم في هذا الفيديو"))
+    org.junit.Assert.assertTrue("SRT should contain 2", srtContent.contains("2\r\n00:00:04,600 --> 00:00:07,900"))
+    org.junit.Assert.assertTrue("SRT should contain English text", srtContent.contains("Welcome to the video."))
+
+    // Test writing and reading back
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val tempSrt = java.io.File(context.cacheDir, "test_subtitles.srt")
+    com.example.whisper.SrtGenerator.writeSrtFile(rawSegments, tempSrt)
+
+    org.junit.Assert.assertTrue("SRT file should exist", tempSrt.exists())
+    val parsed = com.example.whisper.SrtGenerator.parseSrtFile(tempSrt)
+    assertEquals(2, parsed.size)
+    assertEquals("مرحبا بكم في هذا الفيديو", parsed[0].text)
+    assertEquals(1200L, parsed[0].startMs)
+    assertEquals(4350L, parsed[0].endMs)
+  }
+
+  @Test
+  fun `verify AppModelManager registers Spleeter and Whisper models`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val manager = com.example.model.AppModelManager.getInstance(context)
+
+    val allModels = manager.models.value
+    org.junit.Assert.assertTrue("Models catalog should not be empty", allModels.isNotEmpty())
+
+    val spleeterModel = allModels.firstOrNull { it.id == "spleeter_2stems" }
+    org.junit.Assert.assertNotNull("Spleeter model should exist", spleeterModel)
+    org.junit.Assert.assertTrue("Spleeter model should be bundled", spleeterModel!!.isBundled)
+    assertEquals(com.example.model.ModelType.VOCAL_SEPARATION, spleeterModel.type)
+
+    val whisperTiny = allModels.firstOrNull { it.id == "whisper_tiny" }
+    org.junit.Assert.assertNotNull("Whisper Tiny should exist", whisperTiny)
+    assertEquals(com.example.model.ModelType.WHISPER_TRANSCRIPTION, whisperTiny!!.type)
+
+    val whisperBase = allModels.firstOrNull { it.id == "whisper_base" }
+    org.junit.Assert.assertNotNull("Whisper Base should exist", whisperBase)
+
+    val whisperSmall = allModels.firstOrNull { it.id == "whisper_small" }
+    org.junit.Assert.assertNotNull("Whisper Small should exist", whisperSmall)
+  }
 }

@@ -36,6 +36,9 @@ interface VideoDao {
         errorMessage: String?
     )
 
+    @Query("UPDATE videos SET subtitleUri = :subtitleUri WHERE id = :id")
+    suspend fun updateSubtitleUri(id: String, subtitleUri: String?)
+
     @Delete
     suspend fun deleteVideo(video: VideoItemEntity)
 

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.VolumeUp
 import com.example.onnx.AccelerationMode
 import androidx.compose.material3.Button
@@ -39,9 +40,12 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -83,6 +87,7 @@ import com.example.export.ExportFormat
 import com.example.ui.components.ExportConfirmDialog
 import com.example.ui.components.ExportOptionsDialog
 import com.example.ui.components.ProcessingOverlay
+import com.example.ui.components.TranscriptDialog
 import com.example.ui.locale.AppStrings
 import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
@@ -91,6 +96,8 @@ import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.StatusError
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.whisper.SrtGenerator
+import com.example.whisper.TranscriptionSegment
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
@@ -108,12 +115,17 @@ fun VideoPlayerScreen(
     elapsedTime: String = "00:00",
     estimatedRemaining: String? = null,
     isBackgroundProtected: Boolean = true,
+    isTranscriptionEnabled: Boolean = false,
+    hasWhisperModelInstalled: Boolean = false,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
     onExportVideo: (deleteOriginal: Boolean) -> Unit,
     onExportMedia: ((format: ExportFormat, deleteOriginal: Boolean) -> Unit)? = null,
     onCancelProcessing: (() -> Unit)? = null,
+    onToggleTranscription: ((Boolean) -> Unit)? = null,
+    onStartTranscription: (() -> Unit)? = null,
+    onOpenModelSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -125,6 +137,19 @@ fun VideoPlayerScreen(
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var useIsolatedVocals by remember { mutableStateOf(true) }
     var showExportConfirmDialog by remember { mutableStateOf(false) }
+    var showTranscriptDialog by remember { mutableStateOf(false) }
+
+    // Parse and observe subtitles if generated
+    val srtFile = remember(video.subtitleUri) {
+        video.subtitleUri?.let { File(it) }?.takeIf { it.exists() }
+    }
+    val subtitleSegments = remember(srtFile) {
+        srtFile?.let { SrtGenerator.parseSrtFile(it) } ?: emptyList()
+    }
+    val hasSubtitles = subtitleSegments.isNotEmpty()
+    val activeSubtitle = remember(currentPosition, subtitleSegments) {
+        subtitleSegments.firstOrNull { currentPosition in it.startMs..it.endMs }
+    }
 
     val isAudioSource = remember(video) {
         val path = video.videoUri.lowercase()
@@ -338,6 +363,31 @@ fun VideoPlayerScreen(
                             text = if (video.status == VideoStatus.ERROR) AppStrings.playbackUnavailable(lang) else AppStrings.preparingMedia(lang),
                             color = TextSecondary,
                             style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                // Real-time Subtitle Overlay on Video Surface
+                if (hasSubtitles && activeSubtitle != null) {
+                    val isArabic = activeSubtitle.text.any { c -> c.code in 0x0600..0x06FF || c.code in 0x0750..0x077F }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Black.copy(alpha = 0.85f),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                            .testTag("floating_subtitle_box")
+                    ) {
+                        Text(
+                            text = activeSubtitle.text,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                textDirection = if (isArabic) androidx.compose.ui.text.style.TextDirection.Rtl else androidx.compose.ui.text.style.TextDirection.Ltr
+                            ),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
                 }
@@ -557,6 +607,154 @@ fun VideoPlayerScreen(
                     Spacer(modifier = Modifier.height(20.dp))
 
                     if (video.status == VideoStatus.READY) {
+                        // Optional Whisper Speech Recognition & Subtitles Card
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = DarkSurface,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("transcription_card")
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Subtitles,
+                                            contentDescription = null,
+                                            tint = AccentTeal,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = AppStrings.transcribeVocalsToSubtitles(lang),
+                                                color = TextPrimary,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = if (hasSubtitles) "SRT Ready (${subtitleSegments.size} segments)" else "Real Offline Whisper ASR",
+                                                color = if (hasSubtitles) AccentTeal else TextSecondary,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+
+                                    Switch(
+                                        checked = isTranscriptionEnabled,
+                                        onCheckedChange = { onToggleTranscription?.invoke(it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.Black,
+                                            checkedTrackColor = AccentTeal,
+                                            uncheckedThumbColor = TextSecondary,
+                                            uncheckedTrackColor = DarkBackground
+                                        ),
+                                        modifier = Modifier.testTag("transcription_toggle_switch")
+                                    )
+                                }
+
+                                if (isTranscriptionEnabled) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    if (hasSubtitles) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = { showTranscriptDialog = true },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("view_transcript_button")
+                                            ) {
+                                                Text(
+                                                    text = AppStrings.viewTranscript(lang),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+
+                                            Button(
+                                                onClick = { showTranscriptDialog = true },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("export_srt_subtitles_button")
+                                            ) {
+                                                Text(
+                                                    text = AppStrings.exportSrtButton(lang),
+                                                    color = Color.Black,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        if (hasWhisperModelInstalled) {
+                                            Button(
+                                                onClick = { onStartTranscription?.invoke() },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("generate_subtitles_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Subtitles,
+                                                    contentDescription = null,
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = AppStrings.generateSubtitles(lang),
+                                                    color = Color.Black,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        } else {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = AppStrings.whisperModelNotInstalled(lang),
+                                                    color = StatusError,
+                                                    fontSize = 11.sp,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                TextButton(
+                                                    onClick = { onOpenModelSettings?.invoke() },
+                                                    modifier = Modifier.testTag("download_whisper_prompt_button")
+                                                ) {
+                                                    Text(
+                                                        text = AppStrings.downloadWhisperModel(lang),
+                                                        color = AccentTeal,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
                         Button(
                             onClick = { showExportConfirmDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
@@ -642,6 +840,20 @@ fun VideoPlayerScreen(
                     } else {
                         onExportVideo(deleteOriginal)
                     }
+                }
+            )
+        }
+
+        // Subtitles & Transcript Viewer Dialog with seek-on-tap and SRT export
+        if (showTranscriptDialog) {
+            TranscriptDialog(
+                segments = subtitleSegments,
+                currentPositionMs = currentPosition,
+                srtFile = srtFile,
+                onDismiss = { showTranscriptDialog = false },
+                onSeekTo = { targetMs ->
+                    player.seekTo(targetMs)
+                    showTranscriptDialog = false
                 }
             )
         }

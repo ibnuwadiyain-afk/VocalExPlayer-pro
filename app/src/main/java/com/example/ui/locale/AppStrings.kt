@@ -1156,4 +1156,184 @@ object AppStrings {
         AppLanguage.PORTUGUESE -> "Modelo: $modelName"
         else -> "Model: $modelName"
     }
+
+    fun whisperSpeechRecognition(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "التعرف على الصوت (Whisper)"
+        AppLanguage.SPANISH -> "Reconocimiento de voz (Whisper)"
+        AppLanguage.FRENCH -> "Reconnaissance vocale (Whisper)"
+        AppLanguage.GERMAN -> "Spracherkennung (Whisper)"
+        AppLanguage.JAPANESE -> "音声認識 (Whisper)"
+        AppLanguage.CHINESE -> "语音识别 (Whisper)"
+        AppLanguage.RUSSIAN -> "Распознавание речи (Whisper)"
+        AppLanguage.PORTUGUESE -> "Reconhecimento de voz (Whisper)"
+        else -> "Speech Recognition (Whisper)"
+    }
+
+    fun vocalSeparationModels(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "نماذج عزل الصوت"
+        AppLanguage.SPANISH -> "Modelos de separación vocal"
+        AppLanguage.FRENCH -> "Modèles de séparation vocale"
+        AppLanguage.GERMAN -> "Vokalisationsmodelle"
+        AppLanguage.JAPANESE -> "ボーカル分離モデル"
+        AppLanguage.CHINESE -> "人声分离模型"
+        AppLanguage.RUSSIAN -> "Модели разделения вокала"
+        AppLanguage.PORTUGUESE -> "Modelos de separação vocal"
+        else -> "Vocal Separation Models"
+    }
+
+    fun whisperModels(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "نماذج Whisper"
+        AppLanguage.SPANISH -> "Modelos de Whisper"
+        AppLanguage.FRENCH -> "Modèles Whisper"
+        AppLanguage.GERMAN -> "Whisper-Modelle"
+        AppLanguage.JAPANESE -> "Whisperモデル"
+        AppLanguage.CHINESE -> "Whisper 模型"
+        AppLanguage.RUSSIAN -> "Модели Whisper"
+        AppLanguage.PORTUGUESE -> "Modelos Whisper"
+        else -> "Whisper Models"
+    }
+
+    fun transcribeVocalsToSubtitles(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "تحويل الصوت المعزول إلى ترجمة نصية"
+        AppLanguage.SPANISH -> "Transcribir voces a subtítulos"
+        AppLanguage.FRENCH -> "Transcrire la voix en sous-titres"
+        AppLanguage.GERMAN -> "Gesang in Untertitel transkribieren"
+        AppLanguage.JAPANESE -> "ボーカルを字幕に書き起こす"
+        AppLanguage.CHINESE -> "将人声转录为字幕"
+        AppLanguage.RUSSIAN -> "Транскрибировать вокал в субтитры"
+        AppLanguage.PORTUGUESE -> "Transcrever vocais para legendas"
+        else -> "Transcribe vocals to subtitles"
+    }
+
+    fun whisperModelNotInstalled(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "نموذج Whisper غير مثبت."
+        AppLanguage.SPANISH -> "Modelo Whisper no instalado."
+        AppLanguage.FRENCH -> "Modèle Whisper non installé."
+        AppLanguage.GERMAN -> "Whisper-Modell nicht installiert."
+        AppLanguage.JAPANESE -> "Whisperモデルがインストールされていません。"
+        AppLanguage.CHINESE -> "未安装 Whisper 模型。"
+        AppLanguage.RUSSIAN -> "Модель Whisper не установлена."
+        AppLanguage.PORTUGUESE -> "Modelo Whisper não instalado."
+        else -> "Whisper model not installed."
+    }
+
+    fun downloadWhisperModel(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "تنزيل نموذج Whisper"
+        AppLanguage.SPANISH -> "Descargar modelo Whisper"
+        AppLanguage.FRENCH -> "Télécharger le modèle Whisper"
+        AppLanguage.GERMAN -> "Whisper-Modell herunterladen"
+        AppLanguage.JAPANESE -> "Whisperモデルをダウンロード"
+        AppLanguage.CHINESE -> "下载 Whisper 模型"
+        AppLanguage.RUSSIAN -> "Скачать модель Whisper"
+        AppLanguage.PORTUGUESE -> "Baixar modelo Whisper"
+        else -> "Download Whisper Model"
+    }
+
+    fun generateSubtitles(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "توليد الترجمة (Whisper)"
+        AppLanguage.SPANISH -> "Generar subtítulos (Whisper)"
+        AppLanguage.FRENCH -> "Générer les sous-titres (Whisper)"
+        AppLanguage.GERMAN -> "Untertitel generieren (Whisper)"
+        AppLanguage.JAPANESE -> "字幕を生成 (Whisper)"
+        AppLanguage.CHINESE -> "生成字幕 (Whisper)"
+        AppLanguage.RUSSIAN -> "Сгенерировать субтитры (Whisper)"
+        AppLanguage.PORTUGUESE -> "Gerar legendas (Whisper)"
+        else -> "Generate Subtitles (Whisper)"
+    }
+
+    fun subtitlesLabel(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "الترجمة"
+        AppLanguage.SPANISH -> "Subtítulos"
+        AppLanguage.FRENCH -> "Sous-titres"
+        AppLanguage.GERMAN -> "Untertitel"
+        AppLanguage.JAPANESE -> "字幕"
+        AppLanguage.CHINESE -> "字幕"
+        AppLanguage.RUSSIAN -> "Субтитры"
+        AppLanguage.PORTUGUESE -> "Legendas"
+        else -> "Subtitles"
+    }
+
+    fun exportSrtButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "تصدير ملف SRT"
+        AppLanguage.SPANISH -> "Exportar archivo SRT"
+        AppLanguage.FRENCH -> "Exporter le fichier SRT"
+        AppLanguage.GERMAN -> "SRT-Datei exportieren"
+        AppLanguage.JAPANESE -> "SRTファイルを書き出す"
+        AppLanguage.CHINESE -> "导出 SRT 字幕文件"
+        AppLanguage.RUSSIAN -> "Экспортировать файл SRT"
+        AppLanguage.PORTUGUESE -> "Exportar arquivo SRT"
+        else -> "Export SRT Subtitles"
+    }
+
+    fun transcriptionLanguage(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "لغة الترجمة"
+        AppLanguage.SPANISH -> "Idioma de transcripción"
+        AppLanguage.FRENCH -> "Langue de transcription"
+        AppLanguage.GERMAN -> "Transkriptionssprache"
+        AppLanguage.JAPANESE -> "文字起こし言語"
+        AppLanguage.CHINESE -> "转录语言"
+        AppLanguage.RUSSIAN -> "Язык транскрипции"
+        AppLanguage.PORTUGUESE -> "Idioma de transcrição"
+        else -> "Transcription Language"
+    }
+
+    fun installedBadge(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "مثبت"
+        AppLanguage.SPANISH -> "Instalado"
+        AppLanguage.FRENCH -> "Installé"
+        AppLanguage.GERMAN -> "Installiert"
+        AppLanguage.JAPANESE -> "インストール済み"
+        AppLanguage.CHINESE -> "已安装"
+        AppLanguage.RUSSIAN -> "Установлено"
+        AppLanguage.PORTUGUESE -> "Instalado"
+        else -> "Installed"
+    }
+
+    fun deleteModelButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "حذف النموذج"
+        AppLanguage.SPANISH -> "Eliminar modelo"
+        AppLanguage.FRENCH -> "Supprimer le modèle"
+        AppLanguage.GERMAN -> "Modell löschen"
+        AppLanguage.JAPANESE -> "モデルを削除"
+        AppLanguage.CHINESE -> "删除模型"
+        AppLanguage.RUSSIAN -> "Удалить модель"
+        AppLanguage.PORTUGUESE -> "Excluir modelo"
+        else -> "Delete Model"
+    }
+
+    fun viewTranscript(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "عرض النص الكامل"
+        AppLanguage.SPANISH -> "Ver transcripción completa"
+        AppLanguage.FRENCH -> "Voir la transcription complète"
+        AppLanguage.GERMAN -> "Vollständige Transkription anzeigen"
+        AppLanguage.JAPANESE -> "全体の文字起こしを表示"
+        AppLanguage.CHINESE -> "查看完整文字记录"
+        AppLanguage.RUSSIAN -> "Просмотреть полный текст"
+        AppLanguage.PORTUGUESE -> "Ver transcrição completa"
+        else -> "View Full Transcript"
+    }
+
+    fun retryTranscription(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "إعادة محاولة الترجمة"
+        AppLanguage.SPANISH -> "Reintentar transcripción"
+        AppLanguage.FRENCH -> "Réessayer la transcription"
+        AppLanguage.GERMAN -> "Transkription wiederholen"
+        AppLanguage.JAPANESE -> "文字起こしを再試行"
+        AppLanguage.CHINESE -> "重试转录"
+        AppLanguage.RUSSIAN -> "Повторить транскрипцию"
+        AppLanguage.PORTUGUESE -> "Tentar transcrição novamente"
+        else -> "Retry Transcription"
+    }
+
+    fun noSubtitlesGenerated(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "لم يتم إنشاء ترجمة بعد"
+        AppLanguage.SPANISH -> "Aún no se han generado subtítulos"
+        AppLanguage.FRENCH -> "Aucun sous-titre généré pour le moment"
+        AppLanguage.GERMAN -> "Noch keine Untertitel generiert"
+        AppLanguage.JAPANESE -> "字幕はまだ生成されていません"
+        AppLanguage.CHINESE -> "尚未生成字幕"
+        AppLanguage.RUSSIAN -> "Субтитры еще не созданы"
+        AppLanguage.PORTUGUESE -> "Nenhuma legenda gerada ainda"
+        else -> "No subtitles generated yet"
+    }
 }
