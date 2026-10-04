@@ -148,6 +148,15 @@ fun VideoListScreen(
     onDeleteModel: (String) -> Unit = {},
     onSetWhisperLanguage: (String) -> Unit = {},
     onImportCustomModelWithType: (Uri, com.example.model.ModelType) -> Unit = { uri, _ -> onImportCustomModel(uri) },
+    isBackupExporting: Boolean = false,
+    backupExportProgress: Float = 0f,
+    backupExportMessage: String? = null,
+    onClearBackupExportMessage: () -> Unit = {},
+    onExportModel: (String, Uri) -> Unit = { _, _ -> },
+    onBackupAllModels: (Uri) -> Unit = {},
+    onRestoreModels: (Uri) -> Unit = {},
+    onShareModel: (String) -> Unit = {},
+    onShareBackup: () -> Unit = {},
     resolutionState: com.example.MainViewModel.WebImportResolutionState? = null,
     onSubmitMediaUrl: (String) -> Unit = {},
     onProbeResolutions: (String) -> Unit = {},
@@ -907,6 +916,10 @@ fun VideoListScreen(
             selectedVocalModelId = selectedVocalModelId,
             selectedWhisperModelId = selectedWhisperModelId,
             whisperLanguage = whisperLanguage,
+            isBackupExporting = isBackupExporting,
+            backupExportProgress = backupExportProgress,
+            backupExportMessage = backupExportMessage,
+            onClearBackupExportMessage = onClearBackupExportMessage,
             onDismiss = { showModelDialog = false },
             onSelectAccelerationMode = onSelectAccelerationMode,
             onSelectModel = onSelectModel,
@@ -921,6 +934,11 @@ fun VideoListScreen(
                 onImportCustomModelWithType(uri, type)
                 showModelDialog = false
             },
+            onExportModel = onExportModel,
+            onBackupAllModels = onBackupAllModels,
+            onRestoreModels = onRestoreModels,
+            onShareModel = onShareModel,
+            onShareBackup = onShareBackup,
             onResetToBuiltIn = {
                 onResetToBuiltInModel()
                 showModelDialog = false

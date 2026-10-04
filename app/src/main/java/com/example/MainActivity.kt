@@ -80,6 +80,11 @@ class MainActivity : ComponentActivity() {
                     val isTranscriptionEnabled by viewModel.isTranscriptionEnabled.collectAsState()
                     val hasWhisperModelInstalled = models.any { it.type == com.example.model.ModelType.WHISPER_TRANSCRIPTION && it.isInstalled }
 
+                    val isBackupExporting by viewModel.isBackupExporting.collectAsState()
+                    val backupExportProgress by viewModel.backupExportProgress.collectAsState()
+                    val backupExportMessage by viewModel.backupExportMessage.collectAsState()
+                    val context = androidx.compose.ui.platform.LocalContext.current
+
                     var showModelSettingsDialogFromPlayer by remember { mutableStateOf(false) }
 
                     val savedFolders by viewModel.savedFolders.collectAsState()
@@ -144,6 +149,10 @@ class MainActivity : ComponentActivity() {
                                 selectedWhisperModelId = selectedWhisperModelId,
                                 whisperLanguage = whisperLanguage,
                                 initialTabIndex = 1,
+                                isBackupExporting = isBackupExporting,
+                                backupExportProgress = backupExportProgress,
+                                backupExportMessage = backupExportMessage,
+                                onClearBackupExportMessage = { viewModel.clearBackupExportMessage() },
                                 onDismiss = { showModelSettingsDialogFromPlayer = false },
                                 onSelectAccelerationMode = { mode -> viewModel.setAccelerationMode(mode) },
                                 onSelectModel = { id, type -> viewModel.selectModel(id, type) },
@@ -152,6 +161,11 @@ class MainActivity : ComponentActivity() {
                                 onSetWhisperLanguage = { langCode -> viewModel.setWhisperLanguage(langCode) },
                                 onImportCustomModel = { uri -> viewModel.importCustomModel(uri) },
                                 onImportCustomModelWithType = { uri, type -> viewModel.importCustomModelFile(uri, type) },
+                                onExportModel = { id, uri -> viewModel.exportModel(id, uri) },
+                                onBackupAllModels = { uri -> viewModel.backupAllModels(uri) },
+                                onRestoreModels = { uri -> viewModel.restoreModelsFromUri(uri) },
+                                onShareModel = { id -> viewModel.shareModelFile(context, id) },
+                                onShareBackup = { viewModel.shareAllModelsBackup(context) },
                                 onResetToBuiltIn = { viewModel.resetToBuiltInModel() }
                             )
                         }
@@ -167,11 +181,20 @@ class MainActivity : ComponentActivity() {
                             selectedVocalModelId = selectedVocalModelId,
                             selectedWhisperModelId = selectedWhisperModelId,
                             whisperLanguage = whisperLanguage,
+                            isBackupExporting = isBackupExporting,
+                            backupExportProgress = backupExportProgress,
+                            backupExportMessage = backupExportMessage,
+                            onClearBackupExportMessage = { viewModel.clearBackupExportMessage() },
                             onSelectModel = { id, type -> viewModel.selectModel(id, type) },
                             onDownloadModel = { id -> viewModel.downloadModel(id) },
                             onDeleteModel = { id -> viewModel.deleteModel(id) },
                             onSetWhisperLanguage = { langCode -> viewModel.setWhisperLanguage(langCode) },
                             onImportCustomModelWithType = { uri, type -> viewModel.importCustomModelFile(uri, type) },
+                            onExportModel = { id, uri -> viewModel.exportModel(id, uri) },
+                            onBackupAllModels = { uri -> viewModel.backupAllModels(uri) },
+                            onRestoreModels = { uri -> viewModel.restoreModelsFromUri(uri) },
+                            onShareModel = { id -> viewModel.shareModelFile(context, id) },
+                            onShareBackup = { viewModel.shareAllModelsBackup(context) },
                             downloadProgressState = downloadProgressState,
                             isDownloadingMedia = isDownloadingMedia,
                             downloadErrorMessage = downloadErrorMessage,

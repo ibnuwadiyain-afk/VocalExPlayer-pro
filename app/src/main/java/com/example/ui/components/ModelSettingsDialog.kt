@@ -21,10 +21,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Language
@@ -33,15 +32,14 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -80,6 +78,9 @@ import com.example.ui.theme.StatusError
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.whisper.WhisperTokenizer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun ModelSettingsDialog(
@@ -92,6 +93,10 @@ fun ModelSettingsDialog(
     selectedWhisperModelId: String? = null,
     whisperLanguage: String = "auto",
     initialTabIndex: Int = 0,
+    isBackupExporting: Boolean = false,
+    backupExportProgress: Float = 0f,
+    backupExportMessage: String? = null,
+    onClearBackupExportMessage: () -> Unit = {},
     onDismiss: () -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit = {},
     onSelectModel: (modelId: String, type: ModelType) -> Unit = { _, _ -> },
@@ -100,12 +105,18 @@ fun ModelSettingsDialog(
     onSetWhisperLanguage: (langCode: String) -> Unit = {},
     onImportCustomModel: (Uri) -> Unit = {},
     onImportCustomModelWithType: (Uri, ModelType) -> Unit = { uri, _ -> onImportCustomModel(uri) },
+    onExportModel: (modelId: String, destinationUri: Uri) -> Unit = { _, _ -> },
+    onBackupAllModels: (destinationUri: Uri) -> Unit = {},
+    onRestoreModels: (sourceUri: Uri) -> Unit = {},
+    onShareModel: (modelId: String) -> Unit = {},
+    onShareBackup: () -> Unit = {},
     onResetToBuiltIn: () -> Unit = {}
 ) {
     val lang = LocalAppLanguage.current
     var selectedTab by remember { mutableIntStateOf(initialTabIndex) }
-
     var targetImportType by remember { mutableStateOf(ModelType.VOCAL_SEPARATION) }
+    var modelToExport by remember { mutableStateOf<ModelEntity?>(null) }
+
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -114,7 +125,32 @@ fun ModelSettingsDialog(
         }
     }
 
-    val isCustom = !customModelPath.isNullOrBlank()
+    val exportSingleModelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        uri?.let { destUri ->
+            modelToExport?.let { model ->
+                onExportModel(model.id, destUri)
+            }
+        }
+    }
+
+    val backupAllLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri?.let { destUri ->
+            onBackupAllModels(destUri)
+        }
+    }
+
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { sourceUri ->
+            onRestoreModels(sourceUri)
+        }
+    }
+
     val vocalModels = models.filter { it.type == ModelType.VOCAL_SEPARATION }
     val whisperModels = models.filter { it.type == ModelType.WHISPER_TRANSCRIPTION }
 
@@ -144,16 +180,18 @@ fun ModelSettingsDialog(
                     .verticalScroll(rememberScrollState())
                     .testTag("model_settings_dialog")
             ) {
-                // Tab Row: Vocal Separation vs Speech Recognition (Whisper)
+                // Tab Row: Vocal Separation | Speech Recognition (Whisper) | Backup & Export
                 TabRow(
                     selectedTabIndex = selectedTab,
                     containerColor = DarkSurface,
                     contentColor = AccentTeal,
                     indicator = { tabPositions ->
-                        TabRowDefaults.SecondaryIndicator(
-                            Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                            color = AccentTeal
-                        )
+                        if (selectedTab < tabPositions.size) {
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                                color = AccentTeal
+                            )
+                        }
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -166,7 +204,7 @@ fun ModelSettingsDialog(
                                 Icon(
                                     imageVector = Icons.Default.GraphicEq,
                                     contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(15.dp),
                                     tint = if (selectedTab == 0) AccentTeal else TextSecondary
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -188,7 +226,7 @@ fun ModelSettingsDialog(
                                 Icon(
                                     imageVector = Icons.Default.Subtitles,
                                     contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(15.dp),
                                     tint = if (selectedTab == 1) AccentTeal else TextSecondary
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -201,43 +239,102 @@ fun ModelSettingsDialog(
                             }
                         }
                     )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        modifier = Modifier.testTag("tab_backup_models"),
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Storage,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                    tint = if (selectedTab == 2) AccentTeal else TextSecondary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = AppStrings.modelsBackupAndExport(lang),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (selectedTab == 2) AccentTeal else TextSecondary
+                                )
+                            }
+                        }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                if (selectedTab == 0) {
-                    // TAB 0: VOCAL SEPARATION
-                    VocalSeparationSettings(
-                        activeModelName = activeModelName,
-                        customModelPath = customModelPath,
-                        accelerationMode = accelerationMode,
-                        hardwareBackend = hardwareBackend,
-                        models = vocalModels,
-                        selectedModelId = selectedVocalModelId,
-                        onSelectModel = { onSelectModel(it, ModelType.VOCAL_SEPARATION) },
-                        onDownloadModel = onDownloadModel,
-                        onSelectAccelerationMode = onSelectAccelerationMode,
-                        onImportCustomModel = {
-                            targetImportType = ModelType.VOCAL_SEPARATION
-                            filePickerLauncher.launch(arrayOf("*/*"))
-                        },
-                        onResetToBuiltIn = onResetToBuiltIn
-                    )
-                } else {
-                    // TAB 1: WHISPER SPEECH RECOGNITION
-                    WhisperModelsSettings(
-                        models = whisperModels,
-                        selectedWhisperModelId = selectedWhisperModelId,
-                        whisperLanguage = whisperLanguage,
-                        onSelectModel = { onSelectModel(it, ModelType.WHISPER_TRANSCRIPTION) },
-                        onDownloadModel = onDownloadModel,
-                        onDeleteModel = onDeleteModel,
-                        onSetLanguage = onSetWhisperLanguage,
-                        onImportCustomModel = {
-                            targetImportType = ModelType.WHISPER_TRANSCRIPTION
-                            filePickerLauncher.launch(arrayOf("*/*"))
-                        }
-                    )
+                when (selectedTab) {
+                    0 -> {
+                        // TAB 0: VOCAL SEPARATION
+                        VocalSeparationSettings(
+                            activeModelName = activeModelName,
+                            customModelPath = customModelPath,
+                            accelerationMode = accelerationMode,
+                            hardwareBackend = hardwareBackend,
+                            models = vocalModels,
+                            selectedModelId = selectedVocalModelId,
+                            onSelectModel = { onSelectModel(it, ModelType.VOCAL_SEPARATION) },
+                            onDownloadModel = onDownloadModel,
+                            onDeleteModel = onDeleteModel,
+                            onExportModel = { model ->
+                                modelToExport = model
+                                exportSingleModelLauncher.launch(model.fileName)
+                            },
+                            onShareModel = onShareModel,
+                            onSelectAccelerationMode = onSelectAccelerationMode,
+                            onImportCustomModel = {
+                                targetImportType = ModelType.VOCAL_SEPARATION
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                            },
+                            onResetToBuiltIn = onResetToBuiltIn
+                        )
+                    }
+                    1 -> {
+                        // TAB 1: WHISPER SPEECH RECOGNITION
+                        WhisperModelsSettings(
+                            models = whisperModels,
+                            selectedWhisperModelId = selectedWhisperModelId,
+                            whisperLanguage = whisperLanguage,
+                            onSelectModel = { onSelectModel(it, ModelType.WHISPER_TRANSCRIPTION) },
+                            onDownloadModel = onDownloadModel,
+                            onDeleteModel = onDeleteModel,
+                            onExportModel = { model ->
+                                modelToExport = model
+                                exportSingleModelLauncher.launch(model.fileName)
+                            },
+                            onShareModel = onShareModel,
+                            onSetLanguage = onSetWhisperLanguage,
+                            onImportCustomModel = {
+                                targetImportType = ModelType.WHISPER_TRANSCRIPTION
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                            }
+                        )
+                    }
+                    else -> {
+                        // TAB 2: BACKUP & EXPORT
+                        BackupAndExportSettings(
+                            models = models,
+                            isBackupExporting = isBackupExporting,
+                            backupExportProgress = backupExportProgress,
+                            backupExportMessage = backupExportMessage,
+                            onClearBackupExportMessage = onClearBackupExportMessage,
+                            onBackupAll = {
+                                val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                                backupAllLauncher.launch("models_backup_$timeStamp.zip")
+                            },
+                            onShareBackup = onShareBackup,
+                            onRestoreBackup = {
+                                restoreBackupLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                            },
+                            onExportModel = { model ->
+                                modelToExport = model
+                                exportSingleModelLauncher.launch(model.fileName)
+                            },
+                            onShareModel = onShareModel
+                        )
+                    }
                 }
             }
         },
@@ -264,6 +361,9 @@ private fun VocalSeparationSettings(
     selectedModelId: String,
     onSelectModel: (String) -> Unit,
     onDownloadModel: (String) -> Unit,
+    onDeleteModel: (String) -> Unit,
+    onExportModel: (ModelEntity) -> Unit,
+    onShareModel: (String) -> Unit,
     onSelectAccelerationMode: (AccelerationMode) -> Unit,
     onImportCustomModel: () -> Unit,
     onResetToBuiltIn: () -> Unit
@@ -380,34 +480,26 @@ private fun VocalSeparationSettings(
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    // Active Model Box
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = DarkSurface,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Psychology,
-                    contentDescription = null,
-                    tint = AccentTeal,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (isCustom) AppStrings.customModelBadge(lang) else AppStrings.builtInModelBadge(lang),
-                    color = AccentTeal,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = activeModelName,
-                color = TextPrimary,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp
+    // Vocal Models List
+    Text(
+        text = AppStrings.vocalSeparationModels(lang),
+        color = TextSecondary,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold
+    )
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        models.forEach { model ->
+            ModelCardItem(
+                model = model,
+                isSelected = model.id == selectedModelId,
+                onSelectModel = onSelectModel,
+                onDownloadModel = onDownloadModel,
+                onDeleteModel = onDeleteModel,
+                onExportModel = onExportModel,
+                onShareModel = onShareModel
             )
         }
     }
@@ -473,6 +565,8 @@ private fun WhisperModelsSettings(
     onSelectModel: (String) -> Unit,
     onDownloadModel: (String) -> Unit,
     onDeleteModel: (String) -> Unit,
+    onExportModel: (ModelEntity) -> Unit,
+    onShareModel: (String) -> Unit,
     onSetLanguage: (String) -> Unit,
     onImportCustomModel: () -> Unit
 ) {
@@ -557,171 +651,29 @@ private fun WhisperModelsSettings(
         }
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(14.dp))
 
-    // Whisper Models Catalog Section
+    // Whisper Models Header
     Text(
         text = AppStrings.whisperModels(lang),
         color = TextSecondary,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold
     )
+
     Spacer(modifier = Modifier.height(8.dp))
 
-    if (models.isEmpty()) {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = DarkSurface,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = AppStrings.whisperModelNotInstalled(lang),
-                color = TextSecondary,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(12.dp)
-            )
-        }
-    } else {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         models.forEach { model ->
-            val isSelected = model.id == selectedWhisperModelId && model.isInstalled
-
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isSelected) DarkSurfaceVariant else DarkSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 5.dp)
-                    .then(
-                        if (isSelected) {
-                            Modifier.border(1.dp, AccentTeal, RoundedCornerShape(12.dp))
-                        } else Modifier
-                    )
-                    .clickable(enabled = model.isInstalled) {
-                        onSelectModel(model.id)
-                    }
-                    .testTag("whisper_model_${model.id}")
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                            contentDescription = null,
-                            tint = if (isSelected) AccentTeal else if (model.isInstalled) TextSecondary else TextSecondary.copy(alpha = 0.4f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = model.displayName,
-                                    color = if (model.isInstalled) TextPrimary else TextSecondary,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = if (model.isInstalled) AccentTeal.copy(alpha = 0.2f) else DarkBackground
-                                ) {
-                                    Text(
-                                        text = if (model.isInstalled) AppStrings.installedBadge(lang) else model.sizeDisplay,
-                                        color = if (model.isInstalled) AccentTeal else TextSecondary,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = model.description,
-                                color = TextSecondary,
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp
-                            )
-                        }
-
-                        // Action Button: Download, Downloading Progress, or Delete
-                        if (model.isDownloading) {
-                            val pct = ((model.downloadProgress ?: 0f) * 100).toInt()
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = "$pct%",
-                                    color = AccentTeal,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                if (model.downloadSpeedKbps > 0) {
-                                    Text(
-                                        text = "${model.downloadSpeedKbps} KB/s",
-                                        color = TextSecondary,
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            }
-                        } else if (!model.isInstalled) {
-                            Button(
-                                onClick = { onDownloadModel(model.id) },
-                                colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .padding(start = 6.dp)
-                                    .testTag("download_model_${model.id}")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CloudDownload,
-                                    contentDescription = null,
-                                    tint = Color.Black,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = model.sizeDisplay,
-                                    color = Color.Black,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        } else if (!model.isBundled) {
-                            IconButton(
-                                onClick = { onDeleteModel(model.id) },
-                                modifier = Modifier.testTag("delete_model_${model.id}")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = AppStrings.deleteModelButton(lang),
-                                    tint = StatusError,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    if (model.isDownloading && model.downloadProgress != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = { model.downloadProgress },
-                            color = AccentTeal,
-                            trackColor = DarkBackground,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(4.dp)
-                        )
-                    }
-
-                    if (!model.errorMessage.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = model.errorMessage,
-                            color = StatusError,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-            }
+            ModelCardItem(
+                model = model,
+                isSelected = model.id == selectedWhisperModelId,
+                onSelectModel = onSelectModel,
+                onDownloadModel = onDownloadModel,
+                onDeleteModel = onDeleteModel,
+                onExportModel = onExportModel,
+                onShareModel = onShareModel
+            )
         }
     }
 
@@ -749,5 +701,193 @@ private fun WhisperModelsSettings(
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp
         )
+    }
+}
+
+@Composable
+private fun ModelCardItem(
+    model: ModelEntity,
+    isSelected: Boolean,
+    onSelectModel: (String) -> Unit,
+    onDownloadModel: (String) -> Unit,
+    onDeleteModel: (String) -> Unit,
+    onExportModel: (ModelEntity) -> Unit,
+    onShareModel: (String) -> Unit
+) {
+    val lang = LocalAppLanguage.current
+    val isInstalledOrBundled = model.isInstalled || model.isBundled
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) DarkSurfaceVariant else DarkSurface,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (isSelected) {
+                    Modifier.border(1.dp, AccentTeal, RoundedCornerShape(12.dp))
+                } else Modifier
+            )
+            .clickable(enabled = isInstalledOrBundled) {
+                onSelectModel(model.id)
+            }
+            .testTag("model_card_${model.id}")
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (isSelected) AccentTeal else if (isInstalledOrBundled) TextSecondary else TextSecondary.copy(alpha = 0.4f),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = model.displayName,
+                            color = if (isInstalledOrBundled) TextPrimary else TextSecondary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (isInstalledOrBundled) AccentTeal.copy(alpha = 0.2f) else DarkBackground
+                        ) {
+                            Text(
+                                text = if (isInstalledOrBundled) AppStrings.installedBadge(lang) else model.sizeDisplay,
+                                color = if (isInstalledOrBundled) AccentTeal else TextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = model.description,
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp
+                    )
+                }
+
+                // Action Buttons: Downloading, Download, Export, Share, Delete
+                if (model.isDownloading) {
+                    val pct = ((model.downloadProgress ?: 0f) * 100).toInt()
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "$pct%",
+                            color = AccentTeal,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (model.downloadSpeedKbps > 0) {
+                            Text(
+                                text = "${model.downloadSpeedKbps} KB/s",
+                                color = TextSecondary,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                } else if (!isInstalledOrBundled) {
+                    Button(
+                        onClick = { onDownloadModel(model.id) },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .testTag("download_model_${model.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = model.sizeDisplay,
+                            color = Color.Black,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Export .onnx
+                        IconButton(
+                            onClick = { onExportModel(model) },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("card_export_model_${model.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = AppStrings.exportModelButton(lang),
+                                tint = AccentTeal,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Share
+                        IconButton(
+                            onClick = { onShareModel(model.id) },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("card_share_model_${model.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = AppStrings.shareModelButton(lang),
+                                tint = TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Delete (only if not bundled)
+                        if (!model.isBundled) {
+                            IconButton(
+                                onClick = { onDeleteModel(model.id) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("delete_model_${model.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = AppStrings.deleteModelButton(lang),
+                                    tint = StatusError,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (model.isDownloading && model.downloadProgress != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { model.downloadProgress },
+                    color = AccentTeal,
+                    trackColor = DarkBackground,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                )
+            }
+
+            if (!model.errorMessage.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = model.errorMessage,
+                    color = StatusError,
+                    fontSize = 11.sp
+                )
+            }
+        }
     }
 }

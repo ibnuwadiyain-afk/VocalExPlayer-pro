@@ -1,9 +1,12 @@
 package com.example.model
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
+import androidx.core.content.FileProvider
+import com.example.onnx.SpleeterInferenceEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,10 +14,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 class AppModelManager private constructor(private val context: Context) {
 
@@ -147,7 +159,32 @@ class AppModelManager private constructor(private val context: Context) {
                 localPath = if (isInstalled) targetFile.absolutePath else null,
                 sizeBytes = if (targetFile.exists()) targetFile.length() else template.sizeBytes
             )
+        }.toMutableList()
+
+        // Scan modelsDir for user-imported or restored ONNX models not in catalog templates
+        val catalogFiles = catalogTemplates.map { it.fileName }.toSet()
+        modelsDir.listFiles()?.filter {
+            it.isFile && it.name.endsWith(".onnx") && !catalogFiles.contains(it.name) && it.length() > 10_000L
+        }?.forEach { customFile ->
+            val isWhisper = customFile.name.contains("whisper", ignoreCase = true)
+            val modelType = if (isWhisper) ModelType.WHISPER_TRANSCRIPTION else ModelType.VOCAL_SEPARATION
+            updatedList.add(
+                ModelEntity(
+                    id = "custom_${customFile.nameWithoutExtension}",
+                    type = modelType,
+                    displayName = "Custom: ${customFile.name}",
+                    description = "Imported / Restored local neural model.",
+                    fileName = customFile.name,
+                    downloadUrl = "",
+                    sizeBytes = customFile.length(),
+                    sizeDisplay = "${(customFile.length() / (1024 * 1024))} MB",
+                    isBundled = false,
+                    isInstalled = true,
+                    localPath = customFile.absolutePath
+                )
+            )
         }
+
         _models.value = updatedList
     }
 
@@ -343,6 +380,314 @@ class AppModelManager private constructor(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import custom model: ${e.message}", e)
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Resolves the actual File on disk for a given model ID.
+     * If the model is the bundled Spleeter model, ensures it has been extracted from assets.
+     */
+    fun getModelFile(modelId: String): File? {
+        val model = getModelById(modelId) ?: return null
+        if (model.isBundled) {
+            return try {
+                SpleeterInferenceEngine(context).getOrExtractModelFile()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to extract bundled model: ${e.message}")
+                null
+            }
+        }
+        val file = File(modelsDir, model.fileName)
+        return if (file.exists() && file.length() > 10_000L) file else null
+    }
+
+    /**
+     * Exports a single installed model (.onnx) to a user-selected destination Uri via SAF.
+     */
+    suspend fun exportModelToUri(modelId: String, destinationUri: Uri): Result<Long> = withContext(Dispatchers.IO) {
+        val file = getModelFile(modelId)
+            ?: return@withContext Result.failure(IllegalStateException("Model file not found or not installed."))
+
+        try {
+            val outputStream = context.contentResolver.openOutputStream(destinationUri)
+                ?: return@withContext Result.failure(IllegalStateException("Cannot open destination output stream."))
+
+            var totalBytes = 0L
+            outputStream.use { out ->
+                FileInputStream(file).use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        out.write(buffer, 0, read)
+                        totalBytes += read
+                    }
+                    out.flush()
+                }
+            }
+            Log.i(TAG, "Exported model $modelId ($totalBytes bytes) to $destinationUri")
+            Result.success(totalBytes)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to export model $modelId: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Packages all installed models (vocal separation, Whisper, and custom models) into a ZIP archive
+     * with a metadata manifest. Writes directly to the provided destination Uri via SAF.
+     */
+    suspend fun backupAllModelsToUri(
+        destinationUri: Uri,
+        onProgress: (percent: Float, statusMessage: String) -> Unit = { _, _ -> }
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        refreshModelsList()
+        val installedModels = _models.value.filter { it.isInstalled || it.isBundled }
+        if (installedModels.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("No installed models found to back up."))
+        }
+
+        try {
+            val outputStream = context.contentResolver.openOutputStream(destinationUri)
+                ?: return@withContext Result.failure(IllegalStateException("Cannot open destination output stream."))
+
+            val totalCount = installedModels.size
+            var backedUpCount = 0
+
+            ZipOutputStream(BufferedOutputStream(outputStream)).use { zipOut ->
+                // 1. Create and write backup_manifest.json
+                val manifestJson = JSONObject().apply {
+                    put("version", 1)
+                    put("app", "VocalExtractor")
+                    put("timestamp", System.currentTimeMillis())
+                    put("modelCount", totalCount)
+
+                    val array = JSONArray()
+                    installedModels.forEach { m ->
+                        val obj = JSONObject().apply {
+                            put("id", m.id)
+                            put("type", m.type.name)
+                            put("displayName", m.displayName)
+                            put("description", m.description)
+                            put("fileName", m.fileName)
+                            put("sizeBytes", m.sizeBytes)
+                            put("isBundled", m.isBundled)
+                        }
+                        array.put(obj)
+                    }
+                    put("models", array)
+                }
+
+                zipOut.putNextEntry(ZipEntry("backup_manifest.json"))
+                zipOut.write(manifestJson.toString(2).toByteArray(StandardCharsets.UTF_8))
+                zipOut.closeEntry()
+
+                // 2. Package each model file into the ZIP
+                for ((index, model) in installedModels.withIndex()) {
+                    val file = getModelFile(model.id)
+                    if (file == null || !file.exists()) {
+                        Log.w(TAG, "Skipping model ${model.id}: file missing")
+                        continue
+                    }
+
+                    val progressBase = (index.toFloat() / totalCount)
+                    onProgress(progressBase, "Backing up ${model.displayName}…")
+
+                    zipOut.putNextEntry(ZipEntry(model.fileName))
+                    FileInputStream(file).use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            zipOut.write(buffer, 0, read)
+                        }
+                    }
+                    zipOut.closeEntry()
+                    backedUpCount++
+                }
+
+                zipOut.flush()
+            }
+
+            onProgress(1.0f, "Backup completed successfully! ($backedUpCount models)")
+            Result.success(backedUpCount)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to back up models: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Creates a temporary ZIP file containing all installed models, suitable for sharing via Intent.ACTION_SEND.
+     */
+    suspend fun createTemporaryBackupZipFile(
+        onProgress: (percent: Float, statusMessage: String) -> Unit = { _, _ -> }
+    ): Result<File> = withContext(Dispatchers.IO) {
+        val backupDir = File(context.cacheDir, "backups").apply { if (!exists()) mkdirs() }
+        val tempZip = File(backupDir, "models_backup_${System.currentTimeMillis()}.zip")
+
+        refreshModelsList()
+        val installedModels = _models.value.filter { it.isInstalled || it.isBundled }
+        if (installedModels.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("No installed models found to back up."))
+        }
+
+        try {
+            val totalCount = installedModels.size
+            var backedUpCount = 0
+
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zipOut ->
+                val manifestJson = JSONObject().apply {
+                    put("version", 1)
+                    put("app", "VocalExtractor")
+                    put("timestamp", System.currentTimeMillis())
+                    put("modelCount", totalCount)
+                    val array = JSONArray()
+                    installedModels.forEach { m ->
+                        val obj = JSONObject().apply {
+                            put("id", m.id)
+                            put("type", m.type.name)
+                            put("displayName", m.displayName)
+                            put("description", m.description)
+                            put("fileName", m.fileName)
+                            put("sizeBytes", m.sizeBytes)
+                        }
+                        array.put(obj)
+                    }
+                    put("models", array)
+                }
+
+                zipOut.putNextEntry(ZipEntry("backup_manifest.json"))
+                zipOut.write(manifestJson.toString(2).toByteArray(StandardCharsets.UTF_8))
+                zipOut.closeEntry()
+
+                for ((index, model) in installedModels.withIndex()) {
+                    val file = getModelFile(model.id) ?: continue
+                    val progressBase = (index.toFloat() / totalCount)
+                    onProgress(progressBase, "Archiving ${model.displayName}…")
+
+                    zipOut.putNextEntry(ZipEntry(model.fileName))
+                    FileInputStream(file).use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            zipOut.write(buffer, 0, read)
+                        }
+                    }
+                    zipOut.closeEntry()
+                    backedUpCount++
+                }
+                zipOut.flush()
+            }
+
+            onProgress(1.0f, "Models archive ready")
+            Result.success(tempZip)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create temp backup zip: ${e.message}", e)
+            if (tempZip.exists()) tempZip.delete()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Restores models from a user-selected ZIP backup file or single ONNX model.
+     * Extracts files into modelsDir and registers any custom or catalog models.
+     */
+    suspend fun restoreModelsFromBackupUri(
+        sourceUri: Uri,
+        onProgress: (percent: Float, statusMessage: String) -> Unit = { _, _ -> }
+    ): Result<List<ModelEntity>> = withContext(Dispatchers.IO) {
+        try {
+            val isZip = try {
+                context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                    val header = ByteArray(4)
+                    val read = stream.read(header)
+                    read == 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() && header[2] == 0x03.toByte() && header[3] == 0x04.toByte()
+                } ?: false
+            } catch (e: Exception) {
+                sourceUri.lastPathSegment?.endsWith(".zip", ignoreCase = true) == true ||
+                        context.contentResolver.getType(sourceUri)?.contains("zip", ignoreCase = true) == true
+            }
+
+            if (!isZip) {
+                // If it's a single .onnx file: import it directly
+                val imported = importCustomModel(sourceUri, ModelType.VOCAL_SEPARATION)
+                return@withContext if (imported.isSuccess) {
+                    Result.success(listOf(imported.getOrThrow()))
+                } else {
+                    Result.failure(imported.exceptionOrNull() ?: Exception("Failed to import model"))
+                }
+            }
+
+            val inputStream = context.contentResolver.openInputStream(sourceUri)
+                ?: return@withContext Result.failure(IllegalStateException("Cannot open backup input stream."))
+
+            val extractedFiles = mutableListOf<File>()
+
+            ZipInputStream(BufferedInputStream(inputStream)).use { zipIn ->
+                var entry: ZipEntry? = zipIn.nextEntry
+                var entryCount = 0
+
+                while (entry != null) {
+                    val entryName = File(entry.name).name // prevent directory traversal
+                    if (entryName.endsWith(".onnx", ignoreCase = true)) {
+                        onProgress(0.2f + (entryCount * 0.1f).coerceAtMost(0.7f), "Restoring $entryName…")
+                        val targetFile = File(modelsDir, entryName)
+                        val tempFile = File(modelsDir, "${entryName}.tmp")
+
+                        FileOutputStream(tempFile).use { out ->
+                            val buffer = ByteArray(64 * 1024)
+                            var read: Int
+                            while (zipIn.read(buffer).also { read = it } != -1) {
+                                out.write(buffer, 0, read)
+                            }
+                            out.flush()
+                        }
+
+                        if (tempFile.exists() && tempFile.length() > 10_000L) {
+                            if (targetFile.exists()) targetFile.delete()
+                            if (!tempFile.renameTo(targetFile)) {
+                                tempFile.copyTo(targetFile, overwrite = true)
+                                tempFile.delete()
+                            }
+                            extractedFiles.add(targetFile)
+                            entryCount++
+                        } else {
+                            tempFile.delete()
+                        }
+                    }
+                    zipIn.closeEntry()
+                    entry = zipIn.nextEntry
+                }
+            }
+
+            refreshModelsList()
+            onProgress(1.0f, "Restored ${extractedFiles.size} model(s) successfully!")
+            Result.success(_models.value.filter { m -> extractedFiles.any { it.name == m.fileName } })
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore models from backup: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Creates an ACTION_SEND Intent with FileProvider for sharing a model file.
+     */
+    fun createShareIntentForModel(modelId: String): Intent? {
+        val file = getModelFile(modelId) ?: return null
+        return try {
+            val contentUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            Intent(Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                putExtra(Intent.EXTRA_SUBJECT, file.name)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create share intent for model $modelId: ${e.message}", e)
+            null
         }
     }
 

@@ -291,4 +291,55 @@ class ExampleRobolectricTest {
     assertEquals(80, mel.size)
     assertEquals(3000, mel[0].size)
   }
+
+  @Test
+  fun `verify Model Backup Zip Creation and Manifest`() {
+    kotlinx.coroutines.runBlocking {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val manager = com.example.model.AppModelManager.getInstance(context)
+
+      // Ensure models list is refreshed
+      manager.refreshModelsList()
+
+      // Test creating temporary backup ZIP archive
+      var progressCalled = false
+      val zipResult = manager.createTemporaryBackupZipFile { pct, msg ->
+        progressCalled = true
+        org.junit.Assert.assertNotNull(msg)
+      }
+
+      org.junit.Assert.assertTrue("Backup ZIP should succeed", zipResult.isSuccess)
+      val zipFile = zipResult.getOrThrow()
+      org.junit.Assert.assertTrue("Backup ZIP file should exist on disk", zipFile.exists())
+      org.junit.Assert.assertTrue("Backup ZIP file should not be empty", zipFile.length() > 0)
+      org.junit.Assert.assertTrue("Progress callback should have been invoked", progressCalled)
+
+      // Verify ZIP contains backup_manifest.json
+      var hasManifest = false
+      val zipInputStream = java.util.zip.ZipInputStream(java.io.FileInputStream(zipFile))
+      var entry = zipInputStream.nextEntry
+      while (entry != null) {
+        if (entry.name == "backup_manifest.json") {
+          hasManifest = true
+          val content = zipInputStream.bufferedReader(java.nio.charset.StandardCharsets.UTF_8).readText()
+          val json = org.json.JSONObject(content)
+          org.junit.Assert.assertEquals("VocalExtractor", json.getString("app"))
+          org.junit.Assert.assertTrue(json.getInt("modelCount") >= 1)
+        }
+        entry = zipInputStream.nextEntry
+      }
+      zipInputStream.close()
+      org.junit.Assert.assertTrue("Backup ZIP must contain backup_manifest.json", hasManifest)
+
+      // Verify share intent creation
+      val spleeterModel = manager.models.value.first { it.id == "spleeter_2stems" }
+      val shareIntent = manager.createShareIntentForModel(spleeterModel.id)
+      org.junit.Assert.assertNotNull("Share intent should be generated", shareIntent)
+      org.junit.Assert.assertEquals(android.content.Intent.ACTION_SEND, shareIntent!!.action)
+      org.junit.Assert.assertEquals("application/octet-stream", shareIntent.type)
+
+      // Clean up
+      zipFile.delete()
+    }
+  }
 }

@@ -56,6 +56,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _modelInfoMessage = MutableStateFlow<String?>(null)
     val modelInfoMessage: StateFlow<String?> = _modelInfoMessage.asStateFlow()
 
+    // Model Backup & Export State
+    private val _isBackupExporting = MutableStateFlow(false)
+    val isBackupExporting: StateFlow<Boolean> = _isBackupExporting.asStateFlow()
+
+    private val _backupExportProgress = MutableStateFlow(0f)
+    val backupExportProgress: StateFlow<Float> = _backupExportProgress.asStateFlow()
+
+    private val _backupExportMessage = MutableStateFlow<String?>(null)
+    val backupExportMessage: StateFlow<String?> = _backupExportMessage.asStateFlow()
+
+    fun clearBackupExportMessage() {
+        _backupExportMessage.value = null
+    }
+
     private val _accelerationMode = MutableStateFlow<com.example.onnx.AccelerationMode>(
         com.example.onnx.AccelerationMode.fromId(prefs.getString("acceleration_mode", com.example.onnx.AccelerationMode.TURBO.id))
     )
@@ -645,6 +659,115 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun importCustomModelFile(uri: Uri, type: com.example.model.ModelType) {
         viewModelScope.launch {
             modelManager.importCustomModel(uri, type)
+        }
+    }
+
+    fun exportModel(modelId: String, destinationUri: Uri) {
+        viewModelScope.launch {
+            _isBackupExporting.value = true
+            _backupExportProgress.value = 0.2f
+            _backupExportMessage.value = "Exporting model…"
+            val result = modelManager.exportModelToUri(modelId, destinationUri)
+            _isBackupExporting.value = false
+            _backupExportProgress.value = 1.0f
+            if (result.isSuccess) {
+                val bytes = result.getOrNull() ?: 0L
+                val sizeMb = String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+                _backupExportMessage.value = "Model exported successfully ($sizeMb)"
+            } else {
+                _backupExportMessage.value = "Export failed: ${result.exceptionOrNull()?.message}"
+            }
+        }
+    }
+
+    fun backupAllModels(destinationUri: Uri) {
+        viewModelScope.launch {
+            _isBackupExporting.value = true
+            _backupExportProgress.value = 0.05f
+            _backupExportMessage.value = "Preparing models backup…"
+            val result = modelManager.backupAllModelsToUri(
+                destinationUri = destinationUri,
+                onProgress = { pct, msg ->
+                    _backupExportProgress.value = pct
+                    _backupExportMessage.value = msg
+                }
+            )
+            _isBackupExporting.value = false
+            _backupExportProgress.value = 1.0f
+            if (result.isSuccess) {
+                val count = result.getOrNull() ?: 0
+                _backupExportMessage.value = "Backup created successfully! ($count models)"
+            } else {
+                _backupExportMessage.value = "Backup failed: ${result.exceptionOrNull()?.message}"
+            }
+        }
+    }
+
+    fun restoreModelsFromUri(sourceUri: Uri) {
+        viewModelScope.launch {
+            _isBackupExporting.value = true
+            _backupExportProgress.value = 0.05f
+            _backupExportMessage.value = "Restoring models from backup…"
+            val result = modelManager.restoreModelsFromBackupUri(
+                sourceUri = sourceUri,
+                onProgress = { pct, msg ->
+                    _backupExportProgress.value = pct
+                    _backupExportMessage.value = msg
+                }
+            )
+            _isBackupExporting.value = false
+            _backupExportProgress.value = 1.0f
+            if (result.isSuccess) {
+                val list = result.getOrNull() ?: emptyList()
+                _backupExportMessage.value = "Restored ${list.size} model(s) successfully!"
+            } else {
+                _backupExportMessage.value = "Restore failed: ${result.exceptionOrNull()?.message}"
+            }
+        }
+    }
+
+    fun shareModelFile(context: android.content.Context, modelId: String) {
+        val intent = modelManager.createShareIntentForModel(modelId)
+        if (intent != null) {
+            context.startActivity(android.content.Intent.createChooser(intent, "Share Model"))
+        } else {
+            _backupExportMessage.value = "Cannot share model: file not found on disk"
+        }
+    }
+
+    fun shareAllModelsBackup(context: android.content.Context) {
+        viewModelScope.launch {
+            _isBackupExporting.value = true
+            _backupExportProgress.value = 0.1f
+            _backupExportMessage.value = "Creating temporary models backup archive…"
+            val result = modelManager.createTemporaryBackupZipFile(
+                onProgress = { pct, msg ->
+                    _backupExportProgress.value = pct
+                    _backupExportMessage.value = msg
+                }
+            )
+            _isBackupExporting.value = false
+            _backupExportProgress.value = 1.0f
+
+            if (result.isSuccess) {
+                val zipFile = result.getOrNull()
+                if (zipFile != null && zipFile.exists()) {
+                    val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        zipFile
+                    )
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(android.content.Intent.EXTRA_STREAM, contentUri)
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, zipFile.name)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(android.content.Intent.createChooser(intent, "Share Models Backup"))
+                }
+            } else {
+                _backupExportMessage.value = "Backup failed: ${result.exceptionOrNull()?.message}"
+            }
         }
     }
 

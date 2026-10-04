@@ -1348,4 +1348,124 @@ object AppStrings {
         AppLanguage.PORTUGUESE -> "Nenhuma legenda gerada ainda"
         else -> "No subtitles generated yet"
     }
+
+    fun modelsBackupAndExport(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "النسخ الاحتياطي وتصدير النماذج"
+        AppLanguage.SPANISH -> "Copia de seguridad y exportación de modelos"
+        AppLanguage.FRENCH -> "Sauvegarde et exportation des modèles"
+        AppLanguage.GERMAN -> "Modellsicherung & Export"
+        AppLanguage.JAPANESE -> "モデルのバックアップと書き出し"
+        AppLanguage.CHINESE -> "模型备份与导出"
+        AppLanguage.RUSSIAN -> "Резервное копирование и экспорт моделей"
+        AppLanguage.PORTUGUESE -> "Backup e exportação de modelos"
+        else -> "Models Backup & Export"
+    }
+
+    fun backupAllModelsButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "نسخ احتياطي لكافة النماذج (ZIP)"
+        AppLanguage.SPANISH -> "Copia de seguridad completa (ZIP)"
+        AppLanguage.FRENCH -> "Sauvegarder tous les modèles (ZIP)"
+        AppLanguage.GERMAN -> "Alle Modelle sichern (ZIP)"
+        AppLanguage.JAPANESE -> "全モデルを一括バックアップ (ZIP)"
+        AppLanguage.CHINESE -> "备份所有模型 (ZIP)"
+        AppLanguage.RUSSIAN -> "Создать резервную копию всех моделей (ZIP)"
+        AppLanguage.PORTUGUESE -> "Fazer backup de todos os modelos (ZIP)"
+        else -> "Backup All Models (ZIP)"
+    }
+
+    fun restoreModelsBackupButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "استعادة النماذج من نسخة احتياطية"
+        AppLanguage.SPANISH -> "Restaurar modelos desde copia"
+        AppLanguage.FRENCH -> "Restaurer les modèles"
+        AppLanguage.GERMAN -> "Modelle wiederherstellen"
+        AppLanguage.JAPANESE -> "バックアップから復元"
+        AppLanguage.CHINESE -> "从备份恢复模型"
+        AppLanguage.RUSSIAN -> "Восстановить модели из копии"
+        AppLanguage.PORTUGUESE -> "Restaurar modelos do backup"
+        else -> "Restore Models from Backup"
+    }
+
+    fun exportModelButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "تصدير النموذج"
+        AppLanguage.SPANISH -> "Exportar modelo"
+        AppLanguage.FRENCH -> "Exporter le modèle"
+        AppLanguage.GERMAN -> "Modell exportieren"
+        AppLanguage.JAPANESE -> "モデルを書き出す"
+        AppLanguage.CHINESE -> "导出模型"
+        AppLanguage.RUSSIAN -> "Экспортировать модель"
+        AppLanguage.PORTUGUESE -> "Exportar modelo"
+        else -> "Export Model"
+    }
+
+    fun shareModelButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "مشاركة ملف النموذج"
+        AppLanguage.SPANISH -> "Compartir archivo de modelo"
+        AppLanguage.FRENCH -> "Partager le modèle"
+        AppLanguage.GERMAN -> "Modell teilen"
+        AppLanguage.JAPANESE -> "モデルファイルを共有"
+        AppLanguage.CHINESE -> "分享模型文件"
+        AppLanguage.RUSSIAN -> "Поделиться файлом модели"
+        AppLanguage.PORTUGUESE -> "Compartilhar modelo"
+        else -> "Share Model File"
+    }
+
+    fun shareBackupButton(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "مشاركة النسخة الاحتياطية"
+        AppLanguage.SPANISH -> "Compartir copia de seguridad"
+        AppLanguage.FRENCH -> "Partager la sauvegarde"
+        AppLanguage.GERMAN -> "Sicherung teilen"
+        AppLanguage.JAPANESE -> "バックアップを共有"
+        AppLanguage.CHINESE -> "分享备份压缩包"
+        AppLanguage.RUSSIAN -> "Поделиться архивом резервной копии"
+        AppLanguage.PORTUGUESE -> "Compartilhar backup"
+        else -> "Share Backup Archive"
+    }
+
+    fun installedModelsHeader(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "النماذج المثبتة"
+        AppLanguage.SPANISH -> "Modelos instalados"
+        AppLanguage.FRENCH -> "Modèles installés"
+        AppLanguage.GERMAN -> "Installierte Modelle"
+        AppLanguage.JAPANESE -> "インストール済みモデル"
+        AppLanguage.CHINESE -> "已安装模型"
+        AppLanguage.RUSSIAN -> "Установленные модели"
+        AppLanguage.PORTUGUESE -> "Modelos instalados"
+        else -> "Installed Models"
+    }
+
+    fun backupExportSummary(count: Int, sizeMb: Long, lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "$count نماذج متوفرة محلياً ($sizeMb ميغابايت)"
+        AppLanguage.SPANISH -> "$count modelos disponibles localmente ($sizeMb MB)"
+        AppLanguage.FRENCH -> "$count modèle(s) disponible(s) localement ($sizeMb Mo)"
+        AppLanguage.GERMAN -> "$count Modelle lokal verfügbar ($sizeMb MB)"
+        AppLanguage.JAPANESE -> "利用可能なモデル: $count 件 ($sizeMb MB)"
+        AppLanguage.CHINESE -> "本地可用模型: $count 个 ($sizeMb MB)"
+        AppLanguage.RUSSIAN -> "Доступно локально моделей: $count ($sizeMb МБ)"
+        AppLanguage.PORTUGUESE -> "$count modelos disponíveis localmente ($sizeMb MB)"
+        else -> "$count model(s) available locally ($sizeMb MB)"
+    }
+
+    fun backupExportInProgress(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "جارٍ تجهيز النسخ الاحتياطي / التصدير…"
+        AppLanguage.SPANISH -> "Copia / Exportación en curso…"
+        AppLanguage.FRENCH -> "Sauvegarde / Exportation en cours…"
+        AppLanguage.GERMAN -> "Sicherung / Export läuft…"
+        AppLanguage.JAPANESE -> "バックアップ／エクスポート処理中…"
+        AppLanguage.CHINESE -> "备份/导出处理中…"
+        AppLanguage.RUSSIAN -> "Выполняется резервное копирование / экспорт…"
+        AppLanguage.PORTUGUESE -> "Backup / Exportação em andamento…"
+        else -> "Backup / Export in progress…"
+    }
+
+    fun noInstalledModels(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "لا توجد نماذج مثبتة حالياً للتصدير"
+        AppLanguage.SPANISH -> "No hay modelos instalados para exportar"
+        AppLanguage.FRENCH -> "Aucun modèle installé à exporter"
+        AppLanguage.GERMAN -> "Keine installierten Modelle zum Exportieren vorhanden"
+        AppLanguage.JAPANESE -> "エクスポート可能なモデルがありません"
+        AppLanguage.CHINESE -> "暂无已安装模型可导出"
+        AppLanguage.RUSSIAN -> "Нет установленных моделей для экспорта"
+        AppLanguage.PORTUGUESE -> "Nenhum modelo instalado para exportação"
+        else -> "No installed models available to export"
+    }
 }
