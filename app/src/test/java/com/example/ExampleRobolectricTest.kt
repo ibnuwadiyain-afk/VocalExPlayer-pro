@@ -283,7 +283,10 @@ class ExampleRobolectricTest {
   fun `verify WhisperAudioPreprocessor mel spectrogram computation`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val preprocessor = com.example.whisper.WhisperAudioPreprocessor(context)
-    val dummyAudio = FloatArray(480000) { (it % 100) / 100.0f }
+    val dummyAudio = FloatArray(480000)
+    for (i in 0 until 64000) {
+      dummyAudio[i] = kotlin.math.sin(2.0 * kotlin.math.PI * 440.0 * i / 16000.0).toFloat()
+    }
     val mel = preprocessor.computeMelSpectrogram(dummyAudio)
     assertEquals(80, mel.size)
     assertEquals(3000, mel[0].size)

@@ -1133,6 +1133,18 @@ object AppStrings {
         else -> "Cancel Extraction"
     }
 
+    fun cancelTranscription(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "إلغاء الترجمة"
+        AppLanguage.SPANISH -> "Cancelar transcripción"
+        AppLanguage.FRENCH -> "Annuler la transcription"
+        AppLanguage.GERMAN -> "Transkription abbrechen"
+        AppLanguage.JAPANESE -> "文字起こしを中止"
+        AppLanguage.CHINESE -> "取消转录"
+        AppLanguage.RUSSIAN -> "Отменить транскрипцию"
+        AppLanguage.PORTUGUESE -> "Cancelar transcrição"
+        else -> "Cancel Transcription"
+    }
+
     fun arabicNameSupportBadge(lang: AppLanguage) = when (lang) {
         AppLanguage.ARABIC -> "دعم كامل للغة العربية وتخطيط RTL وتصدير مقاطع الفيديو بأسماء عربية"
         AppLanguage.SPANISH -> "Compatibilidad total con RTL y exportación de video"

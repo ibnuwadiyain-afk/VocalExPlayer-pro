@@ -63,6 +63,7 @@ fun ProcessingOverlay(
     isBackgroundProtected: Boolean = true,
     lang: AppLanguage = AppLanguage.ARABIC,
     onCancel: (() -> Unit)? = null,
+    cancelButtonText: String? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -257,7 +258,7 @@ fun ProcessingOverlay(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = AppStrings.cancelExtraction(lang),
+                                text = cancelButtonText ?: AppStrings.cancelExtraction(lang),
                                 color = TextSecondary,
                                 fontSize = 13.sp
                             )

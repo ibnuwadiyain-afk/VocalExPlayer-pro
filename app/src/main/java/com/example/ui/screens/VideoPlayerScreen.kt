@@ -109,6 +109,7 @@ fun VideoPlayerScreen(
     video: VideoItemEntity,
     isProcessing: Boolean,
     processingProgress: Float,
+    processingMessage: String = "",
     activeModelName: String,
     accelerationMode: AccelerationMode = AccelerationMode.TURBO,
     hardwareBackend: String = "Multi-Core CPU",
@@ -816,16 +817,27 @@ fun VideoPlayerScreen(
             }
         }
 
+        val isWhisperPhase = processingMessage.contains("Whisper", ignoreCase = true) ||
+                processingMessage.contains("transcrib", ignoreCase = true) ||
+                processingMessage.contains("subtitle", ignoreCase = true)
+
+        val overlayMessage = if (processingMessage.isNotBlank()) {
+            processingMessage
+        } else {
+            AppStrings.extractingVocalsWithSpleeter(lang, activeModelName)
+        }
+
         // Centered Processing Overlay if video is NEW or PROCESSING
         ProcessingOverlay(
             isVisible = isProcessing || video.status == VideoStatus.PROCESSING || video.status == VideoStatus.NEW,
             progress = processingProgress,
-            message = AppStrings.extractingVocalsWithSpleeter(lang, activeModelName),
+            message = overlayMessage,
             elapsedTime = elapsedTime,
             estimatedRemaining = estimatedRemaining,
             isBackgroundProtected = isBackgroundProtected,
             lang = lang,
-            onCancel = onCancelProcessing
+            onCancel = onCancelProcessing,
+            cancelButtonText = if (isWhisperPhase) AppStrings.cancelTranscription(lang) else null
         )
 
         // Export Confirmation Dialog with Audio and Video options

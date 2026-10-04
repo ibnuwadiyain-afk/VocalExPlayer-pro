@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
                     val selectedVideo by viewModel.selectedVideo.collectAsState()
                     val isProcessing by viewModel.isProcessing.collectAsState()
                     val progress by viewModel.processingProgress.collectAsState()
+                    val processingMessage by viewModel.processingMessage.collectAsState()
                     val modelName by viewModel.customModelName.collectAsState()
                     val customModelPath by viewModel.customModelPath.collectAsState()
                     val modelInfoMessage by viewModel.modelInfoMessage.collectAsState()
@@ -112,6 +113,7 @@ class MainActivity : ComponentActivity() {
                             video = selectedVideo!!,
                             isProcessing = isProcessing,
                             processingProgress = progress,
+                            processingMessage = processingMessage,
                             activeModelName = modelName,
                             accelerationMode = accelerationMode,
                             hardwareBackend = hardwareBackend,
