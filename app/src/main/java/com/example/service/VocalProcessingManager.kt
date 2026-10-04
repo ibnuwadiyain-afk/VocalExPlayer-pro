@@ -297,7 +297,7 @@ object VocalProcessingManager {
         _activeVideoTitle.value = video.title
         _message.value = "Loading Whisper model (${whisperModel.displayName})… 0%"
         _isProcessing.value = true
-        _isBackgroundProtected.value = false
+        _isBackgroundProtected.value = true
 
         startTimeRealtime = SystemClock.elapsedRealtime()
         notifyServiceProgress()
@@ -325,13 +325,16 @@ object VocalProcessingManager {
 
             val srtResult: Result<File> = if (transResult.isSuccess) {
                 val srt = transResult.getOrNull()?.srtFile
-                if (srt != null) {
+                if (srt != null && srt.exists() && srt.length() > 0) {
                     db.videoDao().updateSubtitleUri(video.id, srt.absolutePath)
                     _progress.value = 1.0f
                     _message.value = "Subtitles generated successfully!"
                     Result.success(srt)
                 } else {
-                    Result.failure(IllegalStateException("No SRT output file created"))
+                    val ex = IllegalStateException("No subtitles generated from vocal track")
+                    _progress.value = 0f
+                    _message.value = "Transcription failed: no vocal speech detected"
+                    Result.failure(ex)
                 }
             } else {
                 val ex = transResult.exceptionOrNull() ?: Exception("Transcription failed")

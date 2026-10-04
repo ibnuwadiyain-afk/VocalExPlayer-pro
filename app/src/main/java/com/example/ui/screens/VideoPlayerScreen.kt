@@ -141,10 +141,11 @@ fun VideoPlayerScreen(
     var showTranscriptDialog by remember { mutableStateOf(false) }
 
     // Parse and observe subtitles if generated
-    val srtFile = remember(video.subtitleUri) {
-        video.subtitleUri?.let { File(it) }?.takeIf { it.exists() }
+    val srtFile = remember(video.subtitleUri, isProcessing) {
+        val path = video.subtitleUri ?: File(context.filesDir, "subtitles/vocal_${video.id}.srt").absolutePath
+        File(path).takeIf { it.exists() && it.length() > 0 }
     }
-    val subtitleSegments = remember(srtFile) {
+    val subtitleSegments = remember(srtFile, isProcessing) {
         srtFile?.let { SrtGenerator.parseSrtFile(it) } ?: emptyList()
     }
     val hasSubtitles = subtitleSegments.isNotEmpty()

@@ -230,12 +230,20 @@ fun ProcessingOverlay(
                                 modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
+                            val isTranscription = message.contains("whisper", ignoreCase = true) ||
+                                    message.contains("subtitle", ignoreCase = true) ||
+                                    message.contains("transcrib", ignoreCase = true)
+
+                            val badgeText = if (isBackgroundProtected) {
+                                AppStrings.backgroundProtectedNotice(lang)
+                            } else if (isTranscription) {
+                                AppStrings.transcribeVocalsToSubtitles(lang)
+                            } else {
+                                AppStrings.runningAiSeparation(lang)
+                            }
+
                             Text(
-                                text = if (isBackgroundProtected) {
-                                    AppStrings.backgroundProtectedNotice(lang)
-                                } else {
-                                    AppStrings.runningAiSeparation(lang)
-                                },
+                                text = badgeText,
                                 color = if (isBackgroundProtected) AccentTeal else TextSecondary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium

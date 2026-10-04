@@ -167,6 +167,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         LanguageManager.initialize(application)
         loadSavedFolders()
+        viewModelScope.launch {
+            videoList.collect { list ->
+                val current = _selectedVideo.value ?: return@collect
+                val updated = list.firstOrNull { it.id == current.id }
+                if (updated != null && (updated.subtitleUri != current.subtitleUri || updated.vocalUri != current.vocalUri || updated.status != current.status)) {
+                    _selectedVideo.value = updated
+                }
+            }
+        }
     }
 
     fun loadSavedFolders() {
