@@ -13,6 +13,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.FloatBuffer
+import java.nio.LongBuffer
 import kotlin.coroutines.coroutineContext
 
 class WhisperInferenceEngine(private val context: Context) {
@@ -55,6 +56,9 @@ class WhisperInferenceEngine(private val context: Context) {
         onProgress(0.05f, "Preparing audio for Whisper…")
         coroutineContext.ensureActive()
 
+        // 0. Ensure Whisper vocabulary is loaded into memory
+        WhisperTokenizer.loadVocabulary(context)
+
         // 1. Resample and extract 16kHz mono audio samples
         val monoSamples = try {
             preprocessor.loadAndResampleWav(vocalWavFile)
@@ -72,9 +76,10 @@ class WhisperInferenceEngine(private val context: Context) {
         onProgress(0.12f, "Loading Whisper neural model (${whisperModel.displayName})…")
         coroutineContext.ensureActive()
 
-        // 2. Initialize ONNX Runtime Session for Whisper
+        // 2. Initialize ONNX Runtime Session for Whisper (Encoder & optional Decoder)
         val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
         var session: OrtSession? = null
+        var decoderSession: OrtSession? = null
 
         try {
             val sessionOptions = OrtSession.SessionOptions().apply {
@@ -100,6 +105,24 @@ class WhisperInferenceEngine(private val context: Context) {
                 ortEnvironment.createSession(modelFile.absolutePath, safeOptions)
             }
 
+            // Check if companion decoder is available
+            val modelManager = AppModelManager.getInstance(context)
+            val decoderFile = modelManager.getDecoderFile(whisperModel.id)
+                ?: File(context.filesDir, "models/${whisperModel.id}_decoder.onnx").takeIf { it.exists() && it.length() > 100_000L }
+
+            if (decoderFile != null && decoderFile.exists()) {
+                try {
+                    val decOptions = OrtSession.SessionOptions().apply {
+                        setIntraOpNumThreads(numThreads)
+                        setInterOpNumThreads(1)
+                    }
+                    decoderSession = ortEnvironment.createSession(decoderFile.absolutePath, decOptions)
+                    Log.i(TAG, "Companion Whisper decoder loaded: ${decoderFile.name} (${decoderFile.length()} bytes)")
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Could not open companion decoder session: ${e.message}")
+                }
+            }
+
             onProgress(0.20f, "Transcribing vocals locally with Whisper…")
 
             // 3. Process audio chunks through the neural network
@@ -114,7 +137,8 @@ class WhisperInferenceEngine(private val context: Context) {
                 onProgress(chunkProgressBase, "Transcribing chunk ${index + 1}/$totalChunks ($pct%)…")
 
                 val chunkSegments = runChunkInference(
-                    session = session,
+                    encoderSession = session,
+                    decoderSession = decoderSession,
                     chunk = chunk,
                     languageCode = languageCode,
                     startIndex = globalSegmentIndex
@@ -185,7 +209,8 @@ class WhisperInferenceEngine(private val context: Context) {
             // Guarantee resource release: close native session
             try {
                 session?.close()
-                Log.d(TAG, "Whisper OrtSession closed and memory freed")
+                decoderSession?.close()
+                Log.d(TAG, "Whisper OrtSessions closed and memory freed")
             } catch (t: Throwable) {
                 Log.w(TAG, "Error closing OrtSession: ${t.message}")
             }
@@ -196,12 +221,13 @@ class WhisperInferenceEngine(private val context: Context) {
      * Runs forward inference on a single 30s chunk [80, 3000] and extracts timestamped text tokens.
      */
     private fun runChunkInference(
-        session: OrtSession,
+        encoderSession: OrtSession,
+        decoderSession: OrtSession?,
         chunk: WhisperAudioPreprocessor.AudioChunk,
         languageCode: String,
         startIndex: Int
     ): List<TranscriptionSegment> {
-        val inputNames = session.inputNames
+        val inputNames = encoderSession.inputNames
         val inputName = inputNames.firstOrNull {
             it.contains("mel", ignoreCase = true) || it.contains("input", ignoreCase = true) || it.contains("feature", ignoreCase = true)
         } ?: inputNames.iterator().next()
@@ -222,24 +248,42 @@ class WhisperInferenceEngine(private val context: Context) {
         val outputSegments = mutableListOf<TranscriptionSegment>()
 
         try {
-            val results = session.run(mapOf(inputName to tensor))
-            val outputName = session.outputNames.iterator().next()
+            val results = encoderSession.run(mapOf(inputName to tensor))
+            val outputName = encoderSession.outputNames.iterator().next()
             val outputValue = results[outputName]?.get()?.value
 
-            val tokens = mutableListOf<Int>()
-            val floats = mutableListOf<Float>()
-            extractTensorData(outputValue, tokens, floats)
-
-            // 1. If discrete tokens were generated (e.g. from Seq2Seq / Decoder model):
-            if (tokens.isNotEmpty()) {
-                val parsed = parseWhisperTokensIntoSegments(tokens, chunk.startTimeMs, startIndex)
-                outputSegments.addAll(parsed)
+            // 1. If companion decoder is loaded, run autoregressive decoding to generate true text
+            if (decoderSession != null) {
+                try {
+                    val decSegs = runAutoregressiveDecoding(
+                        decoderSession = decoderSession,
+                        encoderResults = results,
+                        chunk = chunk,
+                        languageCode = languageCode,
+                        startIndex = startIndex
+                    )
+                    outputSegments.addAll(decSegs)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Autoregressive decoding error: ${e.message}", e)
+                }
             }
 
-            // 2. If no text segments were produced or model is an acoustic encoder:
+            // 2. If discrete tokens were generated (e.g. from Seq2Seq model) and no decoder segments yet:
             if (outputSegments.isEmpty()) {
-                val acousticSegments = extractAcousticVocalSegments(chunk, startIndex, languageCode, floats)
-                outputSegments.addAll(acousticSegments)
+                val tokens = mutableListOf<Int>()
+                val floats = mutableListOf<Float>()
+                extractTensorData(outputValue, tokens, floats)
+
+                if (tokens.isNotEmpty()) {
+                    val parsed = parseWhisperTokensIntoSegments(tokens, chunk.startTimeMs, startIndex)
+                    outputSegments.addAll(parsed)
+                }
+
+                // 3. Fallback to acoustic speech formants if no tokens
+                if (outputSegments.isEmpty()) {
+                    val acousticSegments = extractAcousticVocalSegments(chunk, startIndex, languageCode, floats)
+                    outputSegments.addAll(acousticSegments)
+                }
             }
 
             results.close()
@@ -252,6 +296,107 @@ class WhisperInferenceEngine(private val context: Context) {
         }
 
         return outputSegments
+    }
+
+    private fun runAutoregressiveDecoding(
+        decoderSession: OrtSession,
+        encoderResults: OrtSession.Result,
+        chunk: WhisperAudioPreprocessor.AudioChunk,
+        languageCode: String,
+        startIndex: Int
+    ): List<TranscriptionSegment> {
+        val decInputNames = decoderSession.inputNames
+        val inputIdsName = decInputNames.firstOrNull { it.contains("input", ignoreCase = true) } ?: "input_ids"
+        val encHiddenName = decInputNames.firstOrNull {
+            it.contains("encoder", ignoreCase = true) || it.contains("hidden", ignoreCase = true)
+        } ?: "encoder_hidden_states"
+        val logitsName = decoderSession.outputNames.firstOrNull {
+            it.contains("logit", ignoreCase = true)
+        } ?: decoderSession.outputNames.iterator().next()
+
+        // Locate encoder hidden states tensor
+        val hiddenTensor = encoderResults.firstOrNull {
+            it.key.contains("hidden", ignoreCase = true)
+        }?.value as? OnnxTensor ?: encoderResults.iterator().next().value as? OnnxTensor
+            ?: return emptyList()
+
+        val langToken = WhisperTokenizer.getLanguageToken(languageCode) ?: 50259 // default en
+        val tokenSequence = mutableListOf<Long>(
+            WhisperTokenizer.START_OF_TRANSCRIPT.toLong(),
+            langToken.toLong(),
+            WhisperTokenizer.TRANSCRIBE.toLong(),
+            WhisperTokenizer.NO_TIMESTAMPS.toLong()
+        )
+        val generatedTokens = mutableListOf<Int>()
+        val maxTokens = 45
+
+        for (step in 0 until maxTokens) {
+            val seqLen = tokenSequence.size
+            val buf = LongBuffer.allocate(seqLen)
+            for (t in tokenSequence) buf.put(t)
+            buf.flip()
+
+            val idsTensor = OnnxTensor.createTensor(
+                ortEnvironment,
+                buf,
+                longArrayOf(1, seqLen.toLong())
+            )
+
+            try {
+                val decResult = decoderSession.run(mapOf(
+                    inputIdsName to idsTensor,
+                    encHiddenName to hiddenTensor
+                ))
+
+                val logitsValue = decResult[logitsName]?.get()?.value
+                var bestToken = -1
+
+                if (logitsValue is Array<*> && logitsValue.isNotEmpty()) {
+                    val batch0 = logitsValue[0]
+                    if (batch0 is Array<*>) {
+                        val lastStepLogits = batch0[seqLen - 1]
+                        if (lastStepLogits is FloatArray) {
+                            var maxVal = -Float.MAX_VALUE
+                            for (v in 0 until lastStepLogits.size) {
+                                if (v in 50258..51864) continue // Suppress control prompt tokens
+                                if (lastStepLogits[v] > maxVal) {
+                                    maxVal = lastStepLogits[v]
+                                    bestToken = v
+                                }
+                            }
+                        }
+                    }
+                }
+
+                decResult.close()
+
+                if (bestToken == -1 || bestToken == WhisperTokenizer.END_OF_TEXT || bestToken == 50256) {
+                    break
+                }
+
+                tokenSequence.add(bestToken.toLong())
+                generatedTokens.add(bestToken)
+            } catch (e: Exception) {
+                Log.w(TAG, "Autoregressive step $step failed: ${e.message}")
+                break
+            } finally {
+                idsTensor.close()
+            }
+        }
+
+        if (generatedTokens.isEmpty()) return emptyList()
+
+        val text = WhisperTokenizer.decodeTokens(generatedTokens)
+        if (text.isBlank()) return emptyList()
+
+        return listOf(
+            TranscriptionSegment(
+                index = startIndex,
+                startMs = chunk.startTimeMs,
+                endMs = chunk.endTimeMs,
+                text = text
+            )
+        )
     }
 
     private fun extractTensorData(

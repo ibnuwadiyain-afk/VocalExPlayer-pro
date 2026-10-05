@@ -45,6 +45,17 @@ class AppModelManager private constructor(private val context: Context) {
                 instance ?: AppModelManager(context.applicationContext).also { instance = it }
             }
         }
+
+        fun formatFileSize(bytes: Long): String {
+            if (bytes <= 0) return "0 B"
+            val mb = bytes.toDouble() / (1024.0 * 1024.0)
+            return if (mb >= 1.0) {
+                String.format(java.util.Locale.US, "%.1f MB", mb)
+            } else {
+                val kb = bytes.toDouble() / 1024.0
+                String.format(java.util.Locale.US, "%.1f KB", kb)
+            }
+        }
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -68,7 +79,7 @@ class AppModelManager private constructor(private val context: Context) {
             fileName = "spleeter_2stems.onnx",
             downloadUrl = "https://huggingface.co/manyeyes/spleeter-2stems-44k-onnx/resolve/main/spleeter_2stems.onnx",
             sizeBytes = 19_681_017L,
-            sizeDisplay = "19.7 MB",
+            sizeDisplay = formatFileSize(19_681_017L),
             isBundled = true
         ),
         ModelEntity(
@@ -77,9 +88,9 @@ class AppModelManager private constructor(private val context: Context) {
             displayName = "UVR MDX-Net Vocal Isolation",
             description = "Ultimate Vocal Remover MDX-Net model optimized for high-fidelity vocal extraction.",
             fileName = "uvr_mdxnet_voc.onnx",
-            downloadUrl = "https://huggingface.co/Anjok07/ultimatevocalremover_models/resolve/main/UVR_MDXNET_1_9703.onnx",
-            sizeBytes = 62_914_560L,
-            sizeDisplay = "60.0 MB",
+            downloadUrl = "https://huggingface.co/seanghay/uvr_models/resolve/main/UVR_MDXNET_1_9703.onnx",
+            sizeBytes = 29_704_436L,
+            sizeDisplay = formatFileSize(29_704_436L),
             isBundled = false
         ),
 
@@ -91,8 +102,8 @@ class AppModelManager private constructor(private val context: Context) {
             description = "Lightweight & fast OpenAI Whisper model. Supports Arabic, English, and 90+ languages offline.",
             fileName = "whisper_tiny.onnx",
             downloadUrl = "https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/encoder_model_quantized.onnx",
-            sizeBytes = 39_000_000L,
-            sizeDisplay = "39.0 MB",
+            sizeBytes = 40_586_061L,
+            sizeDisplay = formatFileSize(40_586_061L),
             isBundled = false
         ),
         ModelEntity(
@@ -102,8 +113,8 @@ class AppModelManager private constructor(private val context: Context) {
             description = "Balanced speed and accuracy. Excellent recognition for Arabic vocals and diverse accents.",
             fileName = "whisper_base.onnx",
             downloadUrl = "https://huggingface.co/onnx-community/whisper-base/resolve/main/onnx/encoder_model_quantized.onnx",
-            sizeBytes = 74_000_000L,
-            sizeDisplay = "74.0 MB",
+            sizeBytes = 76_511_492L,
+            sizeDisplay = formatFileSize(76_511_492L),
             isBundled = false
         ),
         ModelEntity(
@@ -113,11 +124,25 @@ class AppModelManager private constructor(private val context: Context) {
             description = "High precision speech recognition for complex audio, singing vocals, and multi-speaker tracks.",
             fileName = "whisper_small.onnx",
             downloadUrl = "https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/encoder_model_quantized.onnx",
-            sizeBytes = 180_000_000L,
-            sizeDisplay = "180.0 MB",
+            sizeBytes = 182_000_000L,
+            sizeDisplay = formatFileSize(182_000_000L),
             isBundled = false
         )
     )
+
+    fun getDecoderUrl(modelId: String): String? = when (modelId) {
+        "whisper_tiny" -> "https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/decoder_model_quantized.onnx"
+        "whisper_base" -> "https://huggingface.co/onnx-community/whisper-base/resolve/main/onnx/decoder_model_quantized.onnx"
+        "whisper_small" -> "https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/decoder_model_quantized.onnx"
+        else -> null
+    }
+
+    fun getDecoderFileName(modelId: String): String = "${modelId}_decoder.onnx"
+
+    fun getDecoderFile(modelId: String): File? {
+        val decoderFile = File(modelsDir, getDecoderFileName(modelId))
+        return if (decoderFile.exists() && decoderFile.length() > 100_000L) decoderFile else null
+    }
 
     private val _models = MutableStateFlow<List<ModelEntity>>(emptyList())
     val models: StateFlow<List<ModelEntity>> = _models.asStateFlow()
@@ -147,6 +172,7 @@ class AppModelManager private constructor(private val context: Context) {
     fun refreshModelsList() {
         val updatedList = catalogTemplates.map { template ->
             val targetFile = File(modelsDir, template.fileName)
+            val decoderFile = File(modelsDir, getDecoderFileName(template.id))
             val isInstalled = if (template.isBundled) {
                 // Bundled model is always available (either extracted or ready in assets)
                 true
@@ -154,17 +180,35 @@ class AppModelManager private constructor(private val context: Context) {
                 targetFile.exists() && targetFile.length() > 100_000L
             }
 
+            val actualSizeBytes = if (template.isBundled) {
+                template.sizeBytes
+            } else if (targetFile.exists()) {
+                val decLen = if (decoderFile.exists()) decoderFile.length() else 0L
+                targetFile.length() + decLen
+            } else {
+                template.sizeBytes
+            }
+
+            val actualSizeDisplay = if (template.isBundled) {
+                template.sizeDisplay
+            } else if (targetFile.exists()) {
+                formatFileSize(actualSizeBytes)
+            } else {
+                template.sizeDisplay
+            }
+
             template.copy(
                 isInstalled = isInstalled,
                 localPath = if (isInstalled) targetFile.absolutePath else null,
-                sizeBytes = if (targetFile.exists()) targetFile.length() else template.sizeBytes
+                sizeBytes = actualSizeBytes,
+                sizeDisplay = actualSizeDisplay
             )
         }.toMutableList()
 
         // Scan modelsDir for user-imported or restored ONNX models not in catalog templates
         val catalogFiles = catalogTemplates.map { it.fileName }.toSet()
         modelsDir.listFiles()?.filter {
-            it.isFile && it.name.endsWith(".onnx") && !catalogFiles.contains(it.name) && it.length() > 10_000L
+            it.isFile && it.name.endsWith(".onnx") && !catalogFiles.contains(it.name) && !it.name.endsWith("_decoder.onnx") && it.length() > 10_000L
         }?.forEach { customFile ->
             val isWhisper = customFile.name.contains("whisper", ignoreCase = true)
             val modelType = if (isWhisper) ModelType.WHISPER_TRANSCRIPTION else ModelType.VOCAL_SEPARATION
@@ -177,7 +221,7 @@ class AppModelManager private constructor(private val context: Context) {
                     fileName = customFile.name,
                     downloadUrl = "",
                     sizeBytes = customFile.length(),
-                    sizeDisplay = "${(customFile.length() / (1024 * 1024))} MB",
+                    sizeDisplay = formatFileSize(customFile.length()),
                     isBundled = false,
                     isInstalled = true,
                     localPath = customFile.absolutePath
@@ -236,62 +280,37 @@ class AppModelManager private constructor(private val context: Context) {
 
         val targetFile = File(modelsDir, model.fileName)
         val tempFile = File(modelsDir, "${model.fileName}.tmp")
+        val decoderUrl = getDecoderUrl(modelId)
+        val decoderFile = decoderUrl?.let { File(modelsDir, getDecoderFileName(modelId)) }
+        val tempDecoderFile = decoderUrl?.let { File(modelsDir, "${getDecoderFileName(modelId)}.tmp") }
 
         updateModelDownloadState(modelId, isDownloading = true, progress = 0f, speed = 0L)
 
         try {
-            val request = Request.Builder()
-                .url(model.downloadUrl)
-                .addHeader("User-Agent", "VocalExtractor-Android/1.0")
-                .get()
-                .build()
-
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IllegalStateException("Server returned HTTP ${response.code} for ${model.downloadUrl}")
+            // 1. Download primary / encoder model
+            downloadSingleFile(
+                url = model.downloadUrl,
+                tempFile = tempFile,
+                targetFile = targetFile,
+                onProgress = { p, speed ->
+                    val overallProgress = if (decoderUrl != null) p * 0.35f else p
+                    updateModelDownloadState(modelId, isDownloading = true, progress = overallProgress, speed = speed)
+                    onProgress(overallProgress, speed)
                 }
+            )
 
-                val body = response.body ?: throw IllegalStateException("Empty response body from model server")
-                val totalBytes = body.contentLength()
-                val inputStream: InputStream = body.byteStream()
-
-                FileOutputStream(tempFile).use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    var bytesReadTotal = 0L
-                    val startTime = System.currentTimeMillis()
-                    var read: Int
-
-                    while (inputStream.read(buffer).also { read = it } != -1) {
-                        output.write(buffer, 0, read)
-                        bytesReadTotal += read
-
-                        val percent = if (totalBytes > 0) {
-                            (bytesReadTotal.toFloat() / totalBytes).coerceIn(0f, 1f)
-                        } else {
-                            0.5f
-                        }
-
-                        val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000.0
-                        val speedKbps = if (elapsedSeconds > 0) {
-                            ((bytesReadTotal / 1024) / elapsedSeconds).toLong()
-                        } else 0L
-
-                        updateModelDownloadState(modelId, isDownloading = true, progress = percent, speed = speedKbps)
-                        onProgress(percent, speedKbps)
+            // 2. Download companion decoder model if applicable
+            if (decoderUrl != null && tempDecoderFile != null && decoderFile != null) {
+                downloadSingleFile(
+                    url = decoderUrl,
+                    tempFile = tempDecoderFile,
+                    targetFile = decoderFile,
+                    onProgress = { p, speed ->
+                        val overallProgress = 0.35f + (p * 0.65f)
+                        updateModelDownloadState(modelId, isDownloading = true, progress = overallProgress, speed = speed)
+                        onProgress(overallProgress, speed)
                     }
-                    output.flush()
-                }
-            }
-
-            if (!tempFile.exists() || tempFile.length() < 100_000L) {
-                tempFile.delete()
-                throw IllegalStateException("Downloaded model file is incomplete or corrupted.")
-            }
-
-            if (targetFile.exists()) targetFile.delete()
-            if (!tempFile.renameTo(targetFile)) {
-                tempFile.copyTo(targetFile, overwrite = true)
-                tempFile.delete()
+                )
             }
 
             Log.i(TAG, "Model $modelId downloaded successfully: ${targetFile.length()} bytes")
@@ -307,9 +326,70 @@ class AppModelManager private constructor(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to download model $modelId: ${e.message}", e)
             if (tempFile.exists()) tempFile.delete()
+            if (tempDecoderFile?.exists() == true) tempDecoderFile.delete()
             updateModelDownloadState(modelId, isDownloading = false, progress = null, speed = 0L, error = e.message)
             refreshModelsList()
             Result.failure(e)
+        }
+    }
+
+    private fun downloadSingleFile(
+        url: String,
+        tempFile: File,
+        targetFile: File,
+        onProgress: (percent: Float, speedKbps: Long) -> Unit
+    ) {
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("User-Agent", "VocalExtractor-Android/1.0")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Server returned HTTP ${response.code} for $url")
+            }
+
+            val body = response.body ?: throw IllegalStateException("Empty response body from model server")
+            val totalBytes = body.contentLength()
+            val inputStream: InputStream = body.byteStream()
+
+            FileOutputStream(tempFile).use { output ->
+                val buffer = ByteArray(64 * 1024)
+                var bytesReadTotal = 0L
+                val startTime = System.currentTimeMillis()
+                var read: Int
+
+                while (inputStream.read(buffer).also { read = it } != -1) {
+                    output.write(buffer, 0, read)
+                    bytesReadTotal += read
+
+                    val percent = if (totalBytes > 0) {
+                        (bytesReadTotal.toFloat() / totalBytes).coerceIn(0f, 1f)
+                    } else {
+                        0.5f
+                    }
+
+                    val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000.0
+                    val speedKbps = if (elapsedSeconds > 0) {
+                        ((bytesReadTotal / 1024) / elapsedSeconds).toLong()
+                    } else 0L
+
+                    onProgress(percent, speedKbps)
+                }
+                output.flush()
+            }
+        }
+
+        if (!tempFile.exists() || tempFile.length() < 100_000L) {
+            tempFile.delete()
+            throw IllegalStateException("Downloaded model file is incomplete or corrupted.")
+        }
+
+        if (targetFile.exists()) targetFile.delete()
+        if (!tempFile.renameTo(targetFile)) {
+            tempFile.copyTo(targetFile, overwrite = true)
+            tempFile.delete()
         }
     }
 
@@ -324,9 +404,13 @@ class AppModelManager private constructor(private val context: Context) {
         }
 
         val targetFile = File(modelsDir, model.fileName)
+        val decoderFile = File(modelsDir, getDecoderFileName(modelId))
         var deleted = false
         if (targetFile.exists()) {
             deleted = targetFile.delete()
+        }
+        if (decoderFile.exists()) {
+            decoderFile.delete()
         }
 
         if (_selectedWhisperModelId.value == modelId) {
@@ -501,6 +585,19 @@ class AppModelManager private constructor(private val context: Context) {
                         }
                     }
                     zipOut.closeEntry()
+
+                    val decFile = getDecoderFile(model.id)
+                    if (decFile != null && decFile.exists()) {
+                        zipOut.putNextEntry(ZipEntry(decFile.name))
+                        FileInputStream(decFile).use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                zipOut.write(buffer, 0, read)
+                            }
+                        }
+                        zipOut.closeEntry()
+                    }
                     backedUpCount++
                 }
 
@@ -573,6 +670,19 @@ class AppModelManager private constructor(private val context: Context) {
                         }
                     }
                     zipOut.closeEntry()
+
+                    val decFile = getDecoderFile(model.id)
+                    if (decFile != null && decFile.exists()) {
+                        zipOut.putNextEntry(ZipEntry(decFile.name))
+                        FileInputStream(decFile).use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                zipOut.write(buffer, 0, read)
+                            }
+                        }
+                        zipOut.closeEntry()
+                    }
                     backedUpCount++
                 }
                 zipOut.flush()

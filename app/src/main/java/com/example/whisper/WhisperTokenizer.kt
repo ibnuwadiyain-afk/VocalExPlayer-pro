@@ -1,5 +1,6 @@
 package com.example.whisper
 
+import android.content.Context
 import java.nio.charset.StandardCharsets
 
 object WhisperTokenizer {
@@ -81,6 +82,49 @@ object WhisperTokenizer {
         return LANGUAGE_TOKENS[langCode.lowercase()]
     }
 
+    private var vocabulary: Array<String>? = null
+
+    // GPT-2 byte-to-unicode decoder table mapping the 256 BPE Unicode chars to bytes
+    private val byteDecoder: Map<Char, Byte> by lazy {
+        val bs = mutableListOf<Int>()
+        for (i in '!'.code..'~'.code) bs.add(i)
+        for (i in '¡'.code..'¬'.code) bs.add(i)
+        for (i in '®'.code..'ÿ'.code) bs.add(i)
+
+        val cs = bs.toMutableList()
+        var n = 0
+        for (b in 0 until 256) {
+            if (b !in bs) {
+                bs.add(b)
+                cs.add(256 + n)
+                n++
+            }
+        }
+        val map = HashMap<Char, Byte>(256)
+        for (idx in 0 until cs.size) {
+            map[cs[idx].toChar()] = bs[idx].toByte()
+        }
+        map
+    }
+
+    @Synchronized
+    fun loadVocabulary(context: Context) {
+        if (vocabulary != null) return
+        try {
+            context.assets.open("models/whisper_vocab.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                val list = ArrayList<String>(51865)
+                var line = reader.readLine()
+                while (line != null) {
+                    list.add(line)
+                    line = reader.readLine()
+                }
+                vocabulary = list.toTypedArray()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("WhisperTokenizer", "Failed to load vocabulary: ${e.message}")
+        }
+    }
+
     fun isTimestampToken(tokenId: Int): Boolean {
         return tokenId in TIMESTAMP_BEGIN..TIMESTAMP_END
     }
@@ -106,18 +150,30 @@ object WhisperTokenizer {
      * Decodes a list of Byte-Level BPE or UTF-8 token IDs into a clean readable string.
      */
     fun decodeTokens(tokenIds: List<Int>): String {
-        val byteArray = mutableListOf<Byte>()
+        val vocab = vocabulary
+        val byteBuffer = java.io.ByteArrayOutputStream()
 
         for (token in tokenIds) {
-            if (token < 256) {
-                byteArray.add(token.toByte())
-            } else if (!isTimestampToken(token) && token < START_OF_TRANSCRIPT) {
-                // If the token corresponds to individual bytes or standard ASCII ranges
-                val lowByte = (token and 0xFF).toByte()
-                byteArray.add(lowByte)
+            if (token >= START_OF_TRANSCRIPT || isTimestampToken(token)) {
+                continue
+            }
+            if (vocab != null && token in vocab.indices) {
+                val tokenStr = vocab[token]
+                for (ch in tokenStr) {
+                    val b = byteDecoder[ch]
+                    if (b != null) {
+                        byteBuffer.write(b.toInt())
+                    } else {
+                        val utf8 = ch.toString().toByteArray(StandardCharsets.UTF_8)
+                        byteBuffer.write(utf8)
+                    }
+                }
+            } else if (token in 32..126) {
+                byteBuffer.write(token)
             }
         }
 
-        return String(byteArray.toByteArray(), StandardCharsets.UTF_8).trim()
+        val decoded = String(byteBuffer.toByteArray(), StandardCharsets.UTF_8).trim()
+        return decoded.replace(Regex("\\s+"), " ")
     }
 }

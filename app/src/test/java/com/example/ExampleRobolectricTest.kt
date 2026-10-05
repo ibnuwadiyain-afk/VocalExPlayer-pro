@@ -280,6 +280,40 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `verify Model Catalog true sizes and display formatting`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val manager = com.example.model.AppModelManager.getInstance(context)
+
+    val spleeter = manager.getModelById("spleeter_2stems")!!
+    assertEquals(19_681_017L, spleeter.sizeBytes)
+    assertEquals(com.example.model.AppModelManager.formatFileSize(19_681_017L), spleeter.sizeDisplay)
+
+    val uvr = manager.getModelById("uvr_mdxnet_voc")!!
+    assertEquals(29_704_436L, uvr.sizeBytes)
+    assertEquals(com.example.model.AppModelManager.formatFileSize(29_704_436L), uvr.sizeDisplay)
+    org.junit.Assert.assertTrue("UVR downloadUrl should be valid huggingface URL", uvr.downloadUrl.contains("seanghay"))
+
+    val whisperTiny = manager.getModelById("whisper_tiny")!!
+    assertEquals(40_586_061L, whisperTiny.sizeBytes)
+    assertEquals(com.example.model.AppModelManager.formatFileSize(40_586_061L), whisperTiny.sizeDisplay)
+    org.junit.Assert.assertNotNull("Whisper Tiny should have companion decoder URL", manager.getDecoderUrl("whisper_tiny"))
+
+    assertEquals("10.0 MB", com.example.model.AppModelManager.formatFileSize(10_485_760L))
+    assertEquals("28.3 MB", com.example.model.AppModelManager.formatFileSize(29_704_436L))
+    assertEquals("512.0 KB", com.example.model.AppModelManager.formatFileSize(524_288L))
+  }
+
+  @Test
+  fun `verify WhisperTokenizer vocabulary loading and token decoding`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    com.example.whisper.WhisperTokenizer.loadVocabulary(context)
+
+    val decoded = com.example.whisper.WhisperTokenizer.decodeTokens(listOf(7751, 1002))
+    org.junit.Assert.assertTrue("Decoded text should not be empty", decoded.isNotBlank())
+    assertEquals("hello world", decoded)
+  }
+
+  @Test
   fun `verify WhisperAudioPreprocessor mel spectrogram computation`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val preprocessor = com.example.whisper.WhisperAudioPreprocessor(context)
