@@ -132,4 +132,28 @@ class ExampleUnitTest {
         assertEquals("test_vid_123", com.example.service.VocalProcessingManager.activeVideoId.value)
         assertEquals("Test Song", com.example.service.VocalProcessingManager.activeVideoTitle.value)
     }
+
+    @Test
+    fun testDubbingTranslationConfiguration() {
+        val defaultConfig = com.example.dubbing.DubbingConfig()
+        assertFalse(defaultConfig.enableTranslation)
+        assertEquals(com.example.dubbing.translation.TranslationServiceType.ONLINE_FREE, defaultConfig.translationService)
+        assertEquals("auto", defaultConfig.sourceLanguageCode)
+
+        val spanishConfig = com.example.dubbing.DubbingConfig(
+            locale = java.util.Locale("es", "ES"),
+            enableTranslation = true,
+            translationService = com.example.dubbing.translation.TranslationServiceType.ONLINE_FREE,
+            targetLanguageCode = "es",
+            sourceLanguageCode = "en",
+            preTranslatedSegments = listOf(
+                com.example.whisper.TranscriptionSegment(1, 0L, 2000L, "Hola mundo")
+            )
+        )
+        assertTrue(spanishConfig.enableTranslation)
+        assertEquals("es", spanishConfig.targetLanguageCode)
+        assertEquals("en", spanishConfig.sourceLanguageCode)
+        assertEquals(1, spanishConfig.preTranslatedSegments?.size)
+        assertEquals("Hola mundo", spanishConfig.preTranslatedSegments?.first()?.text)
+    }
 }

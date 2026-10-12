@@ -1,5 +1,7 @@
 package com.example.dubbing
 
+import com.example.dubbing.translation.TranslationServiceType
+import com.example.whisper.TranscriptionSegment
 import java.util.Locale
 
 enum class DubbingMixMode(
@@ -34,5 +36,11 @@ data class DubbingConfig(
     val speechRate: Float = 1.0f,
     val pitch: Float = 1.0f,
     val mixMode: DubbingMixMode = DubbingMixMode.VIDEO_DUBBED_WITH_MUSIC,
-    val backgroundDuckingVolume: Float = 0.20f
+    val backgroundDuckingVolume: Float = 0.20f,
+    val enableTranslation: Boolean = false,
+    val translationService: TranslationServiceType = TranslationServiceType.ONLINE_FREE,
+    val targetLanguageCode: String = locale.language,
+    val sourceLanguageCode: String = "auto",
+    val preTranslatedSegments: List<TranscriptionSegment>? = null
 )
+

@@ -69,6 +69,7 @@ import com.example.data.model.VideoItemEntity
 import com.example.dubbing.DubbingConfig
 import com.example.dubbing.DubbingMixMode
 import com.example.dubbing.TtsDubbingEngine
+import com.example.dubbing.translation.TranslationServiceType
 import com.example.ui.locale.AppStrings
 import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
@@ -102,6 +103,14 @@ fun TtsDubbingDialog(
     var mixMode by remember { mutableStateOf(DubbingMixMode.VIDEO_DUBBED_WITH_MUSIC) }
     var duckingVolume by remember { mutableFloatStateOf(0.20f) }
     var isPreviewPlaying by remember { mutableStateOf(false) }
+
+    // Translation State
+    var enableTranslation by remember { mutableStateOf(false) }
+    var translationService by remember { mutableStateOf(TranslationServiceType.ONLINE_FREE) }
+    var translatedSegments by remember { mutableStateOf<List<TranscriptionSegment>?>(null) }
+    var isTranslating by remember { mutableStateOf(false) }
+    var translationProgressText by remember { mutableStateOf("") }
+    var translationError by remember { mutableStateOf<String?>(null) }
 
     // Detect initial locale from first subtitle text
     LaunchedEffect(segments) {
@@ -138,10 +147,16 @@ fun TtsDubbingDialog(
         }
     }
 
-    val samplePreviewText = remember(segments, selectedLocale) {
-        segments.firstOrNull { it.text.isNotBlank() }?.text
-            ?: if (selectedLocale.language == "ar") "مرحباً بكم في الدبلجة الصوتية الذكية"
-            else "Welcome to the AI voice dubbing preview."
+    val samplePreviewText = remember(segments, selectedLocale, enableTranslation, translatedSegments) {
+        if (enableTranslation && !translatedSegments.isNullOrEmpty()) {
+            translatedSegments?.firstOrNull { it.text.isNotBlank() }?.text
+                ?: if (selectedLocale.language == "ar") "مرحباً بكم في الدبلجة الصوتية الذكية"
+                else "Welcome to the AI voice dubbing preview."
+        } else {
+            segments.firstOrNull { it.text.isNotBlank() }?.text
+                ?: if (selectedLocale.language == "ar") "مرحباً بكم في الدبلجة الصوتية الذكية"
+                else "Welcome to the AI voice dubbing preview."
+        }
     }
 
     AlertDialog(
@@ -279,13 +294,36 @@ fun TtsDubbingDialog(
                                     )
                                 },
                                 onClick = {
-                                    selectedLocale = loc
+                                    if (selectedLocale != loc) {
+                                        selectedLocale = loc
+                                        translatedSegments = null
+                                    }
                                     isDropdownExpanded = false
                                 }
                             )
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Translation Configuration Section
+                TranslationConfigSection(
+                    enableTranslation = enableTranslation,
+                    onEnableTranslationChange = { enableTranslation = it },
+                    translationService = translationService,
+                    onTranslationServiceChange = { translationService = it },
+                    targetLocale = selectedLocale,
+                    segments = segments,
+                    translatedSegments = translatedSegments,
+                    onTranslatedSegmentsChange = { translatedSegments = it },
+                    isTranslating = isTranslating,
+                    onIsTranslatingChange = { isTranslating = it },
+                    translationProgressText = translationProgressText,
+                    onTranslationProgressTextChange = { translationProgressText = it },
+                    translationError = translationError,
+                    onTranslationErrorChange = { translationError = it }
+                )
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -487,7 +525,12 @@ fun TtsDubbingDialog(
                         speechRate = speechRate,
                         pitch = pitch,
                         mixMode = mixMode,
-                        backgroundDuckingVolume = duckingVolume
+                        backgroundDuckingVolume = duckingVolume,
+                        enableTranslation = enableTranslation,
+                        translationService = translationService,
+                        targetLanguageCode = selectedLocale.language,
+                        sourceLanguageCode = "auto",
+                        preTranslatedSegments = translatedSegments
                     )
                     onConfirmDubbing(config)
                 },

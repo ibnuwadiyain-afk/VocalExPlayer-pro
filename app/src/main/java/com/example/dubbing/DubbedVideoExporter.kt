@@ -123,11 +123,12 @@ object DubbedVideoExporter {
             val finalWav = dubbingResult.getOrThrow()
 
             // Export according to mixMode
+            val langSuffix = if (config.enableTranslation) "_${config.targetLanguageCode}" else ""
             when (config.mixMode) {
                 DubbingMixMode.VIDEO_DUBBED_ONLY,
                 DubbingMixMode.VIDEO_DUBBED_WITH_MUSIC -> {
                     onProgress(0.80f, "Muxing dubbed audio track with video stream...")
-                    val titleSuffix = if (config.mixMode == DubbingMixMode.VIDEO_DUBBED_WITH_MUSIC) "dubbed_music" else "dubbed"
+                    val titleSuffix = if (config.mixMode == DubbingMixMode.VIDEO_DUBBED_WITH_MUSIC) "dubbed_music$langSuffix" else "dubbed$langSuffix"
 
                     // Use VideoVocalsExporter to mux video track with dubbed audio
                     val muxResult = VideoVocalsExporter.exportVideoWithVocals(
@@ -148,21 +149,21 @@ object DubbedVideoExporter {
 
                 DubbingMixMode.AUDIO_DUBBED_WAV -> {
                     onProgress(0.85f, "Saving lossless dubbed audio track...")
-                    val targetFile = File(exportDir, "${sanitizedTitle}_dubbed_$timestamp.wav")
+                    val targetFile = File(exportDir, "${sanitizedTitle}_dubbed${langSuffix}_$timestamp.wav")
                     finalWav.copyTo(targetFile, overwrite = true)
-                    val mediaStore = saveAudioToMediaStore(context, targetFile, "${sanitizedTitle}_dubbed", "audio/wav", "wav")
+                    val mediaStore = saveAudioToMediaStore(context, targetFile, "${sanitizedTitle}_dubbed$langSuffix", "audio/wav", "wav")
                     onProgress(1.0f, "Dubbed audio (WAV) export complete!")
                     Result.success(ExportResult(targetFile, mediaStore.first, mediaStore.second))
                 }
 
                 DubbingMixMode.AUDIO_DUBBED_M4A -> {
                     onProgress(0.82f, "Encoding dubbed audio to AAC (M4A)...")
-                    val targetFile = File(exportDir, "${sanitizedTitle}_dubbed_$timestamp.m4a")
+                    val targetFile = File(exportDir, "${sanitizedTitle}_dubbed${langSuffix}_$timestamp.m4a")
                     encodeWavToM4a(finalWav, targetFile) { p ->
                         val mapped = 0.82f + (p * 0.16f)
                         onProgress(mapped, "Encoding M4A audio (${(mapped * 100).toInt()}%)...")
                     }
-                    val mediaStore = saveAudioToMediaStore(context, targetFile, "${sanitizedTitle}_dubbed", "audio/mp4", "m4a")
+                    val mediaStore = saveAudioToMediaStore(context, targetFile, "${sanitizedTitle}_dubbed$langSuffix", "audio/mp4", "m4a")
                     onProgress(1.0f, "Dubbed audio (M4A) export complete!")
                     Result.success(ExportResult(targetFile, mediaStore.first, mediaStore.second))
                 }
