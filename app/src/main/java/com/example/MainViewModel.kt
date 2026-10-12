@@ -436,6 +436,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         exportMedia(video, com.example.export.ExportFormat.VIDEO_VOCALS_MP4, deleteOriginalAfterExport)
     }
 
+    fun exportDubbedMedia(
+        video: VideoItemEntity,
+        segments: List<com.example.whisper.TranscriptionSegment>,
+        config: com.example.dubbing.DubbingConfig
+    ) {
+        viewModelScope.launch {
+            _isExporting.value = true
+            _exportProgress.value = 0.05f
+            _exportError.value = null
+            _exportResult.value = null
+
+            val context = getApplication<Application>()
+            val result = com.example.dubbing.DubbedVideoExporter.exportDubbedMedia(
+                context = context,
+                video = video,
+                segments = segments,
+                config = config,
+                onProgress = { progress, _ ->
+                    _exportProgress.value = progress
+                }
+            )
+
+            result.onSuccess { res ->
+                _exportResult.value = res
+                _isExporting.value = false
+            }.onFailure { err ->
+                _exportError.value = err.localizedMessage ?: "Dubbing export failed"
+                _isExporting.value = false
+            }
+        }
+    }
+
     fun shareExportResult(exportResult: com.example.export.ExportResult) {
         val context = getApplication<Application>()
         val fileName = exportResult.internalFile.name.lowercase()

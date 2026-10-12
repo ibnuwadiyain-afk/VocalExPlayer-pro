@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.AlertDialog
@@ -28,6 +29,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,7 +62,8 @@ fun TranscriptDialog(
     currentPositionMs: Long,
     srtFile: File?,
     onDismiss: () -> Unit,
-    onSeekTo: (Long) -> Unit
+    onSeekTo: (Long) -> Unit,
+    onOpenDubbing: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lang = LocalAppLanguage.current
@@ -111,17 +114,33 @@ fun TranscriptDialog(
                     )
                 }
 
-                if (srtFile != null && srtFile.exists()) {
-                    IconButton(
-                        onClick = { shareSrtFile(srtFile) },
-                        modifier = Modifier.testTag("share_srt_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = AppStrings.exportSrtButton(lang),
-                            tint = AccentTeal,
-                            modifier = Modifier.size(20.dp)
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (segments.isNotEmpty() && onOpenDubbing != null) {
+                        IconButton(
+                            onClick = onOpenDubbing,
+                            modifier = Modifier.testTag("title_dub_voice_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.RecordVoiceOver,
+                                contentDescription = "Dub Video with TTS",
+                                tint = AccentTeal,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    if (srtFile != null && srtFile.exists()) {
+                        IconButton(
+                            onClick = { shareSrtFile(srtFile) },
+                            modifier = Modifier.testTag("share_srt_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = AppStrings.exportSrtButton(lang),
+                                tint = AccentTeal,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -205,11 +224,37 @@ fun TranscriptDialog(
                     }
                 }
 
-                if (srtFile != null && srtFile.exists()) {
+                if (segments.isNotEmpty() && onOpenDubbing != null) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Button(
-                        onClick = { shareSrtFile(srtFile) },
+                        onClick = onOpenDubbing,
                         colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("open_dubbing_dialog_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RecordVoiceOver,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Dub Video with Android TTS",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                if (srtFile != null && srtFile.exists()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { shareSrtFile(srtFile) },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -218,15 +263,13 @@ fun TranscriptDialog(
                         Icon(
                             imageVector = Icons.Default.FileDownload,
                             contentDescription = null,
-                            tint = Color.Black,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = AppStrings.exportSrtButton(lang),
-                            color = Color.Black,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                     }
                 }

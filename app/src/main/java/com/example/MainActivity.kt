@@ -135,7 +135,8 @@ class MainActivity : ComponentActivity() {
                             onCancelProcessing = { viewModel.cancelSeparation() },
                             onToggleTranscription = { viewModel.toggleTranscriptionEnabled(it) },
                             onStartTranscription = { viewModel.startTranscriptionOnly(selectedVideo!!) },
-                            onOpenModelSettings = { showModelSettingsDialogFromPlayer = true }
+                            onOpenModelSettings = { showModelSettingsDialogFromPlayer = true },
+                            onExportDubbed = { v, segs, cfg -> viewModel.exportDubbedMedia(v, segs, cfg) }
                         )
 
                         if (showModelSettingsDialogFromPlayer) {

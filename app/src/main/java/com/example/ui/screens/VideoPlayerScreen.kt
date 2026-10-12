@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
@@ -88,6 +89,8 @@ import com.example.ui.components.ExportConfirmDialog
 import com.example.ui.components.ExportOptionsDialog
 import com.example.ui.components.ProcessingOverlay
 import com.example.ui.components.TranscriptDialog
+import com.example.ui.components.TtsDubbingDialog
+import com.example.dubbing.DubbingConfig
 import com.example.ui.locale.AppStrings
 import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
@@ -127,6 +130,7 @@ fun VideoPlayerScreen(
     onToggleTranscription: ((Boolean) -> Unit)? = null,
     onStartTranscription: (() -> Unit)? = null,
     onOpenModelSettings: (() -> Unit)? = null,
+    onExportDubbed: ((video: VideoItemEntity, segments: List<TranscriptionSegment>, config: DubbingConfig) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -139,6 +143,7 @@ fun VideoPlayerScreen(
     var useIsolatedVocals by remember { mutableStateOf(true) }
     var showExportConfirmDialog by remember { mutableStateOf(false) }
     var showTranscriptDialog by remember { mutableStateOf(false) }
+    var showDubbingDialog by remember { mutableStateOf(false) }
 
     // Parse and observe subtitles if generated
     val srtFile = remember(video.subtitleUri, isProcessing) {
@@ -686,15 +691,22 @@ fun VideoPlayerScreen(
                                             }
 
                                             Button(
-                                                onClick = { showTranscriptDialog = true },
+                                                onClick = { showDubbingDialog = true },
                                                 shape = RoundedCornerShape(8.dp),
                                                 colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
                                                 modifier = Modifier
                                                     .weight(1f)
-                                                    .testTag("export_srt_subtitles_button")
+                                                    .testTag("dub_video_tts_button")
                                             ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.RecordVoiceOver,
+                                                    contentDescription = null,
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                    text = AppStrings.exportSrtButton(lang),
+                                                    text = "Dub Video",
                                                     color = Color.Black,
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold
@@ -867,6 +879,23 @@ fun VideoPlayerScreen(
                 onSeekTo = { targetMs ->
                     player.seekTo(targetMs)
                     showTranscriptDialog = false
+                },
+                onOpenDubbing = {
+                    showDubbingDialog = true
+                }
+            )
+        }
+
+        // Android TTS Voice Dubbing Dialog
+        if (showDubbingDialog) {
+            TtsDubbingDialog(
+                video = video,
+                segments = subtitleSegments,
+                onDismiss = { showDubbingDialog = false },
+                onConfirmDubbing = { config ->
+                    showDubbingDialog = false
+                    showTranscriptDialog = false
+                    onExportDubbed?.invoke(video, subtitleSegments, config)
                 }
             )
         }
