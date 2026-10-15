@@ -172,6 +172,7 @@ class ProgressiveVideoMerger(
         val videoExtractor = MediaExtractor()
         var audioEncoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
+        var muxerStarted = false
 
         try {
             // 1. Inspect source video track
@@ -232,15 +233,10 @@ class ProgressiveVideoMerger(
             audioEncoder.configure(aacFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             audioEncoder.start()
 
-            // 3. Configure MediaMuxer
-            muxer = MediaMuxer(tempOutputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            if (rotation != 0) {
-                muxer.setOrientationHint(rotation)
-            }
-
-            val muxerVideoTrack = muxer.addTrack(videoFormat)
+            // 3. MediaMuxer will be instantiated when AAC format is ready from encoder
+            var muxerVideoTrack = -1
             var muxerAudioTrack = -1
-            var muxerStarted = false
+            muxerStarted = false
 
             val encoderBufferInfo = MediaCodec.BufferInfo()
             val videoBuffer = ByteBuffer.allocateDirect(2 * 1024 * 1024)
@@ -287,8 +283,13 @@ class ProgressiveVideoMerger(
                                     drainEncoderAndMux(
                                         audioEncoder = audioEncoder,
                                         encoderBufferInfo = encoderBufferInfo,
-                                        muxer = muxer,
-                                        muxerVideoTrack = muxerVideoTrack,
+                                        getMuxer = { muxer },
+                                        setMuxer = { muxer = it },
+                                        videoFormat = videoFormat,
+                                        rotation = rotation,
+                                        tempFile = tempOutputFile,
+                                        getMuxerVideoTrack = { muxerVideoTrack },
+                                        setMuxerVideoTrack = { muxerVideoTrack = it },
                                         getMuxerAudioTrack = { muxerAudioTrack },
                                         setMuxerAudioTrack = { muxerAudioTrack = it },
                                         isMuxerStarted = { muxerStarted },
@@ -309,8 +310,13 @@ class ProgressiveVideoMerger(
                 drainEncoderAndMux(
                     audioEncoder = audioEncoder,
                     encoderBufferInfo = encoderBufferInfo,
-                    muxer = muxer,
-                    muxerVideoTrack = muxerVideoTrack,
+                    getMuxer = { muxer },
+                    setMuxer = { muxer = it },
+                    videoFormat = videoFormat,
+                    rotation = rotation,
+                    tempFile = tempOutputFile,
+                    getMuxerVideoTrack = { muxerVideoTrack },
+                    setMuxerVideoTrack = { muxerVideoTrack = it },
                     getMuxerAudioTrack = { muxerAudioTrack },
                     setMuxerAudioTrack = { muxerAudioTrack = it },
                     isMuxerStarted = { muxerStarted },
@@ -332,7 +338,7 @@ class ProgressiveVideoMerger(
                 }
 
                 // If audio finished, drain remaining video frames
-                if (sawEncoderEos && !sawVideoEos && muxerStarted) {
+                if (sawEncoderEos && !sawVideoEos && muxerStarted && muxer != null && muxerVideoTrack != -1) {
                     while (!sawVideoEos && !isCancelled) {
                         videoBuffer.clear()
                         val sampleSize = videoExtractor.readSampleData(videoBuffer, 0)
@@ -355,8 +361,8 @@ class ProgressiveVideoMerger(
                 }
             }
 
-            // Finalize muxer
-            if (muxerStarted) {
+            // Finalize muxer safely only if started
+            if (muxerStarted && muxer != null) {
                 try {
                     muxer.stop()
                 } catch (e: Exception) {
@@ -381,15 +387,24 @@ class ProgressiveVideoMerger(
         } finally {
             try { videoExtractor.release() } catch (_: Exception) {}
             try { audioEncoder?.stop(); audioEncoder?.release() } catch (_: Exception) {}
-            try { muxer?.release() } catch (_: Exception) {}
+            try {
+                if (muxerStarted && muxer != null) {
+                    muxer.release()
+                }
+            } catch (_: Exception) {}
         }
     }
 
     private inline fun drainEncoderAndMux(
         audioEncoder: MediaCodec,
         encoderBufferInfo: MediaCodec.BufferInfo,
-        muxer: MediaMuxer,
-        muxerVideoTrack: Int,
+        getMuxer: () -> MediaMuxer?,
+        setMuxer: (MediaMuxer) -> Unit,
+        videoFormat: MediaFormat,
+        rotation: Int,
+        tempFile: File,
+        getMuxerVideoTrack: () -> Int,
+        setMuxerVideoTrack: (Int) -> Unit,
         getMuxerAudioTrack: () -> Int,
         setMuxerAudioTrack: (Int) -> Unit,
         isMuxerStarted: () -> Boolean,
@@ -403,14 +418,30 @@ class ProgressiveVideoMerger(
         val outIdx = audioEncoder.dequeueOutputBuffer(encoderBufferInfo, TIMEOUT_USEC)
         if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
             val newFormat = audioEncoder.outputFormat
-            setMuxerAudioTrack(muxer.addTrack(newFormat))
-            muxer.start()
-            setMuxerStarted(true)
+            if (!isMuxerStarted()) {
+                try {
+                    val m = MediaMuxer(tempFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                    if (rotation != 0) {
+                        m.setOrientationHint(rotation)
+                    }
+                    val vTrack = m.addTrack(videoFormat)
+                    val aTrack = m.addTrack(newFormat)
+                    m.start()
+                    setMuxer(m)
+                    setMuxerVideoTrack(vTrack)
+                    setMuxerAudioTrack(aTrack)
+                    setMuxerStarted(true)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start MediaMuxer: ${e.message}", e)
+                }
+            }
         } else if (outIdx >= 0) {
             val muxAudioTrack = getMuxerAudioTrack()
+            val muxVideoTrack = getMuxerVideoTrack()
             val muxerStarted = isMuxerStarted()
+            val muxerInstance = getMuxer()
 
-            if (muxerStarted && muxAudioTrack != -1) {
+            if (muxerStarted && muxAudioTrack != -1 && muxVideoTrack != -1 && muxerInstance != null) {
                 val currentAudioPts = encoderBufferInfo.presentationTimeUs
 
                 // Interleave video frames up to current audio timestamp (+100ms tolerance)
@@ -425,7 +456,7 @@ class ProgressiveVideoMerger(
                     videoBufferInfo.size = sampleSize
                     videoBufferInfo.presentationTimeUs = videoExtractor.sampleTime
                     videoBufferInfo.flags = videoExtractor.sampleFlags
-                    muxer.writeSampleData(muxerVideoTrack, videoBuffer, videoBufferInfo)
+                    muxerInstance.writeSampleData(muxVideoTrack, videoBuffer, videoBufferInfo)
                     videoExtractor.advance()
                 }
 
@@ -437,7 +468,7 @@ class ProgressiveVideoMerger(
                 if (encoderBufferInfo.size > 0) {
                     encodedBuf.position(encoderBufferInfo.offset)
                     encodedBuf.limit(encoderBufferInfo.offset + encoderBufferInfo.size)
-                    muxer.writeSampleData(muxAudioTrack, encodedBuf, encoderBufferInfo)
+                    muxerInstance.writeSampleData(muxAudioTrack, encodedBuf, encoderBufferInfo)
                 }
             }
 

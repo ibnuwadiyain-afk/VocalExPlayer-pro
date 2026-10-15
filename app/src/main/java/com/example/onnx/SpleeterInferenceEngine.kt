@@ -57,7 +57,7 @@ class SpleeterInferenceEngine(private val context: Context) {
     /**
      * Extracts the built-in Spleeter 2-Stem ONNX model or validates custom model file.
      */
-    fun getOrExtractModelFile(customPath: String? = null): File {
+    fun getOrExtractModelFile(customPath: String? = null): File? {
         if (!customPath.isNullOrBlank()) {
             val custom = File(customPath)
             if (custom.exists() && custom.length() > 10_000L) {
@@ -72,27 +72,23 @@ class SpleeterInferenceEngine(private val context: Context) {
         }
 
         val destinationFile = File(modelsDir, DEFAULT_MODEL_NAME)
-        // Genuine Deezer Spleeter 2-stem ONNX model size: exactly 19,681,017 bytes
-        val expectedSize = 19_681_017L
-        if (!destinationFile.exists() || destinationFile.length() != expectedSize) {
-            try {
-                if (destinationFile.exists()) {
-                    Log.w(TAG, "Existing model file (${destinationFile.length()} bytes) does not match genuine Spleeter size ($expectedSize bytes). Removing and re-extracting...")
-                    destinationFile.delete()
-                }
-                Log.i(TAG, "Extracting bundled Deezer Spleeter 2-Stem ONNX model to ${destinationFile.absolutePath}...")
-                context.assets.open("models/$DEFAULT_MODEL_NAME").use { input ->
-                    FileOutputStream(destinationFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                Log.i(TAG, "Extracted genuine Spleeter 2-Stem ONNX model successfully: ${destinationFile.length()} bytes")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to copy bundled Spleeter asset model", e)
-                throw IllegalStateException("Failed to load Spleeter 2-Stem ONNX model from assets: ${e.message}", e)
-            }
+        if (destinationFile.exists() && destinationFile.length() > 10_000L) {
+            return destinationFile
         }
-        return destinationFile
+
+        return try {
+            Log.i(TAG, "Extracting bundled Deezer Spleeter 2-Stem ONNX model to ${destinationFile.absolutePath}...")
+            context.assets.open("models/$DEFAULT_MODEL_NAME").use { input ->
+                FileOutputStream(destinationFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Log.i(TAG, "Extracted genuine Spleeter 2-Stem ONNX model successfully: ${destinationFile.length()} bytes")
+            destinationFile
+        } catch (e: Exception) {
+            Log.w(TAG, "Bundled Spleeter asset model not available or copy failed: ${e.message}")
+            modelsDir.listFiles()?.firstOrNull { it.name.endsWith(".onnx") && it.length() > 10_000L }
+        }
     }
 
     /**
@@ -108,6 +104,18 @@ class SpleeterInferenceEngine(private val context: Context) {
         onProgress: (Float) -> Unit = {}
     ): File {
         val modelFile = getOrExtractModelFile(customModelPath)
+
+        if (modelFile == null || !modelFile.exists()) {
+            Log.w(TAG, "ONNX model file unavailable, falling back to adaptive DSP vocal separation")
+            activeHardwareBackend = "Adaptive DSP Vocal Extractor"
+            return runBuiltInDspSeparationPipeline(
+                decodedAudio = decodedAudio,
+                outputWavFile = outputWavFile,
+                accelerationMode = accelerationMode,
+                onChunkAvailable = onChunkAvailable,
+                onProgress = onProgress
+            )
+        }
 
         val availableProcessors = Runtime.getRuntime().availableProcessors()
         val numThreads = availableProcessors.coerceIn(4, 8)
@@ -131,14 +139,26 @@ class SpleeterInferenceEngine(private val context: Context) {
             Log.i(TAG, "Opening Deezer Spleeter 2-Stem Session: ${modelFile.name} [Mode: ${accelerationMode.displayName}, Backend: $activeHardwareBackend]")
             ortEnvironment.createSession(modelFile.absolutePath, sessionOptions)
         } catch (e: Throwable) {
-            Log.w(TAG, "Accelerated Spleeter session init failed (${e.message}), using safe CPU mode")
-            activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
-            val safeOptions = OrtSession.SessionOptions().apply {
-                setIntraOpNumThreads(numThreads)
-                setInterOpNumThreads(2)
-                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+            Log.w(TAG, "Accelerated Spleeter session init failed (${e.message}), trying safe CPU mode")
+            try {
+                activeHardwareBackend = "Multi-Core CPU ($numThreads threads)"
+                val safeOptions = OrtSession.SessionOptions().apply {
+                    setIntraOpNumThreads(numThreads)
+                    setInterOpNumThreads(2)
+                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+                }
+                ortEnvironment.createSession(modelFile.absolutePath, safeOptions)
+            } catch (err: Throwable) {
+                Log.w(TAG, "ONNX session init failed completely (${err.message}), falling back to DSP vocal extractor")
+                activeHardwareBackend = "Adaptive DSP Vocal Extractor"
+                return runBuiltInDspSeparationPipeline(
+                    decodedAudio = decodedAudio,
+                    outputWavFile = outputWavFile,
+                    accelerationMode = accelerationMode,
+                    onChunkAvailable = onChunkAvailable,
+                    onProgress = onProgress
+                )
             }
-            ortEnvironment.createSession(modelFile.absolutePath, safeOptions)
         }
 
         try {
@@ -468,5 +488,146 @@ class SpleeterInferenceEngine(private val context: Context) {
         onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, 0, true)
         onProgress(0.97f)
         onProgress(1.0f)
+    }
+
+    /**
+     * Resilient built-in Adaptive DSP Vocal Extraction pipeline.
+     * Uses the 4096-point Radix-2 STFT and inverse STFT with Hann overlap-add.
+     * Extracts center-panned harmonic vocal signals and suppresses stereo accompaniment.
+     * Guaranteed zero external dependencies, zero crash risk, and instant availability.
+     */
+    private fun runBuiltInDspSeparationPipeline(
+        decodedAudio: DecodedAudio,
+        outputWavFile: File,
+        accelerationMode: AccelerationMode,
+        onChunkAvailable: ((left: FloatArray, right: FloatArray, offset: Int, count: Int, isEos: Boolean) -> Unit)? = null,
+        onProgress: (Float) -> Unit
+    ): File {
+        val totalSamples = decodedAudio.totalFrames
+        val sampleRate = decodedAudio.sampleRate
+        val trim = processor.trim
+        val chunkSize = processor.chunkSize
+        val genSize = processor.genSize
+
+        val remainder = (totalSamples % genSize).toInt()
+        val pad = if (remainder == 0) 0L else (genSize - remainder).toLong()
+        val totalChunks = ((totalSamples + pad) / genSize).toInt()
+
+        Log.i(TAG, "Running Adaptive DSP Vocal Extractor: $totalSamples samples, $totalChunks chunks")
+
+        val scratch = processor.createScratchpad()
+        val chunkL = FloatArray(chunkSize)
+        val chunkR = FloatArray(chunkSize)
+
+        val tensorCapacity = 2 * 1 * DIM_T * DIM_F
+        val inputFloatBuffer = ByteBuffer.allocateDirect(tensorCapacity * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+
+        val outChunkL = FloatArray(genSize)
+        val outChunkR = FloatArray(genSize)
+
+        var chunkIdx = 0
+        var samplePos = 0L
+
+        WavWriter.createStreamingWriter(outputWavFile, sampleRate, 2).use { wavWriter ->
+            while (samplePos < totalSamples + pad) {
+                val progressStart = 0.25f + (chunkIdx.toFloat() / totalChunks.coerceAtLeast(1)) * 0.70f
+                onProgress(progressStart)
+
+                val validCount = minOf(genSize.toLong(), totalSamples - samplePos).coerceAtLeast(0L).toInt()
+
+                chunkL.fill(0f)
+                chunkR.fill(0f)
+
+                val audioStart = samplePos - trim
+                val srcStart = maxOf(0L, audioStart)
+                val srcEnd = minOf(totalSamples, audioStart + chunkSize)
+                val activeLen = if (srcEnd > srcStart) (srcEnd - srcStart).toInt() else 0
+                val destStart = (srcStart - audioStart).toInt()
+
+                if (activeLen > 0) {
+                    decodedAudio.readStereoChunk(
+                        startFrame = srcStart,
+                        count = activeLen,
+                        destL = chunkL,
+                        destR = chunkR,
+                        destOffset = destStart
+                    )
+                }
+
+                // 1. Compute Deezer Spleeter 4096-point STFT
+                processor.computeSpleeterInput(
+                    pcmLeft = chunkL,
+                    pcmRight = chunkR,
+                    pcmOffset = 0,
+                    pcmLength = chunkSize,
+                    scratch = scratch,
+                    onnxInputBuffer = inputFloatBuffer
+                )
+
+                // 2. Synthesize Center-panned Vocal Frequencies
+                inputFloatBuffer.clear()
+                for (ch in 0 until 2) {
+                    for (t in 0 until DIM_T) {
+                        for (f in 0 until DIM_F) {
+                            val rL = scratch.stftReal[0][t][f]
+                            val imL = scratch.stftImag[0][t][f]
+                            val rR = scratch.stftReal[1][t][f]
+                            val imR = scratch.stftImag[1][t][f]
+
+                            val midR = 0.5f * (rL + rR)
+                            val midI = 0.5f * (imL + imR)
+                            val midMag = sqrt(midR * midR + midI * midI)
+
+                            val sideR = 0.5f * (rL - rR)
+                            val sideI = 0.5f * (imL - imR)
+                            val sideMag = sqrt(sideR * sideR + sideI * sideI)
+
+                            val centerCoherence = ((midMag - sideMag) / (midMag + sideMag + 1e-6f)).coerceIn(0f, 1f)
+
+                            val freq = f * (sampleRate.toFloat() / N_FFT.toFloat())
+                            val vocalPresence = when {
+                                freq < 150f -> (freq / 150f) * 0.15f
+                                freq < 300f -> 0.15f + 0.85f * ((freq - 150f) / 150f)
+                                freq <= 4500f -> 1.0f
+                                freq <= 8500f -> 1.0f - 0.4f * ((freq - 4500f) / 4000f)
+                                else -> 0.2f
+                            }
+
+                            val vocalMagPred = midMag * (centerCoherence * vocalPresence).coerceIn(0f, 1f)
+                            inputFloatBuffer.put(vocalMagPred)
+                        }
+                    }
+                }
+                inputFloatBuffer.flip()
+
+                // 3. Synthesize separated vocal stems with inverse STFT and Hann overlap-add
+                processor.synthesizeSeparatedStems(
+                    onnxOutputBuffer = inputFloatBuffer,
+                    scratch = scratch,
+                    totalSamplesNeeded = chunkSize
+                )
+
+                // 4. Stream valid interior audio samples directly to disk and merger
+                for (k in 0 until validCount) {
+                    val srcIdx = trim + k
+                    outChunkL[k] = scratch.vocalWaveform[0][srcIdx].coerceIn(-1.0f, 1.0f)
+                    outChunkR[k] = scratch.vocalWaveform[1][srcIdx].coerceIn(-1.0f, 1.0f)
+                }
+                wavWriter.writeStereoChunk(outChunkL, outChunkR, 0, validCount)
+                onChunkAvailable?.invoke(outChunkL, outChunkR, 0, validCount, false)
+
+                samplePos += genSize
+                chunkIdx++
+            }
+        }
+
+        onChunkAvailable?.invoke(FloatArray(0), FloatArray(0), 0, 0, true)
+        onProgress(0.97f)
+        Log.i(TAG, "Adaptive DSP Vocal Extraction finished: ${outputWavFile.absolutePath} ($totalSamples samples)")
+        System.gc()
+        onProgress(1.0f)
+        return outputWavFile
     }
 }

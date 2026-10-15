@@ -153,17 +153,41 @@ fun TranscriptDialog(
                     .testTag("transcript_dialog_content")
             ) {
                 if (segments.isEmpty()) {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentAlignment = Alignment.Center
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
                         Text(
                             text = AppStrings.noSubtitlesGenerated(lang),
                             color = TextSecondary,
                             fontSize = 13.sp
                         )
+                        if (onOpenDubbing != null) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Button(
+                                onClick = onOpenDubbing,
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.testTag("open_dubbing_dialog_from_empty_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.RecordVoiceOver,
+                                    contentDescription = null,
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Dub with Imported SRT",
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
                     }
                 } else {
                     LazyColumn(

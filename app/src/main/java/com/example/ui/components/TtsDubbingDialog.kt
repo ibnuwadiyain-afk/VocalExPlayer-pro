@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Movie
@@ -36,6 +37,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -78,6 +80,7 @@ import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.whisper.SrtGenerator
 import com.example.whisper.TranscriptionSegment
 import java.util.Locale
 
@@ -162,34 +165,69 @@ fun TtsDubbingDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(AccentTeal.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.RecordVoiceOver,
-                        contentDescription = null,
-                        tint = AccentTeal,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AccentTeal.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RecordVoiceOver,
+                            contentDescription = null,
+                            tint = AccentTeal,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Dub Video with Android TTS",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Synchronized voiceover with video alignment",
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Text(
-                        text = "Dub Video with Android TTS",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = "Synchronized voiceover with video alignment",
-                        fontSize = 11.sp,
-                        color = TextSecondary
-                    )
+
+                if (!translatedSegments.isNullOrEmpty()) {
+                    IconButton(
+                        onClick = {
+                            val file = SrtGenerator.exportTranslatedSrtFile(
+                                context = context,
+                                videoTitle = video.title,
+                                targetLanguageCode = selectedLocale.language,
+                                segments = translatedSegments!!
+                            )
+                            SrtGenerator.shareSrtFile(
+                                context = context,
+                                file = file,
+                                chooserTitle = "Export Translated Subtitles (${file.name})"
+                            )
+                        },
+                        modifier = Modifier.testTag("dialog_top_export_translated_srt")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FileDownload,
+                            contentDescription = "Export Translated SRT",
+                            tint = AccentTeal,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
         },
@@ -201,6 +239,7 @@ fun TtsDubbingDialog(
                     .testTag("tts_dubbing_dialog_content")
             ) {
                 // Info Banner
+                val activeCount = if (!translatedSegments.isNullOrEmpty()) translatedSegments!!.size else segments.size
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = DarkSurfaceVariant,
@@ -213,14 +252,16 @@ fun TtsDubbingDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "SUBTITLES DETECTED",
+                                text = if (!translatedSegments.isNullOrEmpty()) "TRANSLATED CUES ACTIVE"
+                                else if (segments.isNotEmpty()) "SUBTITLES DETECTED"
+                                else "NO SUBTITLES YET",
                                 color = AccentTeal,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp
                             )
                             Text(
-                                text = "${segments.size} cues",
+                                text = "$activeCount cues",
                                 color = AccentTeal,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -236,7 +277,12 @@ fun TtsDubbingDialog(
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Uses on-device Android TextToSpeech engine to generate synchronized dubbed audio.",
+                            text = if (!translatedSegments.isNullOrEmpty())
+                                "Ready to dub with ${translatedSegments!!.size} translated cues in ${selectedLocale.displayLanguage}."
+                            else if (segments.isNotEmpty())
+                                "Uses on-device Android TextToSpeech engine to generate synchronized dubbed audio."
+                            else
+                                "Import a translated .srt file below to dub this video directly with TTS without running offline transcription.",
                             color = TextSecondary,
                             fontSize = 10.sp
                         )
@@ -314,6 +360,10 @@ fun TtsDubbingDialog(
                     translationService = translationService,
                     onTranslationServiceChange = { translationService = it },
                     targetLocale = selectedLocale,
+                    onTargetLocaleChange = { newLoc ->
+                        selectedLocale = newLoc
+                    },
+                    videoTitle = video.title,
                     segments = segments,
                     translatedSegments = translatedSegments,
                     onTranslatedSegmentsChange = { translatedSegments = it },
@@ -518,6 +568,7 @@ fun TtsDubbingDialog(
             }
         },
         confirmButton = {
+            val hasCues = segments.isNotEmpty() || !translatedSegments.isNullOrEmpty()
             Button(
                 onClick = {
                     val config = DubbingConfig(
@@ -526,7 +577,7 @@ fun TtsDubbingDialog(
                         pitch = pitch,
                         mixMode = mixMode,
                         backgroundDuckingVolume = duckingVolume,
-                        enableTranslation = enableTranslation,
+                        enableTranslation = enableTranslation || !translatedSegments.isNullOrEmpty(),
                         translationService = translationService,
                         targetLanguageCode = selectedLocale.language,
                         sourceLanguageCode = "auto",
@@ -534,6 +585,7 @@ fun TtsDubbingDialog(
                     )
                     onConfirmDubbing(config)
                 },
+                enabled = hasCues && !isTranslating,
                 colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.testTag("confirm_dubbing_button")

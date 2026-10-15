@@ -77,7 +77,7 @@ class AppModelManager private constructor(private val context: Context) {
             displayName = "Spleeter 2-Stem (Built-in)",
             description = "Deezer Spleeter 2-stem neural network. Isolates vocals and accompaniment.",
             fileName = "spleeter_2stems.onnx",
-            downloadUrl = "https://huggingface.co/manyeyes/spleeter-2stems-44k-onnx/resolve/main/spleeter_2stems.onnx",
+            downloadUrl = "https://huggingface.co/csukuangfj/sherpa-onnx-spleeter-2stems-fp16/resolve/main/vocals.fp16.onnx",
             sizeBytes = 19_681_017L,
             sizeDisplay = formatFileSize(19_681_017L),
             isBundled = true

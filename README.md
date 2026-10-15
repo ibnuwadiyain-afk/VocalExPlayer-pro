@@ -90,4 +90,45 @@ npx expo run:android
 - **Offline AI Separation**: Processes the audio track through the ONNX model before playback with a progress overlay.
 - **Cache Persistence**: Separated vocal tracks are saved locally in the app's cache directory so future playback is instant.
 - **Audio Switcher**: Toggle between **AI Vocals Only** and **Original Audio** directly in the video player.
+- **Translated SRT Dubbing & Export/Import**:
+  - In the Dubbing dialog, customize target TTS language, voice speed, pitch, and translation service.
+  - **Export Translated SRT**: Share or save translated subtitle cues as a `.srt` file.
+  - **Import Translated SRT**: Import any pre-translated `.srt` file directly to preview cues and dub the video instantly—even if the video doesn't have an original transcript.
 - **Management**: Long-press any video card in the list to delete it and remove its cached audio track.
+
+---
+
+## Direct GitHub Release APK Publishing
+
+### 1. Automated via GitHub Actions
+The repository includes `.github/workflows/android-build.yml` which builds the debug APK and publishes it directly to **GitHub Releases**:
+- Runs automatically when pushing git tags (e.g. `v1.0.0`) or on push to `main`/`master`.
+- Can be triggered manually via GitHub Actions **Run workflow** (`workflow_dispatch`) with optional custom tag and release title.
+- Artifacts uploaded:
+  - `VocalExtractor-debug.apk`
+  - `VocalExtractor-v1.0.<run>-<sha>-debug.apk`
+  - `app-debug.apk`
+
+### 2. Push APK Directly via Terminal / Script
+To push the built APK directly to a GitHub Release using the GitHub REST API:
+
+```bash
+# Set your GitHub token and repository
+export GITHUB_TOKEN="ghp_yourPersonalAccessToken"
+export GITHUB_REPOSITORY="owner/repo"
+
+# Build APK (if not already built)
+gradle assembleDebug
+
+# Push to release directly
+python3 scripts/push_to_github_release.py \
+  --tag v1.0.0 \
+  --title "VocalExtractor v1.0.0 Release" \
+  --body "Android debug APK with offline vocal isolation, Whisper subtitles, and SRT dubbing."
+```
+
+Or using the bash wrapper:
+```bash
+./scripts/push_to_github_release.sh --tag v1.0.0
+```
+

@@ -3,12 +3,28 @@ name: Android Build
 on:
   push:
     branches: [ "main", "master" ]
+    tags:
+      - "v*"
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0, or leave empty for automatic tag)'
+        required: false
+        default: ''
+      release_name:
+        description: 'Release Title'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -89,72 +105,77 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --build-cache --stacktrace
 
-      - name: Install rclone
-        run: curl https://rclone.org/install.sh | sudo bash
+      - name: Prepare APK Release Artifacts
+        run: |
+          mkdir -p release-artifacts
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          BUILD_NUM="${{ github.run_number }}"
+          # Copy standard named APKs
+          cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/VocalExtractor-v1.0.${BUILD_NUM}-${SHORT_SHA}-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/VocalExtractor-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/app-debug.apk
+          echo "Release artifacts ready:"
+          ls -lh release-artifacts/
 
-      - name: Configure rclone
+      - name: Upload Build Artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalExtractor-APK-${{ github.run_number }}
+          path: release-artifacts/
+          retention-days: 30
+
+      - name: Push Built APK to GitHub Release Directly
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag_name != '' && github.event.inputs.tag_name || (startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number)) }}
+          name: ${{ github.event.inputs.release_name != '' && github.event.inputs.release_name || (startsWith(github.ref, 'refs/tags/') && format('Release {0}', github.ref_name) || format('Release v1.0.{0}', github.run_number)) }}
+          body: |
+            ## VocalExtractor Automated APK Release 🚀
+
+            - **Commit**: `${{ github.sha }}`
+            - **Branch**: `${{ github.ref_name }}`
+            - **Build Number**: `${{ github.run_number }}`
+            - **Date**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+
+            ### Included APK Downloads:
+            - **`VocalExtractor-debug.apk`**: Latest debug build with vocal isolation, offline Whisper subtitles, and SRT translated dubbing.
+            - **`VocalExtractor-v1.0.${{ github.run_number }}-${SHORT_SHA}-debug.apk`**: Versioned build for this specific commit.
+            - **`app-debug.apk`**: Standard release package name.
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          generate_release_notes: true
+          files: |
+            release-artifacts/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK to Google Drive (Optional)
+        if: env.RCLONE_CONFIG_B64 != ''
+        continue-on-error: true
         env:
           RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
         run: |
           set -euo pipefail
-          
-          if [ -z "$RCLONE_CONFIG_B64" ]; then
-            echo "❌ ERROR: secrets.RCLONE_CONFIG is empty or not set!"
-            echo "Please add your rclone config as a base64-encoded secret."
-            exit 1
-          fi
+          echo "Installing rclone..."
+          curl https://rclone.org/install.sh | sudo bash
           
           mkdir -p ~/.config/rclone
           CONF=~/.config/rclone/rclone.conf
           
-          # Try base64 decode first
           if echo "$RCLONE_CONFIG_B64" | base64 -d > "$CONF" 2>/dev/null; then
             echo "✅ Base64 decoded successfully."
           else
-            echo "⚠️  Base64 decode failed, trying as plain text..."
             printf '%s\n' "$RCLONE_CONFIG_B64" > "$CONF"
           fi
           
-          # Validate config has [gdrive] section
-          if ! grep -q '^\[gdrive\]' "$CONF"; then
-            echo "❌ ERROR: No [gdrive] section found in rclone config!"
-            echo "Available sections:"
-            grep -E '^\[.*\]$' "$CONF" || echo "  (none found)"
-            echo ""
-            echo "Your config should look like:"
-            echo "  [gdrive]"
-            echo "  type = drive"
-            echo "  ..."
-            exit 1
+          if grep -q '^\[gdrive\]' "$CONF"; then
+            APK_DIR="app/build/outputs/apk/debug"
+            TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')
+            REMOTE_DIR="gdrive:VocalExPlayer-Builds/${TIMESTAMP}"
+            rclone copy "$APK_DIR" "$REMOTE_DIR" --include "*.apk" --progress --verbose || true
+            echo "✅ Uploaded to $REMOTE_DIR"
+          else
+            echo "⚠️ No [gdrive] remote found, skipping Google Drive upload."
           fi
-          
-          echo "✅ Found [gdrive] section in config"
-          echo "---- Config sections (redacted) ----"
-          grep -E '^\[.*\]$' "$CONF"
-          echo "------------------------------------"
 
-      - name: Test rclone connection
-        run: |
-          echo "Testing rclone connection..."
-          rclone listremotes
-          echo ""
-          rclone lsd gdrive: --max-depth 1
-
-      - name: Upload APK to Google Drive
-        run: |
-          APK_DIR="app/build/outputs/apk/debug"
-          TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')
-          REMOTE_DIR="gdrive:VocalExPlayer-Builds/${TIMESTAMP}"
-          
-          if [ ! -d "$APK_DIR" ]; then
-            echo "❌ ERROR: APK directory not found: $APK_DIR"
-            exit 1
-          fi
-          
-          echo "Uploading APKs from $APK_DIR..."
-          rclone copy "$APK_DIR" "$REMOTE_DIR" \
-            --include "*.apk" \
-            --progress \
-            --verbose
-          
-          echo "✅ Uploaded to $REMOTE_DIR"

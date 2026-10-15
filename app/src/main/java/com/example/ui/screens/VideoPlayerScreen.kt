@@ -857,6 +857,28 @@ fun VideoPlayerScreen(
                                                 }
                                             }
                                         }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        OutlinedButton(
+                                            onClick = { showDubbingDialog = true },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("dub_with_imported_srt_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.RecordVoiceOver,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Dub with Imported SRT",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -990,7 +1012,12 @@ fun VideoPlayerScreen(
                 onConfirmDubbing = { config ->
                     showDubbingDialog = false
                     showTranscriptDialog = false
-                    onExportDubbed?.invoke(video, subtitleSegments, config)
+                    val cuesToDub = if (!config.preTranslatedSegments.isNullOrEmpty()) {
+                        config.preTranslatedSegments
+                    } else {
+                        subtitleSegments
+                    }
+                    onExportDubbed?.invoke(video, cuesToDub, config)
                 }
             )
         }

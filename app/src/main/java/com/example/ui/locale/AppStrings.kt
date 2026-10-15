@@ -1468,4 +1468,53 @@ object AppStrings {
         AppLanguage.PORTUGUESE -> "Nenhum modelo instalado para exportação"
         else -> "No installed models available to export"
     }
+
+    fun importTranslatedSrt(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "استيراد ملف SRT مترجم"
+        AppLanguage.SPANISH -> "Importar SRT traducido"
+        AppLanguage.FRENCH -> "Importer SRT traduit"
+        AppLanguage.GERMAN -> "Übersetztes SRT importieren"
+        AppLanguage.JAPANESE -> "翻訳済みSRTをインポート"
+        AppLanguage.CHINESE -> "导入已翻译的 SRT"
+        AppLanguage.RUSSIAN -> "Импортировать переведенный SRT"
+        AppLanguage.PORTUGUESE -> "Importar SRT traduzido"
+        else -> "Import Translated SRT"
+    }
+
+    fun exportTranslatedSrt(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "تصدير ملف SRT المترجم"
+        AppLanguage.SPANISH -> "Exportar SRT traducido"
+        AppLanguage.FRENCH -> "Exporter SRT traduit"
+        AppLanguage.GERMAN -> "Übersetztes SRT exportieren"
+        AppLanguage.JAPANESE -> "翻訳済みSRTをエクスポート"
+        AppLanguage.CHINESE -> "导出已翻译的 SRT"
+        AppLanguage.RUSSIAN -> "Экспортировать переведенный SRT"
+        AppLanguage.PORTUGUESE -> "Exportar SRT traduzido"
+        else -> "Export Translated SRT"
+    }
+
+    fun importedSrtSuccess(lang: AppLanguage, count: Int) = when (lang) {
+        AppLanguage.ARABIC -> "تم استيراد $count سطراً مترجماً للدبلجة بنجاح"
+        AppLanguage.SPANISH -> "Se importaron $count subtítulos traducidos para doblaje"
+        AppLanguage.FRENCH -> "$count répliques traduites importées pour le doublage"
+        AppLanguage.GERMAN -> "$count übersetzte Untertitel für Synchronisation importiert"
+        AppLanguage.JAPANESE -> "$count 件の翻訳済み字幕をダビング用にインポートしました"
+        AppLanguage.CHINESE -> "成功导入 $count 条翻译字幕用于配音"
+        AppLanguage.RUSSIAN -> "Импортировано $count переведенных реплик для дубляжа"
+        AppLanguage.PORTUGUESE -> "$count legendas traduzidas importadas para dublagem"
+        else -> "Imported $count translated cues for dubbing"
+    }
+
+    fun noCuesFoundInSrt(lang: AppLanguage) = when (lang) {
+        AppLanguage.ARABIC -> "لم يتم العثور على أسطر صالحة في ملف SRT"
+        AppLanguage.SPANISH -> "No se encontraron subtítulos válidos en el archivo SRT"
+        AppLanguage.FRENCH -> "Aucun sous-titre valide trouvé dans le fichier SRT"
+        AppLanguage.GERMAN -> "Keine gültigen Untertitel in der SRT-Datei gefunden"
+        AppLanguage.JAPANESE -> "SRTファイルに有効な字幕が見つかりませんでした"
+        AppLanguage.CHINESE -> "SRT 文件中未找到有效的字幕内容"
+        AppLanguage.RUSSIAN -> "В файле SRT не найдено допустимых субтитров"
+        AppLanguage.PORTUGUESE -> "Nenhuma legenda válida encontrada no arquivo SRT"
+        else -> "No valid subtitle cues found in SRT file"
+    }
 }
+

@@ -144,29 +144,27 @@ object TtsDubbingEngine {
                 tts.setPitch(config.pitch)
             }
 
-            // 1. Prepare segments with optional translation
-            val segmentsToSynthesize: List<TranscriptionSegment> = if (config.enableTranslation) {
-                if (!config.preTranslatedSegments.isNullOrEmpty()) {
-                    onProgress(0.04f, "Using pre-translated subtitle cues...")
-                    config.preTranslatedSegments
-                } else {
-                    onProgress(0.02f, "Translating transcript (${config.sourceLanguageCode} -> ${config.targetLanguageCode})...")
-                    val transRes = com.example.dubbing.translation.DubbingTranslationManager.translateSegments(
-                        context = context,
-                        segments = segments,
-                        sourceLang = config.sourceLanguageCode,
-                        targetLang = config.targetLanguageCode,
-                        service = config.translationService,
-                        onProgress = { p, msg ->
-                            onProgress(0.02f + (p * 0.08f), msg)
-                        }
-                    )
-                    if (transRes.isSuccess) {
-                        transRes.getOrThrow()
-                    } else {
-                        Log.w(TAG, "Translation failed; proceeding with original transcript", transRes.exceptionOrNull())
-                        segments
+            // 1. Prepare segments with optional translation or imported SRT
+            val segmentsToSynthesize: List<TranscriptionSegment> = if (!config.preTranslatedSegments.isNullOrEmpty()) {
+                onProgress(0.04f, "Using ${config.preTranslatedSegments.size} translated/imported subtitle cues...")
+                config.preTranslatedSegments
+            } else if (config.enableTranslation) {
+                onProgress(0.02f, "Translating transcript (${config.sourceLanguageCode} -> ${config.targetLanguageCode})...")
+                val transRes = com.example.dubbing.translation.DubbingTranslationManager.translateSegments(
+                    context = context,
+                    segments = segments,
+                    sourceLang = config.sourceLanguageCode,
+                    targetLang = config.targetLanguageCode,
+                    service = config.translationService,
+                    onProgress = { p, msg ->
+                        onProgress(0.02f + (p * 0.08f), msg)
                     }
+                )
+                if (transRes.isSuccess) {
+                    transRes.getOrThrow()
+                } else {
+                    Log.w(TAG, "Translation failed; proceeding with original transcript", transRes.exceptionOrNull())
+                    segments
                 }
             } else {
                 segments

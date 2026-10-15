@@ -156,4 +156,68 @@ class ExampleUnitTest {
         assertEquals(1, spanishConfig.preTranslatedSegments?.size)
         assertEquals("Hola mundo", spanishConfig.preTranslatedSegments?.first()?.text)
     }
+
+    @Test
+    fun testTranslatedSrtExportAndImportRoundTrip() {
+        val translatedCues = listOf(
+            com.example.whisper.TranscriptionSegment(
+                index = 1,
+                startMs = 500L,
+                endMs = 2500L,
+                text = "مرحباً بكم في الدبلجة الصوتية الذكية"
+            ),
+            com.example.whisper.TranscriptionSegment(
+                index = 2,
+                startMs = 2600L,
+                endMs = 5000L,
+                text = "هذا ملف SRT مترجم مخصص للدبلجة"
+            )
+        )
+
+        val srtContent = com.example.whisper.SrtGenerator.generateSrtContent(translatedCues)
+        assertTrue(srtContent.contains("00:00:00,500 --> 00:00:02,500"))
+        assertTrue(srtContent.contains("مرحباً بكم في الدبلجة الصوتية الذكية"))
+        assertTrue(srtContent.contains("00:00:02,600 --> 00:00:05,000"))
+        assertTrue(srtContent.contains("هذا ملف SRT مترجم مخصص للدبلجة"))
+
+        // Test stream parsing (Import simulation)
+        val inputStream = java.io.ByteArrayInputStream(srtContent.toByteArray(Charsets.UTF_8))
+        val parsed = com.example.whisper.SrtGenerator.parseSrtStream(inputStream)
+
+        assertEquals(2, parsed.size)
+        assertEquals(1, parsed[0].index)
+        assertEquals(500L, parsed[0].startMs)
+        assertEquals(2500L, parsed[0].endMs)
+        assertEquals("مرحباً بكم في الدبلجة الصوتية الذكية", parsed[0].text)
+
+        assertEquals(2, parsed[1].index)
+        assertEquals(2600L, parsed[1].startMs)
+        assertEquals(5000L, parsed[1].endMs)
+        assertEquals("هذا ملف SRT مترجم مخصص للدبلجة", parsed[1].text)
+    }
+
+    @Test
+    fun testDetectScriptLocaleFromTranslatedSegments() {
+        val arabicSegments = listOf(
+            com.example.whisper.TranscriptionSegment(1, 0L, 1000L, "صباح الخير")
+        )
+        val arabicLocale = com.example.whisper.SrtGenerator.detectScriptLocale(arabicSegments)
+        assertNotNull(arabicLocale)
+        assertEquals("ar", arabicLocale?.language)
+
+        val japaneseSegments = listOf(
+            com.example.whisper.TranscriptionSegment(1, 0L, 1000L, "こんにちは世界")
+        )
+        val japaneseLocale = com.example.whisper.SrtGenerator.detectScriptLocale(japaneseSegments)
+        assertNotNull(japaneseLocale)
+        assertEquals("ja", japaneseLocale?.language)
+
+        val russianSegments = listOf(
+            com.example.whisper.TranscriptionSegment(1, 0L, 1000L, "Привет, мир")
+        )
+        val russianLocale = com.example.whisper.SrtGenerator.detectScriptLocale(russianSegments)
+        assertNotNull(russianLocale)
+        assertEquals("ru", russianLocale?.language)
+    }
 }
+

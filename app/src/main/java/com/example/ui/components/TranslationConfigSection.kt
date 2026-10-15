@@ -1,5 +1,9 @@
 package com.example.ui.components
 
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -29,9 +33,13 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,6 +51,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,12 +69,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.dubbing.translation.DubbingTranslationManager
 import com.example.dubbing.translation.TranslationServiceType
+import com.example.ui.locale.AppStrings
+import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.whisper.SrtGenerator
 import com.example.whisper.TranscriptionSegment
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -77,6 +89,8 @@ fun TranslationConfigSection(
     translationService: TranslationServiceType,
     onTranslationServiceChange: (TranslationServiceType) -> Unit,
     targetLocale: Locale,
+    onTargetLocaleChange: ((Locale) -> Unit)? = null,
+    videoTitle: String = "video",
     segments: List<TranscriptionSegment>,
     translatedSegments: List<TranscriptionSegment>?,
     onTranslatedSegmentsChange: (List<TranscriptionSegment>?) -> Unit,
@@ -88,6 +102,7 @@ fun TranslationConfigSection(
     onTranslationErrorChange: (String?) -> Unit
 ) {
     val context = LocalContext.current
+    val lang = LocalAppLanguage.current
     val coroutineScope = rememberCoroutineScope()
     var isPreviewExpanded by remember { mutableStateOf(false) }
 
@@ -278,6 +293,73 @@ fun TranslationConfigSection(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                // SAF Launchers for Import and Export of Translated SRT
+                val srtImportLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri: Uri? ->
+                    if (uri != null) {
+                        val result = SrtGenerator.parseAndNormalizeSrt(context, uri)
+                        if (result.isSuccess) {
+                            val cues = result.getOrThrow()
+                            onTranslatedSegmentsChange(cues)
+                            onEnableTranslationChange(true)
+                            onTranslationErrorChange(null)
+                            onTranslationProgressTextChange("Imported ${cues.size} translated subtitle cues from file")
+                            val detectedLocale = SrtGenerator.detectScriptLocale(cues)
+                            if (detectedLocale != null && onTargetLocaleChange != null) {
+                                onTargetLocaleChange(detectedLocale)
+                            }
+                            Toast.makeText(
+                                context,
+                                AppStrings.importedSrtSuccess(lang, cues.size),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            val err = result.exceptionOrNull()?.message ?: AppStrings.noCuesFoundInSrt(lang)
+                            onTranslationErrorChange(err)
+                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+
+                val sanitizedBaseTitle = remember(videoTitle) {
+                    com.example.export.ExportNameSanitizer.sanitizeTitle(videoTitle)
+                }
+
+                val srtExportDocumentLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.CreateDocument("text/plain")
+                ) { uri: Uri? ->
+                    if (uri != null && !translatedSegments.isNullOrEmpty()) {
+                        try {
+                            context.contentResolver.openOutputStream(uri)?.use { os ->
+                                SrtGenerator.writeSrtToOutputStream(translatedSegments, os)
+                            }
+                            Toast.makeText(context, "Saved translated SRT to file", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Export error: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+
+                fun exportAndShareTranslatedSrt() {
+                    if (translatedSegments.isNullOrEmpty()) return
+                    try {
+                        val file = SrtGenerator.exportTranslatedSrtFile(
+                            context = context,
+                            videoTitle = videoTitle,
+                            targetLanguageCode = targetLocale.language,
+                            segments = translatedSegments
+                        )
+                        SrtGenerator.shareSrtFile(
+                            context = context,
+                            file = file,
+                            chooserTitle = "${AppStrings.exportTranslatedSrt(lang)} (${file.name})"
+                        )
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Export error: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+
                 // Translate & Preview Action Button
                 if (isTranslating) {
                     Surface(
@@ -305,75 +387,135 @@ fun TranslationConfigSection(
                         }
                     }
                 } else {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    onIsTranslatingChange(true)
-                                    onTranslationErrorChange(null)
-                                    onTranslationProgressTextChange("Starting translation...")
-
-                                    val result = DubbingTranslationManager.translateSegments(
-                                        context = context,
-                                        segments = segments,
-                                        sourceLang = "auto",
-                                        targetLang = targetLocale.language,
-                                        service = translationService,
-                                        onProgress = { _, msg ->
-                                            onTranslationProgressTextChange(msg)
-                                        }
-                                    )
-
-                                    onIsTranslatingChange(false)
-                                    if (result.isSuccess) {
-                                        onTranslatedSegmentsChange(result.getOrNull())
-                                    } else {
-                                        onTranslationErrorChange(
-                                            result.exceptionOrNull()?.message ?: "Translation failed"
-                                        )
-                                    }
-                                }
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("btn_translate_preview")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (translatedSegments != null) "Re-translate to ${targetLocale.displayLanguage}"
-                                else "Translate & Preview Cues",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 11.sp
-                            )
-                        }
+                            if (segments.isNotEmpty()) {
+                                OutlinedButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            onIsTranslatingChange(true)
+                                            onTranslationErrorChange(null)
+                                            onTranslationProgressTextChange("Starting translation...")
 
-                        if (translatedSegments != null) {
+                                            val result = DubbingTranslationManager.translateSegments(
+                                                context = context,
+                                                segments = segments,
+                                                sourceLang = "auto",
+                                                targetLang = targetLocale.language,
+                                                service = translationService,
+                                                onProgress = { _, msg ->
+                                                    onTranslationProgressTextChange(msg)
+                                                }
+                                            )
+
+                                            onIsTranslatingChange(false)
+                                            if (result.isSuccess) {
+                                                onTranslatedSegmentsChange(result.getOrNull())
+                                            } else {
+                                                onTranslationErrorChange(
+                                                    result.exceptionOrNull()?.message ?: "Translation failed"
+                                                )
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("btn_translate_preview")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (translatedSegments != null) "Re-translate (${targetLocale.displayLanguage})"
+                                        else "Translate Cues",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            // Import Translated SRT Button
                             OutlinedButton(
-                                onClick = { isPreviewExpanded = !isPreviewExpanded },
+                                onClick = {
+                                    srtImportLauncher.launch(arrayOf("*/*"))
+                                },
                                 shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                                modifier = Modifier.testTag("btn_toggle_cue_preview")
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("btn_import_translated_srt")
                             ) {
                                 Icon(
-                                    imageVector = if (isPreviewExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    imageVector = Icons.Default.FileUpload,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isPreviewExpanded) "Hide" else "View Cues",
+                                    text = AppStrings.importTranslatedSrt(lang),
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 11.sp
                                 )
+                            }
+                        }
+
+                        if (translatedSegments != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Export Translated SRT Button
+                                Button(
+                                    onClick = { exportAndShareTranslatedSrt() },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("btn_export_translated_srt")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FileDownload,
+                                        contentDescription = null,
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = AppStrings.exportTranslatedSrt(lang),
+                                        color = Color.Black,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = { isPreviewExpanded = !isPreviewExpanded },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                                    modifier = Modifier.testTag("btn_toggle_cue_preview")
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPreviewExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isPreviewExpanded) "Hide" else "View Cues",
+                                        fontSize = 11.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -415,23 +557,86 @@ fun TranslationConfigSection(
                         color = AccentTeal.copy(alpha = 0.12f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = AccentTeal,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Ready: ${translatedSegments.size} cues translated to ${targetLocale.displayLanguage}",
-                                color = AccentTeal,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Ready: ${translatedSegments.size} cues for ${targetLocale.displayLanguage} dubbing",
+                                        color = AccentTeal,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        onTranslatedSegmentsChange(null)
+                                        onTranslationProgressTextChange("")
+                                    },
+                                    modifier = Modifier.testTag("btn_reset_translation")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.RestartAlt,
+                                        contentDescription = null,
+                                        tint = TextSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text("Reset", color = TextSecondary, fontSize = 10.sp)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(
+                                    onClick = { exportAndShareTranslatedSrt() },
+                                    modifier = Modifier.testTag("banner_share_translated_srt")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = null,
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Share .srt", color = AccentTeal, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        val fileName = "${sanitizedBaseTitle}_translated_${targetLocale.language}.srt"
+                                        srtExportDocumentLauncher.launch(fileName)
+                                    },
+                                    modifier = Modifier.testTag("banner_save_translated_srt")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FileDownload,
+                                        contentDescription = null,
+                                        tint = AccentTeal,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Save .srt to device", color = AccentTeal, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
 
