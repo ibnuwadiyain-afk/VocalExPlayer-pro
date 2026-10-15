@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,11 +31,15 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Language
 import com.example.onnx.AccelerationMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -91,16 +96,19 @@ import com.example.ui.components.ProcessingOverlay
 import com.example.ui.components.TranscriptDialog
 import com.example.ui.components.TtsDubbingDialog
 import com.example.dubbing.DubbingConfig
+import com.example.ui.locale.AppLanguage
 import com.example.ui.locale.AppStrings
 import com.example.ui.locale.LocalAppLanguage
 import com.example.ui.theme.AccentTeal
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
+import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.StatusError
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.whisper.SrtGenerator
 import com.example.whisper.TranscriptionSegment
+import com.example.whisper.WhisperTokenizer
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
@@ -121,6 +129,8 @@ fun VideoPlayerScreen(
     isBackgroundProtected: Boolean = true,
     isTranscriptionEnabled: Boolean = false,
     hasWhisperModelInstalled: Boolean = false,
+    whisperLanguage: String = "auto",
+    onSetWhisperLanguage: ((String) -> Unit)? = null,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onReprocess: () -> Unit,
@@ -715,6 +725,91 @@ fun VideoPlayerScreen(
                                         }
                                     } else {
                                         if (hasWhisperModelInstalled) {
+                                            var whisperLangMenuExpanded by remember { mutableStateOf(false) }
+                                            val currentWhisperLangObj = WhisperTokenizer.AVAILABLE_LANGUAGES.firstOrNull { it.code == whisperLanguage }
+                                                ?: WhisperTokenizer.AVAILABLE_LANGUAGES.first()
+
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(bottom = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = if (lang == AppLanguage.ARABIC) "لغة الصوت للتفريغ:" else "Speech Language:",
+                                                    color = TextSecondary,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+
+                                                Box {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = DarkSurfaceVariant,
+                                                        modifier = Modifier
+                                                            .clickable { whisperLangMenuExpanded = true }
+                                                            .testTag("player_whisper_language_chip")
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Language,
+                                                                contentDescription = null,
+                                                                tint = AccentTeal,
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text(
+                                                                text = "${currentWhisperLangObj.displayName} (${currentWhisperLangObj.nativeName})",
+                                                                color = TextPrimary,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.SemiBold
+                                                            )
+                                                            Icon(
+                                                                imageVector = Icons.Default.ArrowDropDown,
+                                                                contentDescription = null,
+                                                                tint = TextSecondary,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                        }
+                                                    }
+
+                                                    DropdownMenu(
+                                                        expanded = whisperLangMenuExpanded,
+                                                        onDismissRequest = { whisperLangMenuExpanded = false },
+                                                        modifier = Modifier.background(DarkSurfaceVariant)
+                                                    ) {
+                                                        WhisperTokenizer.AVAILABLE_LANGUAGES.forEach { langItem ->
+                                                            DropdownMenuItem(
+                                                                text = {
+                                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                        Text(
+                                                                            text = langItem.displayName,
+                                                                            color = if (langItem.code == whisperLanguage) AccentTeal else TextPrimary,
+                                                                            fontWeight = if (langItem.code == whisperLanguage) FontWeight.Bold else FontWeight.Normal,
+                                                                            fontSize = 12.sp
+                                                                        )
+                                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                                        Text(
+                                                                            text = "(${langItem.nativeName})",
+                                                                            color = TextSecondary,
+                                                                            fontSize = 11.sp
+                                                                        )
+                                                                    }
+                                                                },
+                                                                onClick = {
+                                                                    onSetWhisperLanguage?.invoke(langItem.code)
+                                                                    whisperLangMenuExpanded = false
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
                                             Button(
                                                 onClick = { onStartTranscription?.invoke() },
                                                 shape = RoundedCornerShape(8.dp),

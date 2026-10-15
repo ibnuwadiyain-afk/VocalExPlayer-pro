@@ -127,6 +127,8 @@ class MainActivity : ComponentActivity() {
                             isBackgroundProtected = isBackgroundProtected,
                             isTranscriptionEnabled = isTranscriptionEnabled,
                             hasWhisperModelInstalled = hasWhisperModelInstalled,
+                            whisperLanguage = whisperLanguage,
+                            onSetWhisperLanguage = { viewModel.setWhisperLanguage(it) },
                             onBack = { viewModel.clearSelectedVideo() },
                             onRetry = { viewModel.retrySeparation(selectedVideo!!) },
                             onReprocess = { viewModel.reprocessVideo(selectedVideo!!) },

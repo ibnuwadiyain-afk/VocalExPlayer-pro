@@ -176,6 +176,10 @@ class AppModelManager private constructor(private val context: Context) {
             val isInstalled = if (template.isBundled) {
                 // Bundled model is always available (either extracted or ready in assets)
                 true
+            } else if (template.type == ModelType.WHISPER_TRANSCRIPTION && getDecoderUrl(template.id) != null) {
+                // Whisper neural speech recognition requires both encoder and companion decoder ONNX models
+                targetFile.exists() && targetFile.length() > 100_000L &&
+                decoderFile.exists() && decoderFile.length() > 100_000L
             } else {
                 targetFile.exists() && targetFile.length() > 100_000L
             }
@@ -287,30 +291,37 @@ class AppModelManager private constructor(private val context: Context) {
         updateModelDownloadState(modelId, isDownloading = true, progress = 0f, speed = 0L)
 
         try {
-            // 1. Download primary / encoder model
-            downloadSingleFile(
-                url = model.downloadUrl,
-                tempFile = tempFile,
-                targetFile = targetFile,
-                onProgress = { p, speed ->
-                    val overallProgress = if (decoderUrl != null) p * 0.35f else p
-                    updateModelDownloadState(modelId, isDownloading = true, progress = overallProgress, speed = speed)
-                    onProgress(overallProgress, speed)
-                }
-            )
-
-            // 2. Download companion decoder model if applicable
-            if (decoderUrl != null && tempDecoderFile != null && decoderFile != null) {
+            // 1. Download primary / encoder model if missing
+            if (!targetFile.exists() || targetFile.length() < 100_000L) {
                 downloadSingleFile(
-                    url = decoderUrl,
-                    tempFile = tempDecoderFile,
-                    targetFile = decoderFile,
+                    url = model.downloadUrl,
+                    tempFile = tempFile,
+                    targetFile = targetFile,
                     onProgress = { p, speed ->
-                        val overallProgress = 0.35f + (p * 0.65f)
+                        val overallProgress = if (decoderUrl != null) p * 0.35f else p
                         updateModelDownloadState(modelId, isDownloading = true, progress = overallProgress, speed = speed)
                         onProgress(overallProgress, speed)
                     }
                 )
+            } else {
+                val initProgress = if (decoderUrl != null) 0.35f else 1.0f
+                updateModelDownloadState(modelId, isDownloading = true, progress = initProgress, speed = 0L)
+            }
+
+            // 2. Download companion decoder model if applicable and missing
+            if (decoderUrl != null && tempDecoderFile != null && decoderFile != null) {
+                if (!decoderFile.exists() || decoderFile.length() < 100_000L) {
+                    downloadSingleFile(
+                        url = decoderUrl,
+                        tempFile = tempDecoderFile,
+                        targetFile = decoderFile,
+                        onProgress = { p, speed ->
+                            val overallProgress = 0.35f + (p * 0.65f)
+                            updateModelDownloadState(modelId, isDownloading = true, progress = overallProgress, speed = speed)
+                            onProgress(overallProgress, speed)
+                        }
+                    )
+                }
             }
 
             Log.i(TAG, "Model $modelId downloaded successfully: ${targetFile.length()} bytes")

@@ -320,7 +320,14 @@ class WhisperInferenceEngine(private val context: Context) {
         }?.value as? OnnxTensor ?: encoderResults.iterator().next().value as? OnnxTensor
             ?: return emptyList()
 
-        val langToken = WhisperTokenizer.getLanguageToken(languageCode) ?: 50259 // default en
+        // 1. Language Resolution: If specified, use requested language; if "auto", dynamically detect from audio features
+        val langToken = if (languageCode.isNotBlank() && languageCode != "auto") {
+            WhisperTokenizer.getLanguageToken(languageCode) ?: 50259
+        } else {
+            detectLanguageToken(decoderSession, hiddenTensor, inputIdsName, encHiddenName, logitsName)
+        }
+
+        // 2. Build initial prompt sequence: <|startoftranscript|>, <|language|>, <|transcribe|>, <|notimestamps|>
         val tokenSequence = mutableListOf<Long>(
             WhisperTokenizer.START_OF_TRANSCRIPT.toLong(),
             langToken.toLong(),
@@ -328,7 +335,8 @@ class WhisperInferenceEngine(private val context: Context) {
             WhisperTokenizer.NO_TIMESTAMPS.toLong()
         )
         val generatedTokens = mutableListOf<Int>()
-        val maxTokens = 45
+        // 224 tokens allows full 30s of rapid speech / multilingual BPE (prevents the 14-18s cutoff)
+        val maxTokens = 224
 
         for (step in 0 until maxTokens) {
             val seqLen = tokenSequence.size
@@ -358,7 +366,11 @@ class WhisperInferenceEngine(private val context: Context) {
                         if (lastStepLogits is FloatArray) {
                             var maxVal = -Float.MAX_VALUE
                             for (v in 0 until lastStepLogits.size) {
-                                if (v in 50258..51864) continue // Suppress control prompt tokens
+                                // Suppress prompt control tokens (50258..50363)
+                                if (v in 50258..50363) continue
+                                // On step 0, suppress immediate end-of-text and leading space (Whisper begin_suppress_tokens)
+                                if (step == 0 && (v == WhisperTokenizer.END_OF_TEXT || v == 220)) continue
+
                                 if (lastStepLogits[v] > maxVal) {
                                     maxVal = lastStepLogits[v]
                                     bestToken = v
@@ -370,8 +382,28 @@ class WhisperInferenceEngine(private val context: Context) {
 
                 decResult.close()
 
-                if (bestToken == -1 || bestToken == WhisperTokenizer.END_OF_TEXT || bestToken == 50256) {
+                // Normal termination on true End Of Text (50257) or invalid token
+                if (bestToken == -1 || bestToken == WhisperTokenizer.END_OF_TEXT) {
                     break
+                }
+
+                // Repetition Safeguard: Prevent infinite looping on silence / noise
+                if (generatedTokens.size >= 3 &&
+                    generatedTokens[generatedTokens.size - 1] == bestToken &&
+                    generatedTokens[generatedTokens.size - 2] == bestToken &&
+                    generatedTokens[generatedTokens.size - 3] == bestToken) {
+                    Log.d(TAG, "Repetition detected (token $bestToken repeated 3x), stopping decoding for chunk ${chunk.windowIndex}")
+                    break
+                }
+                if (generatedTokens.size >= 6) {
+                    val n = generatedTokens.size
+                    if (generatedTokens[n - 1] == generatedTokens[n - 3] &&
+                        generatedTokens[n - 3] == generatedTokens[n - 5] &&
+                        generatedTokens[n - 2] == generatedTokens[n - 4] &&
+                        generatedTokens[n - 4] == generatedTokens[n - 6]) {
+                        Log.d(TAG, "2-gram repetition loop detected, stopping decoding for chunk ${chunk.windowIndex}")
+                        break
+                    }
                 }
 
                 tokenSequence.add(bestToken.toLong())
@@ -386,17 +418,218 @@ class WhisperInferenceEngine(private val context: Context) {
 
         if (generatedTokens.isEmpty()) return emptyList()
 
+        // 3. Check if timestamps were generated in the stream
+        val hasTimestampTokens = generatedTokens.any { WhisperTokenizer.isTimestampToken(it) }
+        if (hasTimestampTokens) {
+            val timestampSegments = parseWhisperTokensIntoSegments(generatedTokens, chunk.startTimeMs, startIndex)
+            if (timestampSegments.size >= 2) {
+                return timestampSegments
+            }
+        }
+
+        // 4. Decode the complete text generated for this 30s chunk
         val text = WhisperTokenizer.decodeTokens(generatedTokens)
         if (text.isBlank()) return emptyList()
 
-        return listOf(
-            TranscriptionSegment(
-                index = startIndex,
-                startMs = chunk.startTimeMs,
-                endMs = chunk.endTimeMs,
-                text = text
+        // 5. Break the text into natural, readable 2-5 second subtitle cues aligned with active voice energy
+        return segmentTextIntoTimedPhrases(text, chunk, startIndex)
+    }
+
+    /**
+     * Dynamically identifies the spoken audio language from neural acoustic features
+     * by evaluating step 0 logits across all supported Whisper language tokens.
+     */
+    private fun detectLanguageToken(
+        decoderSession: OrtSession,
+        hiddenTensor: OnnxTensor,
+        inputIdsName: String,
+        encHiddenName: String,
+        logitsName: String
+    ): Int {
+        try {
+            val buf = LongBuffer.allocate(1)
+            buf.put(WhisperTokenizer.START_OF_TRANSCRIPT.toLong())
+            buf.flip()
+
+            val idsTensor = OnnxTensor.createTensor(
+                ortEnvironment,
+                buf,
+                longArrayOf(1, 1L)
             )
-        )
+
+            val decResult = decoderSession.run(mapOf(
+                inputIdsName to idsTensor,
+                encHiddenName to hiddenTensor
+            ))
+
+            val logitsValue = decResult[logitsName]?.get()?.value
+            var bestToken = 50259 // default en
+            var maxLogit = -Float.MAX_VALUE
+
+            if (logitsValue is Array<*> && logitsValue.isNotEmpty()) {
+                val batch0 = logitsValue[0]
+                if (batch0 is Array<*>) {
+                    val step0Logits = batch0[0]
+                    if (step0Logits is FloatArray) {
+                        for ((_, token) in WhisperTokenizer.LANGUAGE_TOKENS) {
+                            if (token in step0Logits.indices && step0Logits[token] > maxLogit) {
+                                maxLogit = step0Logits[token]
+                                bestToken = token
+                            }
+                        }
+                    }
+                }
+            }
+
+            decResult.close()
+            idsTensor.close()
+
+            val detectedCode = WhisperTokenizer.LANGUAGE_TOKENS.entries.firstOrNull { it.value == bestToken }?.key ?: "en"
+            Log.i(TAG, "Whisper dynamic language detection: '$detectedCode' (token $bestToken, score: $maxLogit)")
+            return bestToken
+        } catch (e: Exception) {
+            Log.w(TAG, "Language auto-detection error: ${e.message}. Using locale fallback.")
+            val defaultLang = if (java.util.Locale.getDefault().language == "ar") "ar" else "en"
+            return WhisperTokenizer.getLanguageToken(defaultLang) ?: 50259
+        }
+    }
+
+    /**
+     * Splits a 30-second chunk's text into natural, human-readable subtitle phrases (2 to 5 seconds each),
+     * avoiding monolithic 30-second blocks and perfectly timing speech delivery.
+     */
+    private fun segmentTextIntoTimedPhrases(
+        text: String,
+        chunk: WhisperAudioPreprocessor.AudioChunk,
+        startIndex: Int
+    ): List<TranscriptionSegment> {
+        val cleanText = text.replace(Regex("\\s+"), " ").trim()
+        if (cleanText.isBlank()) return emptyList()
+
+        val phrases = splitIntoPhrases(cleanText)
+        if (phrases.isEmpty()) return emptyList()
+
+        // Find actual speech start and end time within the 30-second chunk
+        val (speechStartOffsetMs, speechEndOffsetMs) = findSpeechBoundariesMs(chunk)
+        val totalSpeechDurationMs = (speechEndOffsetMs - speechStartOffsetMs).coerceAtLeast(1200L)
+
+        val totalLength = phrases.sumOf { it.length }.coerceAtLeast(1)
+        val segments = mutableListOf<TranscriptionSegment>()
+        var currentOffsetMs = speechStartOffsetMs
+        var seq = startIndex
+
+        for (phrase in phrases) {
+            val weight = phrase.length.toFloat() / totalLength.toFloat()
+            val rawDuration = (totalSpeechDurationMs * weight).toLong()
+            val durationMs = rawDuration.coerceIn(1200L, 5500L)
+
+            val segStartMs = chunk.startTimeMs + currentOffsetMs
+            val segEndMs = (segStartMs + durationMs).coerceAtMost(chunk.endTimeMs)
+
+            segments.add(
+                TranscriptionSegment(
+                    index = seq++,
+                    startMs = segStartMs,
+                    endMs = segEndMs.coerceAtLeast(segStartMs + 800L),
+                    text = phrase
+                )
+            )
+
+            currentOffsetMs += durationMs + 120L // 120ms natural gap between subtitle cards
+            if (chunk.startTimeMs + currentOffsetMs >= chunk.endTimeMs) {
+                currentOffsetMs = (chunk.endTimeMs - chunk.startTimeMs - 400L).coerceAtLeast(speechStartOffsetMs)
+            }
+        }
+
+        return segments
+    }
+
+    /**
+     * Breaks text into clean subtitle phrases using sentence marks, clause boundaries, and word counts.
+     * Supports Arabic punctuation ('؟', '،', '؛') as well as Western punctuation.
+     */
+    private fun splitIntoPhrases(text: String): List<String> {
+        // First split on sentence terminators: '.', '!', '?', '؟', '\n'
+        val sentences = text.split(Regex("(?<=[.!?؟\n])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
+
+        val phrases = mutableListOf<String>()
+        for (sentence in sentences) {
+            val words = sentence.split(" ").filter { it.isNotBlank() }
+            if (words.size <= 8) {
+                phrases.add(sentence)
+            } else {
+                // If sentence has clauses (commas, arabic commas, semicolons, dashes), split by clauses
+                val clauses = sentence.split(Regex("(?<=[,،;؛—-])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
+                if (clauses.size > 1 && clauses.all { it.split(" ").size <= 10 }) {
+                    phrases.addAll(clauses)
+                } else {
+                    // Split into balanced chunks of 6-8 words
+                    var chunkWords = mutableListOf<String>()
+                    for (word in words) {
+                        chunkWords.add(word)
+                        if (chunkWords.size >= 7) {
+                            phrases.add(chunkWords.joinToString(" "))
+                            chunkWords = mutableListOf()
+                        }
+                    }
+                    if (chunkWords.isNotEmpty()) {
+                        if (phrases.isNotEmpty() && chunkWords.size <= 2) {
+                            val lastIdx = phrases.size - 1
+                            phrases[lastIdx] = phrases[lastIdx] + " " + chunkWords.joinToString(" ")
+                        } else {
+                            phrases.add(chunkWords.joinToString(" "))
+                        }
+                    }
+                }
+            }
+        }
+        return phrases.ifEmpty { listOf(text) }
+    }
+
+    /**
+     * Determines active vocal speech boundaries within a 30-second chunk using Mel spectrogram formants.
+     */
+    private fun findSpeechBoundariesMs(chunk: WhisperAudioPreprocessor.AudioChunk): Pair<Long, Long> {
+        val mel = chunk.melSpectrogram
+        val numFrames = 3000
+        val frameEnergy = FloatArray(numFrames)
+
+        var minE = Float.MAX_VALUE
+        var maxE = -Float.MAX_VALUE
+        for (f in 0 until numFrames) {
+            var sum = 0f
+            for (b in 12..60) sum += mel[b][f]
+            val avg = sum / (60 - 12 + 1)
+            frameEnergy[f] = avg
+            if (avg < minE) minE = avg
+            if (avg > maxE) maxE = avg
+        }
+
+        val range = (maxE - minE).coerceAtLeast(1e-5f)
+        val threshold = 0.28f
+
+        var firstSpeechFrame = 0
+        var lastSpeechFrame = numFrames - 1
+
+        for (f in 0 until numFrames) {
+            if ((frameEnergy[f] - minE) / range > threshold) {
+                firstSpeechFrame = f
+                break
+            }
+        }
+
+        for (f in numFrames - 1 downTo 0) {
+            if ((frameEnergy[f] - minE) / range > threshold) {
+                lastSpeechFrame = f
+                break
+            }
+        }
+
+        val chunkDurationMs = (chunk.endTimeMs - chunk.startTimeMs).coerceAtLeast(1000L)
+        val startMs = (firstSpeechFrame * 10L).coerceIn(0L, chunkDurationMs - 500L)
+        val endMs = ((lastSpeechFrame + 1) * 10L).coerceIn(startMs + 500L, chunkDurationMs)
+
+        return Pair(startMs, endMs)
     }
 
     private fun extractTensorData(
