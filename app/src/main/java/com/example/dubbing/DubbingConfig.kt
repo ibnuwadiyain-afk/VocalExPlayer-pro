@@ -64,5 +64,8 @@ data class DubbingConfig(
     val minGapBetweenCuesMs: Long = 80L,
     val overlapResolution: OverlapResolution = OverlapResolution.AUTO_PACE,
     val ttsEnginePackage: String? = null,
-    val ttsEngineLabel: String? = null
+    val ttsEngineLabel: String? = null,
+    val localServerHost: String = "127.0.0.1",
+    val localServerPort: Int = 5000,
+    val localServerEndpoint: String = "/translate"
 )

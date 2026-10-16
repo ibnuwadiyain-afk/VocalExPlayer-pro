@@ -289,6 +289,55 @@ class ExampleUnitTest {
         assertEquals("eSpeak NG", engineInfo.label)
         assertFalse(engineInfo.isDefault)
     }
+
+    @Test
+    fun testLocalServerUrlBuilder() {
+        val manager = com.example.dubbing.translation.DubbingTranslationManager
+
+        // Standard host and port
+        assertEquals(
+            "http://127.0.0.1:5000/translate",
+            manager.buildLocalServerUrl("127.0.0.1", 5000, "/translate")
+        )
+
+        // Localhost host
+        assertEquals(
+            "http://localhost:8080/translate",
+            manager.buildLocalServerUrl("localhost", 8080, "/translate")
+        )
+
+        // Full URL with scheme
+        assertEquals(
+            "http://127.0.0.1:5000/translate",
+            manager.buildLocalServerUrl("http://127.0.0.1", 5000, "/translate")
+        )
+
+        // Full URL already containing port
+        assertEquals(
+            "http://127.0.0.1:5000/translate",
+            manager.buildLocalServerUrl("http://127.0.0.1:5000", 5000, "/translate")
+        )
+
+        // Ollama LLM endpoint
+        assertEquals(
+            "http://127.0.0.1:11434/api/generate",
+            manager.buildLocalServerUrl("127.0.0.1", 11434, "/api/generate")
+        )
+    }
+
+    @Test
+    fun testDubbingConfigLocalServer() {
+        val config = com.example.dubbing.DubbingConfig(
+            translationService = com.example.dubbing.translation.TranslationServiceType.LOCAL_SERVER,
+            localServerHost = "localhost",
+            localServerPort = 5000,
+            localServerEndpoint = "/translate"
+        )
+        assertEquals(com.example.dubbing.translation.TranslationServiceType.LOCAL_SERVER, config.translationService)
+        assertEquals("localhost", config.localServerHost)
+        assertEquals(5000, config.localServerPort)
+        assertEquals("/translate", config.localServerEndpoint)
+    }
 }
 
 

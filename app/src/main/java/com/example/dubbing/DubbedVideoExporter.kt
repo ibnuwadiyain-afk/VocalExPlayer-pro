@@ -50,6 +50,11 @@ object DubbedVideoExporter {
             val engineDesc = config.ttsEngineLabel ?: "TextToSpeech engine"
             onProgress(0.02f, "Initializing $engineDesc...")
             ttsInstance = TtsDubbingEngine.createTts(context, config.ttsEnginePackage)
+            if (ttsInstance == null && !config.ttsEnginePackage.isNullOrBlank()) {
+                Log.w(TAG, "Selected 3rd-party TTS engine '$engineDesc' failed to initialize; falling back to default system TTS")
+                onProgress(0.03f, "Falling back to default TTS engine...")
+                ttsInstance = TtsDubbingEngine.createTts(context, null)
+            }
             if (ttsInstance == null) {
                 return@withContext Result.failure(
                     IllegalStateException("Failed to initialize TextToSpeech engine ($engineDesc). Please check device settings.")

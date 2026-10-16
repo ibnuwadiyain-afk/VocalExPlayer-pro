@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Speed
@@ -134,6 +135,9 @@ fun TtsDubbingDialog(
     // Translation State
     var enableTranslation by remember { mutableStateOf(false) }
     var translationService by remember { mutableStateOf(TranslationServiceType.ONLINE_FREE) }
+    var localServerHost by remember { mutableStateOf("127.0.0.1") }
+    var localServerPort by remember { mutableStateOf(5000) }
+    var localServerEndpoint by remember { mutableStateOf("/translate") }
     var translatedSegments by remember { mutableStateOf<List<TranscriptionSegment>?>(null) }
     var isTranslating by remember { mutableStateOf(false) }
     var translationProgressText by remember { mutableStateOf("") }
@@ -333,26 +337,60 @@ fun TtsDubbingDialog(
                         letterSpacing = 0.5.sp
                     )
 
-                    TextButton(
-                        onClick = { TtsDubbingEngine.openSystemTtsSettings(context) },
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                        modifier = Modifier
-                            .height(26.dp)
-                            .testTag("manage_tts_engines_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Manage TTS Engines",
-                            tint = AccentTeal,
-                            modifier = Modifier.size(13.dp)
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                val refreshed = TtsDubbingEngine.getInstalledTtsEngines(context, ttsInstance)
+                                installedEngines = refreshed
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Found ${refreshed.size} TTS engines",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .height(26.dp)
+                                .testTag("refresh_tts_engines_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh TTS Engines",
+                                tint = AccentTeal,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "Refresh",
+                                fontSize = 10.sp,
+                                color = AccentTeal,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Manage Engines",
-                            fontSize = 10.sp,
-                            color = AccentTeal,
-                            fontWeight = FontWeight.SemiBold
-                        )
+
+                        TextButton(
+                            onClick = { TtsDubbingEngine.openSystemTtsSettings(context) },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .height(26.dp)
+                                .testTag("manage_tts_engines_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Manage TTS Engines",
+                                tint = AccentTeal,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "Manage Engines",
+                                fontSize = 10.sp,
+                                color = AccentTeal,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
@@ -426,6 +464,20 @@ fun TtsDubbingDialog(
                                                         fontSize = 9.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = AccentTeal,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            } else if (eng.packageName.isNotBlank()) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = DarkSurfaceVariant
+                                                ) {
+                                                    Text(
+                                                        text = "3rd-Party",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = TextSecondary,
                                                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                                     )
                                                 }
@@ -552,7 +604,13 @@ fun TtsDubbingDialog(
                     translationProgressText = translationProgressText,
                     onTranslationProgressTextChange = { translationProgressText = it },
                     translationError = translationError,
-                    onTranslationErrorChange = { translationError = it }
+                    onTranslationErrorChange = { translationError = it },
+                    localServerHost = localServerHost,
+                    onLocalServerHostChange = { localServerHost = it },
+                    localServerPort = localServerPort,
+                    onLocalServerPortChange = { localServerPort = it },
+                    localServerEndpoint = localServerEndpoint,
+                    onLocalServerEndpointChange = { localServerEndpoint = it }
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -958,7 +1016,10 @@ fun TtsDubbingDialog(
                         minGapBetweenCuesMs = minGapBetweenCuesMs,
                         overlapResolution = overlapResolution,
                         ttsEnginePackage = selectedEngine?.packageName?.ifBlank { null },
-                        ttsEngineLabel = selectedEngine?.label
+                        ttsEngineLabel = selectedEngine?.label,
+                        localServerHost = localServerHost,
+                        localServerPort = localServerPort,
+                        localServerEndpoint = localServerEndpoint
                     )
                     onConfirmDubbing(config)
                 },

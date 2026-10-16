@@ -10,6 +10,11 @@ enum class TranslationServiceType(
         subtitle = "Instant neural translation across 100+ languages (zero setup required)",
         badge = "Fast & Universal"
     ),
+    LOCAL_SERVER(
+        title = "Local Translation Server",
+        subtitle = "Requests translations from a local translation server app via localhost URL & port",
+        badge = "Localhost App"
+    ),
     ANDROID_SYSTEM(
         title = "Built-in Android System Service",
         subtitle = "On-device system translation via Android TranslationManager (Android 12+)",

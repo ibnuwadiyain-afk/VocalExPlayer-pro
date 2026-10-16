@@ -252,6 +252,9 @@ object TtsDubbingEngine {
                     sourceLang = config.sourceLanguageCode,
                     targetLang = config.targetLanguageCode,
                     service = config.translationService,
+                    localServerHost = config.localServerHost,
+                    localServerPort = config.localServerPort,
+                    localServerEndpoint = config.localServerEndpoint,
                     onProgress = { p, msg ->
                         onProgress(0.02f + (p * 0.08f), msg)
                     }

@@ -96,6 +96,10 @@ npx expo run:android
     - Choose any installed TTS engine directly from the dubbing menu with automatic language availability detection.
     - "Manage Engines" shortcut directly opens Android's system Text-to-Speech settings to install or configure voice engines.
   - In the Dubbing dialog, customize target TTS language, voice speed, pitch, and translation service.
+  - **Local Translation Server App Support**:
+    - Request translations directly from a local translation server app installed on the same phone (e.g. LibreTranslate, Argos Translate, LocalAI, Ollama, Termux microservices).
+    - Customizable localhost host/URL (e.g. `127.0.0.1`, `localhost`), port (e.g. `5000`, `8080`, `11434`), and endpoint path (e.g. `/translate`, `/api/generate`).
+    - One-tap popular app presets and built-in "Test Connection" button with real-time translation verification.
   - **Cue Overlap Prevention & Auto-Pacing (SOLA)**:
     - **Zero-Overlap Guarantee**: Eliminates simultaneous voice collision when translated text is longer than original subtitle cues.
     - **Smart Speed Auto-Pacing**: Automatically time-compresses long translated sentences using Synchronized Overlap-Add (SOLA) without pitch distortion.

@@ -10,10 +10,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.ConnectException
 import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -54,18 +57,35 @@ object DubbingTranslationManager {
      * Translates a single text string using the specified service.
      * Falls back to Free Online Translation if Android system service is requested but unavailable.
      */
+    /**
+     * Translates a single text string using the specified service (Online, Local Server, or Android System).
+     */
     suspend fun translateText(
         context: Context,
         text: String,
         sourceLang: String = "auto",
         targetLang: String,
-        service: TranslationServiceType = TranslationServiceType.ONLINE_FREE
+        service: TranslationServiceType = TranslationServiceType.ONLINE_FREE,
+        localServerHost: String = "127.0.0.1",
+        localServerPort: Int = 5000,
+        localServerEndpoint: String = "/translate"
     ): Result<String> = withContext(Dispatchers.IO) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return@withContext Result.success(text)
 
         when (service) {
             TranslationServiceType.NONE -> Result.success(text)
+
+            TranslationServiceType.LOCAL_SERVER -> {
+                translateWithLocalServer(
+                    text = trimmed,
+                    sourceLang = sourceLang,
+                    targetLang = targetLang,
+                    hostOrUrl = localServerHost,
+                    port = localServerPort,
+                    endpoint = localServerEndpoint
+                )
+            }
 
             TranslationServiceType.ANDROID_SYSTEM -> {
                 if (isSystemTranslationSupported() && isSystemTranslationAvailable(context)) {
@@ -101,6 +121,9 @@ object DubbingTranslationManager {
         sourceLang: String = "auto",
         targetLang: String,
         service: TranslationServiceType = TranslationServiceType.ONLINE_FREE,
+        localServerHost: String = "127.0.0.1",
+        localServerPort: Int = 5000,
+        localServerEndpoint: String = "/translate",
         onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Result<List<TranscriptionSegment>> = withContext(Dispatchers.IO) {
         if (segments.isEmpty()) return@withContext Result.success(emptyList())
@@ -109,12 +132,14 @@ object DubbingTranslationManager {
         val totalCues = segments.size
         val translatedList = ArrayList<TranscriptionSegment>(totalCues)
         var failureCount = 0
+        var lastFailureException: Throwable? = null
 
         for ((index, segment) in segments.withIndex()) {
             val progressVal = (index.toFloat() / totalCues).coerceIn(0f, 1f)
+            val serviceDesc = if (service == TranslationServiceType.LOCAL_SERVER) "Localhost:$localServerPort" else targetLang.uppercase()
             onProgress(
                 progressVal,
-                "Translating cue ${index + 1}/$totalCues (${targetLang.uppercase()})..."
+                "Translating cue ${index + 1}/$totalCues ($serviceDesc)..."
             )
 
             if (segment.text.isBlank()) {
@@ -127,7 +152,10 @@ object DubbingTranslationManager {
                 text = segment.text,
                 sourceLang = sourceLang,
                 targetLang = targetLang,
-                service = service
+                service = service,
+                localServerHost = localServerHost,
+                localServerPort = localServerPort,
+                localServerEndpoint = localServerEndpoint
             )
 
             if (result.isSuccess) {
@@ -135,11 +163,18 @@ object DubbingTranslationManager {
                 translatedList.add(segment.copy(text = translatedText))
             } else {
                 failureCount++
-                Log.w(TAG, "Failed translating cue #${segment.index}: '${segment.text}'")
+                lastFailureException = result.exceptionOrNull()
+                Log.w(TAG, "Failed translating cue #${segment.index}: '${segment.text}' - ${lastFailureException?.message}")
+
+                // For local server: if connection is refused on the very first cue, fail fast immediately
+                if (service == TranslationServiceType.LOCAL_SERVER && index == 0 && lastFailureException is ConnectException) {
+                    return@withContext Result.failure(lastFailureException)
+                }
+
                 translatedList.add(segment) // Keep original text on individual cue failure
             }
 
-            // Slight throttle for online translation to be polite and avoid bursts
+            // Slight throttle for online translation to be polite and avoid rate limits
             if (service == TranslationServiceType.ONLINE_FREE && totalCues > 5) {
                 delay(30)
             }
@@ -148,9 +183,223 @@ object DubbingTranslationManager {
         onProgress(1.0f, "Translation completed ($totalCues cues)")
 
         if (failureCount == totalCues && totalCues > 0) {
-            Result.failure(IllegalStateException("Translation service failed for all subtitle cues."))
+            val errorMsg = lastFailureException?.message ?: "Translation service failed for all subtitle cues."
+            Result.failure(lastFailureException ?: IllegalStateException(errorMsg))
         } else {
             Result.success(translatedList)
+        }
+    }
+
+    /**
+     * Constructs a normalized target URL for the local translation server.
+     */
+    fun buildLocalServerUrl(hostOrUrl: String, port: Int, endpoint: String = "/translate"): String {
+        val trimmed = hostOrUrl.trim()
+        val cleanEndpoint = if (endpoint.startsWith("/")) endpoint else "/$endpoint"
+        return when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> {
+                val uriWithoutScheme = trimmed.substringAfter("://")
+                if (uriWithoutScheme.contains(":")) {
+                    if (uriWithoutScheme.contains("/")) trimmed else "$trimmed$cleanEndpoint"
+                } else {
+                    val base = trimmed.removeSuffix("/")
+                    "$base:$port$cleanEndpoint"
+                }
+            }
+            trimmed.contains(":") -> {
+                "http://$trimmed$cleanEndpoint"
+            }
+            else -> {
+                "http://$trimmed:$port$cleanEndpoint"
+            }
+        }
+    }
+
+    /**
+     * Sends a translation request to the local translation server app via localhost URL and port.
+     */
+    suspend fun translateWithLocalServer(
+        text: String,
+        sourceLang: String = "auto",
+        targetLang: String,
+        hostOrUrl: String = "127.0.0.1",
+        port: Int = 5000,
+        endpoint: String = "/translate"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val targetUrl = buildLocalServerUrl(hostOrUrl, port, endpoint)
+        val src = if (sourceLang.isBlank() || sourceLang == "auto") "auto" else sourceLang
+        val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+        // 1. Choose payload according to endpoint pattern (LibreTranslate, Ollama, OpenAI)
+        val payload1 = when {
+            targetUrl.contains("/api/generate") -> {
+                JSONObject().apply {
+                    put("model", "llama3")
+                    put("prompt", "Translate this subtitle into $targetLang. Output ONLY the translated text without extra explanation:\n$text")
+                    put("stream", false)
+                }
+            }
+            targetUrl.contains("/chat/completions") -> {
+                val msgs = JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "system")
+                        put("content", "You are a professional subtitle translator. Translate user text directly into $targetLang.")
+                    })
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", text)
+                    })
+                }
+                JSONObject().apply {
+                    put("messages", msgs)
+                }
+            }
+            else -> {
+                JSONObject().apply {
+                    put("q", text)
+                    put("source", src)
+                    put("target", targetLang)
+                    put("format", "text")
+                }
+            }
+        }
+
+        try {
+            val request = Request.Builder()
+                .url(targetUrl)
+                .post(payload1.toString().toRequestBody(jsonMediaType))
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Content-Type", "application/json")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bodyStr = response.body?.string().orEmpty()
+                val parsed = parseTranslationResponse(bodyStr)
+                if (parsed != null && parsed.isNotBlank()) {
+                    return@withContext Result.success(parsed)
+                }
+            } else if (response.code in 400..404 && !targetUrl.contains("/api/") && !targetUrl.contains("/chat/")) {
+                // Secondary format: alternative 'text' parameter for custom microservices
+                val payload2 = JSONObject().apply {
+                    put("text", text)
+                    put("source", src)
+                    put("target", targetLang)
+                }
+                val req2 = Request.Builder()
+                    .url(targetUrl)
+                    .post(payload2.toString().toRequestBody(jsonMediaType))
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                val resp2 = httpClient.newCall(req2).execute()
+                if (resp2.isSuccessful) {
+                    val bodyStr2 = resp2.body?.string().orEmpty()
+                    val parsed2 = parseTranslationResponse(bodyStr2)
+                    if (parsed2 != null && parsed2.isNotBlank()) {
+                        return@withContext Result.success(parsed2)
+                    }
+                }
+                return@withContext Result.failure(
+                    IllegalStateException("Local server returned HTTP ${response.code}: ${response.message}")
+                )
+            } else {
+                return@withContext Result.failure(
+                    IllegalStateException("Local server at $targetUrl returned HTTP ${response.code}: ${response.message}")
+                )
+            }
+        } catch (e: ConnectException) {
+            return@withContext Result.failure(
+                ConnectException("Could not connect to local translation server at $targetUrl. Please ensure your translation server app is running on this phone on port $port.")
+            )
+        } catch (e: Exception) {
+            return@withContext Result.failure(
+                Exception("Local translation error ($targetUrl): ${e.message ?: e.javaClass.simpleName}")
+            )
+        }
+
+        Result.failure(IllegalStateException("Local translation server returned empty response"))
+    }
+
+    /**
+     * Parses diverse JSON responses from local translation servers (LibreTranslate, LocalAI, Ollama, microservices).
+     */
+    private fun parseTranslationResponse(bodyStr: String): String? {
+        val trimmed = bodyStr.trim()
+        if (trimmed.isEmpty()) return null
+
+        try {
+            if (trimmed.startsWith("{")) {
+                val obj = JSONObject(trimmed)
+                // 1. LibreTranslate standard
+                val transText = obj.optString("translatedText")
+                if (transText.isNotBlank()) return unescapeHtml(transText)
+
+                // 2. Generic translation/result/text
+                val trans = obj.optString("translation")
+                if (trans.isNotBlank()) return unescapeHtml(trans)
+
+                val result = obj.optString("result")
+                if (result.isNotBlank()) return unescapeHtml(result)
+
+                val text = obj.optString("text")
+                if (text.isNotBlank()) return unescapeHtml(text)
+
+                // 3. Ollama local LLM response
+                val response = obj.optString("response")
+                if (response.isNotBlank()) return unescapeHtml(response)
+
+                // 4. OpenAI compatible chat completions
+                val choices = obj.optJSONArray("choices")
+                if (choices != null && choices.length() > 0) {
+                    val firstChoice = choices.optJSONObject(0)
+                    val msg = firstChoice?.optJSONObject("message")
+                    val content = msg?.optString("content")
+                    if (!content.isNullOrBlank()) return unescapeHtml(content)
+                }
+            } else if (trimmed.startsWith("[")) {
+                val array = JSONArray(trimmed)
+                if (array.length() > 0) {
+                    val first = array.optString(0)
+                    if (first.isNotBlank()) return unescapeHtml(first)
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback: If it's a raw plain text string (not JSON error)
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("<")) {
+            return unescapeHtml(trimmed)
+        }
+        return null
+    }
+
+    /**
+     * Tests connectivity and translation response from the local translation server.
+     */
+    suspend fun testLocalServerConnection(
+        hostOrUrl: String,
+        port: Int,
+        endpoint: String = "/translate",
+        targetLang: String = "es"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val url = buildLocalServerUrl(hostOrUrl, port, endpoint)
+        try {
+            val result = translateWithLocalServer(
+                text = "Hello world",
+                sourceLang = "en",
+                targetLang = targetLang,
+                hostOrUrl = hostOrUrl,
+                port = port,
+                endpoint = endpoint
+            )
+            if (result.isSuccess) {
+                Result.success("Connected! Server translated 'Hello world' -> '${result.getOrNull()}'")
+            } else {
+                Result.failure(result.exceptionOrNull() ?: Exception("Unknown error from server"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 

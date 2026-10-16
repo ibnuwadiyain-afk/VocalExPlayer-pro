@@ -27,16 +27,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
@@ -47,6 +51,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -54,6 +60,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -99,12 +106,22 @@ fun TranslationConfigSection(
     translationProgressText: String,
     onTranslationProgressTextChange: (String) -> Unit,
     translationError: String?,
-    onTranslationErrorChange: (String?) -> Unit
+    onTranslationErrorChange: (String?) -> Unit,
+    localServerHost: String = "127.0.0.1",
+    onLocalServerHostChange: (String) -> Unit = {},
+    localServerPort: Int = 5000,
+    onLocalServerPortChange: (Int) -> Unit = {},
+    localServerEndpoint: String = "/translate",
+    onLocalServerEndpointChange: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lang = LocalAppLanguage.current
     val coroutineScope = rememberCoroutineScope()
     var isPreviewExpanded by remember { mutableStateOf(false) }
+
+    // Local server connectivity test state
+    var isTestingServer by remember { mutableStateOf(false) }
+    var testServerResult by remember { mutableStateOf<Result<String>?>(null) }
 
     val isSystemSupported = remember {
         DubbingTranslationManager.isSystemTranslationSupported()
@@ -235,7 +252,61 @@ fun TranslationConfigSection(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Service Option 2: Android System Service
+                // Service Option 2: Local Translation Server (App installed on this phone)
+                TranslationServiceCard(
+                    title = "Local Translation Server App",
+                    description = "Request translation from local server app installed on this phone via localhost & port",
+                    badge = "Localhost • Private",
+                    isSelected = translationService == TranslationServiceType.LOCAL_SERVER,
+                    icon = Icons.Default.Dns,
+                    onSelect = {
+                        onTranslationServiceChange(TranslationServiceType.LOCAL_SERVER)
+                        testServerResult = null
+                    },
+                    testTag = "service_local_server"
+                )
+
+                if (translationService == TranslationServiceType.LOCAL_SERVER) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LocalServerConfigCard(
+                        hostOrUrl = localServerHost,
+                        onHostOrUrlChange = {
+                            onLocalServerHostChange(it)
+                            testServerResult = null
+                        },
+                        port = localServerPort,
+                        onPortChange = {
+                            onLocalServerPortChange(it)
+                            testServerResult = null
+                        },
+                        endpoint = localServerEndpoint,
+                        onEndpointChange = {
+                            onLocalServerEndpointChange(it)
+                            testServerResult = null
+                        },
+                        targetLanguage = targetLocale.language,
+                        isTesting = isTestingServer,
+                        testResult = testServerResult,
+                        onTestConnection = {
+                            coroutineScope.launch {
+                                isTestingServer = true
+                                testServerResult = null
+                                val res = DubbingTranslationManager.testLocalServerConnection(
+                                    hostOrUrl = localServerHost,
+                                    port = localServerPort,
+                                    endpoint = localServerEndpoint,
+                                    targetLang = targetLocale.language
+                                )
+                                isTestingServer = false
+                                testServerResult = res
+                            }
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Service Option 3: Android System Service
                 val systemDescription = when {
                     isSystemAvailable -> "Android On-Device TranslationManager active"
                     isSystemSupported -> "Android 12+ service (auto-falls back if language pack not downloaded)"
@@ -409,6 +480,9 @@ fun TranslationConfigSection(
                                                 sourceLang = "auto",
                                                 targetLang = targetLocale.language,
                                                 service = translationService,
+                                                localServerHost = localServerHost,
+                                                localServerPort = localServerPort,
+                                                localServerEndpoint = localServerEndpoint,
                                                 onProgress = { _, msg ->
                                                     onTranslationProgressTextChange(msg)
                                                 }
@@ -790,6 +864,400 @@ private fun TranslationServiceCard(
                     lineHeight = 13.sp
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun LocalServerConfigCard(
+    hostOrUrl: String,
+    onHostOrUrlChange: (String) -> Unit,
+    port: Int,
+    onPortChange: (Int) -> Unit,
+    endpoint: String,
+    onEndpointChange: (String) -> Unit,
+    targetLanguage: String,
+    isTesting: Boolean,
+    testResult: Result<String>?,
+    onTestConnection: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = DarkSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("local_server_config_card")
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Dns,
+                        contentDescription = null,
+                        tint = AccentTeal,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Localhost Server Settings",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = TextPrimary
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = AccentTeal.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = "Port $port",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentTeal,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Connects to a translation server app running on this phone (e.g. LibreTranslate, Argos, Ollama, Termux).",
+                fontSize = 10.sp,
+                color = TextSecondary,
+                lineHeight = 13.sp
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Quick App Presets
+            Text(
+                text = "POPULAR APP PRESETS",
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentTeal,
+                letterSpacing = 0.5.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                PresetChip(
+                    label = "LibreTranslate",
+                    sub = ":5000",
+                    isSelected = port == 5000 && endpoint == "/translate",
+                    onClick = {
+                        onHostOrUrlChange("127.0.0.1")
+                        onPortChange(5000)
+                        onEndpointChange("/translate")
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                PresetChip(
+                    label = "LocalAI / Custom",
+                    sub = ":8080",
+                    isSelected = port == 8080 && endpoint == "/translate",
+                    onClick = {
+                        onHostOrUrlChange("127.0.0.1")
+                        onPortChange(8080)
+                        onEndpointChange("/translate")
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                PresetChip(
+                    label = "Ollama LLM",
+                    sub = ":11434",
+                    isSelected = port == 11434 && endpoint == "/api/generate",
+                    onClick = {
+                        onHostOrUrlChange("127.0.0.1")
+                        onPortChange(11434)
+                        onEndpointChange("/api/generate")
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Host / URL Input
+            Text(
+                text = "Server Host / Localhost URL",
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            OutlinedTextField(
+                value = hostOrUrl,
+                onValueChange = onHostOrUrlChange,
+                placeholder = { Text("127.0.0.1 or localhost", fontSize = 11.sp, color = TextSecondary.copy(alpha = 0.6f)) },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("local_server_host_input"),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AccentTeal,
+                    unfocusedBorderColor = TextSecondary.copy(alpha = 0.35f),
+                    focusedTextColor = TextPrimary,
+                    unfocusedTextColor = TextPrimary
+                ),
+                shape = RoundedCornerShape(8.dp)
+            )
+
+            // Fast host quick chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("127.0.0.1", "localhost", "10.0.2.2").forEach { h ->
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = if (hostOrUrl == h) AccentTeal.copy(alpha = 0.25f) else DarkSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { onHostOrUrlChange(h) }
+                    ) {
+                        Text(
+                            text = h,
+                            fontSize = 9.sp,
+                            color = if (hostOrUrl == h) AccentTeal else TextSecondary,
+                            fontWeight = if (hostOrUrl == h) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Port and Endpoint Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Port
+                Column(modifier = Modifier.weight(0.42f)) {
+                    Text(
+                        text = "Port Number",
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    OutlinedTextField(
+                        value = if (port == 0) "" else port.toString(),
+                        onValueChange = { newVal ->
+                            val clean = newVal.filter { it.isDigit() }.take(5)
+                            onPortChange(clean.toIntOrNull() ?: 0)
+                        },
+                        placeholder = { Text("5000", fontSize = 11.sp, color = TextSecondary.copy(alpha = 0.6f)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("local_server_port_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentTeal,
+                            unfocusedBorderColor = TextSecondary.copy(alpha = 0.35f),
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                // Endpoint Path
+                Column(modifier = Modifier.weight(0.58f)) {
+                    Text(
+                        text = "Endpoint Path",
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    OutlinedTextField(
+                        value = endpoint,
+                        onValueChange = onEndpointChange,
+                        placeholder = { Text("/translate", fontSize = 11.sp, color = TextSecondary.copy(alpha = 0.6f)) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("local_server_endpoint_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentTeal,
+                            unfocusedBorderColor = TextSecondary.copy(alpha = 0.35f),
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Live Target URL preview
+            val resolvedUrl = remember(hostOrUrl, port, endpoint) {
+                DubbingTranslationManager.buildLocalServerUrl(hostOrUrl, port, endpoint)
+            }
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = DarkSurface,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = null,
+                        tint = AccentTeal,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "URL: $resolvedUrl",
+                        fontSize = 9.5.sp,
+                        color = TextSecondary,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Test Connection Button & Result
+            OutlinedButton(
+                onClick = onTestConnection,
+                enabled = !isTesting && port > 0,
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("btn_test_local_server_connection")
+            ) {
+                if (isTesting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = AccentTeal
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Testing Connection...", fontSize = 11.sp)
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Test Local Server Connection", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            if (testResult != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                if (testResult.isSuccess) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = AccentTeal.copy(alpha = 0.15f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = AccentTeal,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = testResult.getOrNull() ?: "Connected to local translation server!",
+                                color = AccentTeal,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF3E1C1C),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = null,
+                                tint = Color(0xFFFF6B6B),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = testResult.exceptionOrNull()?.message ?: "Could not connect to local server",
+                                color = Color(0xFFFF6B6B),
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetChip(
+    label: String,
+    sub: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = if (isSelected) AccentTeal.copy(alpha = 0.20f) else DarkSurface,
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onClick() }
+            .then(
+                if (isSelected) Modifier.border(1.dp, AccentTeal, RoundedCornerShape(6.dp))
+                else Modifier
+            )
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = label,
+                fontSize = 9.5.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                color = if (isSelected) AccentTeal else TextPrimary,
+                maxLines = 1
+            )
+            Text(
+                text = sub,
+                fontSize = 8.5.sp,
+                color = if (isSelected) AccentTeal else TextSecondary
+            )
         }
     }
 }
