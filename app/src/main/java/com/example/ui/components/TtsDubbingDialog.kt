@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
@@ -34,8 +36,7 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -51,6 +52,8 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -60,7 +63,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -102,6 +107,14 @@ fun TtsDubbingDialog(
     val scrollState = rememberScrollState()
 
     var ttsInstance by remember { mutableStateOf<TextToSpeech?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // 3rd-Party & System TTS Engines State
+    var installedEngines by remember { mutableStateOf<List<TtsDubbingEngine.TtsEngineInfo>>(emptyList()) }
+    var selectedEngine by remember { mutableStateOf<TtsDubbingEngine.TtsEngineInfo?>(null) }
+    var isEngineDropdownExpanded by remember { mutableStateOf(false) }
+    var isSwitchingEngine by remember { mutableStateOf(false) }
+
     var availableLocales by remember { mutableStateOf<List<Locale>>(emptyList()) }
     var selectedLocale by remember { mutableStateOf(Locale.getDefault()) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
@@ -134,29 +147,33 @@ fun TtsDubbingDialog(
         }
     }
 
-    // Initialize TTS engine for preview and available voice queries
-    DisposableEffect(Unit) {
-        var tts: TextToSpeech? = null
-        try {
-            tts = TextToSpeech(context.applicationContext) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    ttsInstance = tts
-                    tts?.let { validTts ->
-                        val locales = TtsDubbingEngine.getAvailableLocales(validTts)
-                        availableLocales = locales
-                        // Match selectedLocale to available if possible
-                        locales.firstOrNull { it.language == selectedLocale.language }?.let {
-                            selectedLocale = it
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
+    // Initialize TTS engine (discovering all 3rd-party installed engines and system default)
+    LaunchedEffect(Unit) {
+        val engines = TtsDubbingEngine.getInstalledTtsEngines(context)
+        installedEngines = engines
+        val defaultEng = engines.firstOrNull { it.isDefault } ?: engines.firstOrNull()
+        selectedEngine = defaultEng
 
+        val tts = TtsDubbingEngine.createTts(context, defaultEng?.packageName?.ifBlank { null })
+        if (tts != null) {
+            ttsInstance = tts
+            val refreshed = TtsDubbingEngine.getInstalledTtsEngines(context, tts)
+            if (refreshed.isNotEmpty()) {
+                installedEngines = refreshed
+            }
+            val locales = TtsDubbingEngine.getAvailableLocales(tts)
+            availableLocales = locales
+            locales.firstOrNull { it.language == selectedLocale.language }?.let {
+                selectedLocale = it
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
         onDispose {
             try {
-                tts?.stop()
-                tts?.shutdown()
+                ttsInstance?.stop()
+                ttsInstance?.shutdown()
             } catch (_: Exception) {}
         }
     }
@@ -297,6 +314,158 @@ fun TtsDubbingDialog(
                             color = TextSecondary,
                             fontSize = 10.sp
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // TTS Engine Provider Section (3rd-Party & System Engines)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "TTS ENGINE / SERVICE",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentTeal,
+                        letterSpacing = 0.5.sp
+                    )
+
+                    TextButton(
+                        onClick = { TtsDubbingEngine.openSystemTtsSettings(context) },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        modifier = Modifier
+                            .height(26.dp)
+                            .testTag("manage_tts_engines_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Manage TTS Engines",
+                            tint = AccentTeal,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Manage Engines",
+                            fontSize = 10.sp,
+                            color = AccentTeal,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+
+                ExposedDropdownMenuBox(
+                    expanded = isEngineDropdownExpanded,
+                    onExpandedChange = { if (!isSwitchingEngine) isEngineDropdownExpanded = !isEngineDropdownExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = if (isSwitchingEngine) "Switching engine..." else (selectedEngine?.label ?: "System Default Engine"),
+                        onValueChange = {},
+                        readOnly = true,
+                        leadingIcon = {
+                            if (isSwitchingEngine) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AccentTeal
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.SmartToy,
+                                    contentDescription = null,
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isEngineDropdownExpanded) },
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth()
+                            .testTag("tts_engine_selector"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentTeal,
+                            unfocusedBorderColor = TextSecondary.copy(alpha = 0.4f),
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = isEngineDropdownExpanded,
+                        onDismissRequest = { isEngineDropdownExpanded = false },
+                        modifier = Modifier.background(DarkSurface)
+                    ) {
+                        val displayEngines = if (installedEngines.isNotEmpty()) installedEngines else listOf(
+                            TtsDubbingEngine.TtsEngineInfo("", "System Default Engine", true)
+                        )
+                        displayEngines.forEach { eng ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = eng.label,
+                                                color = if (eng == selectedEngine) AccentTeal else TextPrimary,
+                                                fontWeight = if (eng == selectedEngine) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 13.sp
+                                            )
+                                            if (eng.isDefault) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = AccentTeal.copy(alpha = 0.15f)
+                                                ) {
+                                                    Text(
+                                                        text = "Default",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = AccentTeal,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        if (eng.packageName.isNotBlank()) {
+                                            Text(
+                                                text = eng.packageName,
+                                                fontSize = 9.5.sp,
+                                                color = TextSecondary
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    isEngineDropdownExpanded = false
+                                    if (selectedEngine != eng) {
+                                        selectedEngine = eng
+                                        coroutineScope.launch {
+                                            isSwitchingEngine = true
+                                            try {
+                                                ttsInstance?.stop()
+                                                ttsInstance?.shutdown()
+                                            } catch (_: Exception) {}
+
+                                            val newTts = TtsDubbingEngine.createTts(context, eng.packageName.ifBlank { null })
+                                            ttsInstance = newTts
+                                            if (newTts != null) {
+                                                val locales = TtsDubbingEngine.getAvailableLocales(newTts)
+                                                availableLocales = locales
+                                                if (locales.isNotEmpty() && locales.none { it.language == selectedLocale.language }) {
+                                                    selectedLocale = locales.first()
+                                                }
+                                            }
+                                            isSwitchingEngine = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
 
@@ -468,7 +637,9 @@ fun TtsDubbingDialog(
                             val cfg = DubbingConfig(
                                 locale = selectedLocale,
                                 speechRate = speechRate,
-                                pitch = pitch
+                                pitch = pitch,
+                                ttsEnginePackage = selectedEngine?.packageName?.ifBlank { null },
+                                ttsEngineLabel = selectedEngine?.label
                             )
                             TtsDubbingEngine.previewSpeech(tts, samplePreviewText, cfg)
                         }
@@ -785,7 +956,9 @@ fun TtsDubbingDialog(
                         preventOverlap = preventOverlap,
                         autoFitCues = autoFitCues,
                         minGapBetweenCuesMs = minGapBetweenCuesMs,
-                        overlapResolution = overlapResolution
+                        overlapResolution = overlapResolution,
+                        ttsEnginePackage = selectedEngine?.packageName?.ifBlank { null },
+                        ttsEngineLabel = selectedEngine?.label
                     )
                     onConfirmDubbing(config)
                 },

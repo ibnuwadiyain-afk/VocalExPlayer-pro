@@ -91,6 +91,10 @@ npx expo run:android
 - **Cache Persistence**: Separated vocal tracks are saved locally in the app's cache directory so future playback is instant.
 - **Audio Switcher**: Toggle between **AI Vocals Only** and **Original Audio** directly in the video player.
 - **Translated SRT Dubbing & Export/Import**:
+  - **3rd-Party & Custom TTS Engine Support**:
+    - Discovers all installed system and 3rd-party TTS services (e.g. RHVoice, Vocalizer, Samsung TTS, eSpeak NG, Sherpa-ONNX, Google Speech Services) via Android package visibility queries.
+    - Choose any installed TTS engine directly from the dubbing menu with automatic language availability detection.
+    - "Manage Engines" shortcut directly opens Android's system Text-to-Speech settings to install or configure voice engines.
   - In the Dubbing dialog, customize target TTS language, voice speed, pitch, and translation service.
   - **Cue Overlap Prevention & Auto-Pacing (SOLA)**:
     - **Zero-Overlap Guarantee**: Eliminates simultaneous voice collision when translated text is longer than original subtitle cues.

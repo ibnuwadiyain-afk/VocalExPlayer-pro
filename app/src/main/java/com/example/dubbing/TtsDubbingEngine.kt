@@ -27,25 +27,120 @@ object TtsDubbingEngine {
     private const val UTTERANCE_TIMEOUT_MS = 20_000L
 
     /**
-     * Initializes a TextToSpeech instance on the main thread and awaits readiness.
+     * Data class representing an installed TextToSpeech engine on the device.
      */
-    suspend fun createTts(context: Context): TextToSpeech? = withContext(Dispatchers.Main) {
+    data class TtsEngineInfo(
+        val packageName: String,
+        val label: String,
+        val isDefault: Boolean = false
+    )
+
+    /**
+     * Initializes a TextToSpeech instance on the main thread for a specified engine package.
+     * If [enginePackage] is null or blank, the system default TTS engine is used.
+     */
+    suspend fun createTts(context: Context, enginePackage: String? = null): TextToSpeech? = withContext(Dispatchers.Main) {
         val deferred = CompletableDeferred<TextToSpeech?>()
         var ttsInstance: TextToSpeech? = null
         try {
-            ttsInstance = TextToSpeech(context.applicationContext) { status ->
+            val listener = TextToSpeech.OnInitListener { status ->
                 if (status == TextToSpeech.SUCCESS) {
                     deferred.complete(ttsInstance)
                 } else {
-                    Log.e(TAG, "TextToSpeech init failed with status: $status")
+                    Log.e(TAG, "TextToSpeech init failed for engine: '$enginePackage' with status: $status")
                     deferred.complete(null)
                 }
             }
+            ttsInstance = if (enginePackage.isNullOrBlank()) {
+                TextToSpeech(context.applicationContext, listener)
+            } else {
+                TextToSpeech(context.applicationContext, listener, enginePackage)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Exception initializing TextToSpeech", e)
+            Log.e(TAG, "Exception initializing TextToSpeech for engine '$enginePackage'", e)
             deferred.complete(null)
         }
         deferred.await()
+    }
+
+    /**
+     * Queries all installed TTS engines (system and 3rd-party engines like RHVoice, Vocalizer, eSpeak NG, etc.).
+     */
+    fun getInstalledTtsEngines(context: Context, tts: TextToSpeech? = null): List<TtsEngineInfo> {
+        val result = mutableListOf<TtsEngineInfo>()
+        val defaultEngine = try { tts?.defaultEngine ?: "" } catch (_: Exception) { "" }
+
+        try {
+            val engines = tts?.engines ?: emptyList()
+            for (eng in engines) {
+                result.add(
+                    TtsEngineInfo(
+                        packageName = eng.name,
+                        label = eng.label.ifBlank { eng.name },
+                        isDefault = eng.name.equals(defaultEngine, ignoreCase = true)
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not query tts.engines directly", e)
+        }
+
+        // Also query PackageManager via TTS_SERVICE Intent filter to discover all 3rd-party engines
+        try {
+            val pm = context.packageManager
+            val intent = android.content.Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
+            val resolveList = pm.queryIntentServices(intent, 0)
+            for (info in resolveList) {
+                val pkg = info.serviceInfo.packageName
+                val label = info.loadLabel(pm)?.toString() ?: pkg
+                if (result.none { it.packageName == pkg }) {
+                    result.add(
+                        TtsEngineInfo(
+                            packageName = pkg,
+                            label = label,
+                            isDefault = pkg.equals(defaultEngine, ignoreCase = true)
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not query PackageManager for TTS_SERVICE", e)
+        }
+
+        if (result.isEmpty()) {
+            result.add(
+                TtsEngineInfo(
+                    packageName = "",
+                    label = "System Default Engine",
+                    isDefault = true
+                )
+            )
+        }
+
+        return result.distinctBy { it.packageName }.sortedWith(
+            compareByDescending<TtsEngineInfo> { it.isDefault }.thenBy { it.label }
+        )
+    }
+
+    /**
+     * Launches the system Text-to-speech output settings screen to install or manage 3rd-party voices.
+     */
+    fun openSystemTtsSettings(context: Context) {
+        try {
+            val intent = android.content.Intent("com.android.settings.TTS_SETTINGS").apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                val fallback = android.content.Intent(android.provider.Settings.ACTION_SETTINGS).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallback)
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not open system settings", e)
+            }
+        }
     }
 
     /**
@@ -126,7 +221,8 @@ object TtsDubbingEngine {
         if (!tempDir.exists()) tempDir.mkdirs()
 
         try {
-            onProgress(0.05f, "Configuring TTS Engine (${config.locale.displayLanguage})...")
+            val engineDesc = config.ttsEngineLabel?.let { " [$it]" } ?: ""
+            onProgress(0.05f, "Configuring TTS Engine$engineDesc (${config.locale.displayLanguage})...")
             withContext(Dispatchers.Main) {
                 tts.stop()
                 try {

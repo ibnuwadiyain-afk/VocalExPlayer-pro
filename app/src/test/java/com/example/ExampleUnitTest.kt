@@ -267,7 +267,29 @@ class ExampleUnitTest {
         assertTrue(config.autoFitCues)
         assertEquals(80L, config.minGapBetweenCuesMs)
         assertEquals(com.example.dubbing.OverlapResolution.AUTO_PACE, config.overlapResolution)
+        assertNull(config.ttsEnginePackage)
+        assertNull(config.ttsEngineLabel)
+    }
+
+    @Test
+    fun testDubbingConfigCustomTtsEngine() {
+        val rhvoiceConfig = com.example.dubbing.DubbingConfig(
+            ttsEnginePackage = "com.github.olga_yakovleva.rhvoice.android",
+            ttsEngineLabel = "RHVoice"
+        )
+        assertEquals("com.github.olga_yakovleva.rhvoice.android", rhvoiceConfig.ttsEnginePackage)
+        assertEquals("RHVoice", rhvoiceConfig.ttsEngineLabel)
+
+        val engineInfo = com.example.dubbing.TtsDubbingEngine.TtsEngineInfo(
+            packageName = "org.nvda.espeak",
+            label = "eSpeak NG",
+            isDefault = false
+        )
+        assertEquals("org.nvda.espeak", engineInfo.packageName)
+        assertEquals("eSpeak NG", engineInfo.label)
+        assertFalse(engineInfo.isDefault)
     }
 }
+
 
 

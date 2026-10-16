@@ -62,5 +62,7 @@ data class DubbingConfig(
     val preventOverlap: Boolean = true,
     val autoFitCues: Boolean = true,
     val minGapBetweenCuesMs: Long = 80L,
-    val overlapResolution: OverlapResolution = OverlapResolution.AUTO_PACE
+    val overlapResolution: OverlapResolution = OverlapResolution.AUTO_PACE,
+    val ttsEnginePackage: String? = null,
+    val ttsEngineLabel: String? = null
 )

@@ -47,11 +47,12 @@ object DubbedVideoExporter {
         val tempFilesToClean = mutableListOf<File>()
 
         try {
-            onProgress(0.02f, "Initializing Android TextToSpeech engine...")
-            ttsInstance = TtsDubbingEngine.createTts(context)
+            val engineDesc = config.ttsEngineLabel ?: "TextToSpeech engine"
+            onProgress(0.02f, "Initializing $engineDesc...")
+            ttsInstance = TtsDubbingEngine.createTts(context, config.ttsEnginePackage)
             if (ttsInstance == null) {
                 return@withContext Result.failure(
-                    IllegalStateException("Failed to initialize Android TextToSpeech engine. Check if TTS is installed on device.")
+                    IllegalStateException("Failed to initialize TextToSpeech engine ($engineDesc). Please check device settings.")
                 )
             }
 
