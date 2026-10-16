@@ -28,10 +28,14 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -70,6 +74,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.VideoItemEntity
 import com.example.dubbing.DubbingConfig
 import com.example.dubbing.DubbingMixMode
+import com.example.dubbing.OverlapResolution
 import com.example.dubbing.TtsDubbingEngine
 import com.example.dubbing.translation.TranslationServiceType
 import com.example.ui.locale.AppStrings
@@ -106,6 +111,12 @@ fun TtsDubbingDialog(
     var mixMode by remember { mutableStateOf(DubbingMixMode.VIDEO_DUBBED_WITH_MUSIC) }
     var duckingVolume by remember { mutableFloatStateOf(0.20f) }
     var isPreviewPlaying by remember { mutableStateOf(false) }
+
+    // Overlap Prevention & Pacing State
+    var preventOverlap by remember { mutableStateOf(true) }
+    var autoFitCues by remember { mutableStateOf(true) }
+    var minGapBetweenCuesMs by remember { mutableStateOf(80L) }
+    var overlapResolution by remember { mutableStateOf(OverlapResolution.AUTO_PACE) }
 
     // Translation State
     var enableTranslation by remember { mutableStateOf(false) }
@@ -483,6 +494,195 @@ fun TtsDubbingDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                // Overlap Prevention & Speech Pacing Card
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = DarkSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("overlap_prevention_card")
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Timer,
+                                    contentDescription = null,
+                                    tint = AccentTeal,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = "Prevent Voice Overlap",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = "Guarantees cues never speak simultaneously",
+                                        fontSize = 10.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = preventOverlap,
+                                onCheckedChange = { preventOverlap = it },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = AccentTeal,
+                                    checkedTrackColor = AccentTeal.copy(alpha = 0.4f),
+                                    uncheckedThumbColor = TextSecondary,
+                                    uncheckedTrackColor = DarkSurface
+                                ),
+                                modifier = Modifier.testTag("prevent_overlap_switch")
+                            )
+                        }
+
+                        if (preventOverlap) {
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Auto-Pacing Switch
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Smart Speech Auto-Pacing (SOLA)",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = "Speeds up long translated cues to fit subtitle window",
+                                        fontSize = 9.5.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                                Switch(
+                                    checked = autoFitCues,
+                                    onCheckedChange = { autoFitCues = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = AccentTeal,
+                                        checkedTrackColor = AccentTeal.copy(alpha = 0.4f),
+                                        uncheckedThumbColor = TextSecondary,
+                                        uncheckedTrackColor = DarkSurface
+                                    ),
+                                    modifier = Modifier.testTag("auto_fit_cues_switch")
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Cue Gap slider
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Pause Between Cues",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "${minGapBetweenCuesMs} ms",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AccentTeal
+                                )
+                            }
+                            Slider(
+                                value = minGapBetweenCuesMs.toFloat(),
+                                onValueChange = { minGapBetweenCuesMs = it.toLong() },
+                                valueRange = 40f..160f,
+                                steps = 5,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = AccentTeal,
+                                    activeTrackColor = AccentTeal,
+                                    inactiveTrackColor = DarkSurface
+                                ),
+                                modifier = Modifier.height(26.dp).testTag("cue_gap_slider")
+                            )
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Strategy Radio Buttons
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { overlapResolution = OverlapResolution.AUTO_PACE }
+                                    .padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = overlapResolution == OverlapResolution.AUTO_PACE,
+                                    onClick = { overlapResolution = OverlapResolution.AUTO_PACE },
+                                    colors = RadioButtonDefaults.colors(selectedColor = AccentTeal),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = OverlapResolution.AUTO_PACE.title,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = OverlapResolution.AUTO_PACE.description,
+                                        fontSize = 9.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { overlapResolution = OverlapResolution.SMOOTH_TRIM }
+                                    .padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = overlapResolution == OverlapResolution.SMOOTH_TRIM,
+                                    onClick = { overlapResolution = OverlapResolution.SMOOTH_TRIM },
+                                    colors = RadioButtonDefaults.colors(selectedColor = AccentTeal),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = OverlapResolution.SMOOTH_TRIM.title,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = OverlapResolution.SMOOTH_TRIM.description,
+                                        fontSize = 9.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 // Mix & Export Options
                 Text(
                     text = "MIX & EXPORT MODE",
@@ -581,7 +781,11 @@ fun TtsDubbingDialog(
                         translationService = translationService,
                         targetLanguageCode = selectedLocale.language,
                         sourceLanguageCode = "auto",
-                        preTranslatedSegments = translatedSegments
+                        preTranslatedSegments = translatedSegments,
+                        preventOverlap = preventOverlap,
+                        autoFitCues = autoFitCues,
+                        minGapBetweenCuesMs = minGapBetweenCuesMs,
+                        overlapResolution = overlapResolution
                     )
                     onConfirmDubbing(config)
                 },

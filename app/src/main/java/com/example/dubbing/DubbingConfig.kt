@@ -31,6 +31,23 @@ enum class DubbingMixMode(
     )
 }
 
+/**
+ * Strategy for resolving cue overlaps when translated speech is longer than the subtitle window.
+ */
+enum class OverlapResolution(
+    val title: String,
+    val description: String
+) {
+    AUTO_PACE(
+        title = "Auto-Pacing & Sequential Shift (Recommended)",
+        description = "Adjusts playback speed and shifts subsequent cues so all spoken words are completely heard without collision"
+    ),
+    SMOOTH_TRIM(
+        title = "Strict Timeline (Smooth Fade)",
+        description = "Compresses speech and gently fades cue tails so next cue starts at its exact original timestamp"
+    )
+}
+
 data class DubbingConfig(
     val locale: Locale = Locale.getDefault(),
     val speechRate: Float = 1.0f,
@@ -41,6 +58,9 @@ data class DubbingConfig(
     val translationService: TranslationServiceType = TranslationServiceType.ONLINE_FREE,
     val targetLanguageCode: String = locale.language,
     val sourceLanguageCode: String = "auto",
-    val preTranslatedSegments: List<TranscriptionSegment>? = null
+    val preTranslatedSegments: List<TranscriptionSegment>? = null,
+    val preventOverlap: Boolean = true,
+    val autoFitCues: Boolean = true,
+    val minGapBetweenCuesMs: Long = 80L,
+    val overlapResolution: OverlapResolution = OverlapResolution.AUTO_PACE
 )
-

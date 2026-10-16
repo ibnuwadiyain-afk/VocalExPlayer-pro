@@ -219,5 +219,55 @@ class ExampleUnitTest {
         assertNotNull(russianLocale)
         assertEquals("ru", russianLocale?.language)
     }
+
+    @Test
+    fun testAudioTimeFitterCompressAndFade() {
+        val sampleRate = 44100
+        // Generate 1.0 second test tone (44100 samples)
+        val sourceFrames = 44100
+        val left = FloatArray(sourceFrames) { i -> kotlin.math.sin(2.0 * Math.PI * 440.0 * i / sampleRate).toFloat() }
+        val right = left.clone()
+
+        // Request compression to 0.75 seconds (33075 samples)
+        val targetFrames = 33075
+        val (compL, compR) = com.example.dubbing.AudioTimeFitter.compressAudio(
+            samplesLeft = left,
+            samplesRight = right,
+            targetFrames = targetFrames,
+            sampleRate = sampleRate,
+            maxSpeedUp = 1.45f
+        )
+
+        assertTrue(compL.size <= sourceFrames)
+        assertTrue(compL.size in (targetFrames - 500)..(targetFrames + 500))
+        assertEquals(compL.size, compR.size)
+
+        // Verify all samples are within valid amplitude range [-1.0, 1.0]
+        for (i in compL.indices) {
+            assertTrue(compL[i] in -1.01f..1.01f)
+            assertTrue(compR[i] in -1.01f..1.01f)
+        }
+
+        // Test smooth trimming
+        val (trimmedL, trimmedR) = com.example.dubbing.AudioTimeFitter.trimWithFade(
+            samplesLeft = left,
+            samplesRight = right,
+            targetFrames = 20000,
+            fadeOutFrames = 1000
+        )
+        assertEquals(20000, trimmedL.size)
+        assertEquals(20000, trimmedR.size)
+        assertTrue(kotlin.math.abs(trimmedL.last()) < 0.05f) // Should fade smoothly to ~0
+    }
+
+    @Test
+    fun testDubbingConfigOverlapDefaults() {
+        val config = com.example.dubbing.DubbingConfig()
+        assertTrue(config.preventOverlap)
+        assertTrue(config.autoFitCues)
+        assertEquals(80L, config.minGapBetweenCuesMs)
+        assertEquals(com.example.dubbing.OverlapResolution.AUTO_PACE, config.overlapResolution)
+    }
 }
+
 

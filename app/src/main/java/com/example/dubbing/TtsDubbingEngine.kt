@@ -176,6 +176,9 @@ object TtsDubbingEngine {
                 return@withContext Result.failure(IllegalStateException("No subtitle text available for dubbing"))
             }
 
+            // Ensure segments are chronologically sorted to calculate pacing and prevent collision
+            val sortedSegments = validSegments.sortedBy { it.startMs }
+
             data class RenderedUtterance(
                 val segment: TranscriptionSegment,
                 val wavFile: File,
@@ -184,18 +187,45 @@ object TtsDubbingEngine {
             )
 
             val renderedUtterances = mutableListOf<RenderedUtterance>()
-            val totalSegCount = validSegments.size
+            val totalSegCount = sortedSegments.size
 
-            for ((i, seg) in validSegments.withIndex()) {
+            for ((i, seg) in sortedSegments.withIndex()) {
                 val utteranceId = "dub_seg_${seg.index}_${System.currentTimeMillis()}"
                 val segFile = File(tempDir, "seg_${seg.index}.wav")
                 val progressVal = 0.05f + (i.toFloat() / totalSegCount) * 0.45f
                 onProgress(progressVal, "Synthesizing dubbed cue ${i + 1}/$totalSegCount...")
 
+                // Dynamic speech rate pacing: adaptively speed up synthesis if cue window is tight
+                if (config.autoFitCues) {
+                    val nextSeg = if (i + 1 < sortedSegments.size) sortedSegments[i + 1] else null
+                    val availableMs = if (nextSeg != null) {
+                        (nextSeg.startMs - seg.startMs - config.minGapBetweenCuesMs).coerceAtLeast(600L)
+                    } else {
+                        (seg.endMs - seg.startMs + 1500L).coerceAtLeast(600L)
+                    }
+                    val estDurationMs = (seg.text.trim().length * 68L).coerceAtLeast(600L)
+                    val speedScale = if (estDurationMs > availableMs) {
+                        (estDurationMs.toFloat() / availableMs.toFloat()).coerceIn(1.0f, 1.35f)
+                    } else {
+                        1.0f
+                    }
+                    val targetSpeechRate = (config.speechRate * speedScale).coerceIn(0.70f, 1.80f)
+                    withContext(Dispatchers.Main) {
+                        tts.setSpeechRate(targetSpeechRate)
+                    }
+                }
+
                 val synthSuccess = synthesizeSegmentToFile(tts, seg.text, segFile, utteranceId)
                 if (synthSuccess && segFile.exists() && segFile.length() > 44) {
                     val decoded = readAndResampleWav(segFile, TARGET_SAMPLE_RATE)
                     if (decoded != null) {
+                        // Apply smooth fade to remove any potential click artifacts
+                        AudioTimeFitter.applyGentleFade(
+                            decoded.first,
+                            decoded.second,
+                            fadeInFrames = 441,
+                            fadeOutFrames = 441
+                        )
                         renderedUtterances.add(
                             RenderedUtterance(
                                 segment = seg,
@@ -214,13 +244,98 @@ object TtsDubbingEngine {
                 return@withContext Result.failure(IllegalStateException("TextToSpeech failed to synthesize any subtitle segments"))
             }
 
-            // 2. Timeline Assembly & Audio Mixing
-            onProgress(0.55f, "Preparing audio timeline & background mixing...")
+            // 2. Collision-Free Timeline Assembly & Audio Pacing
+            onProgress(0.55f, "Assembling collision-free audio timeline...")
 
-            val effectiveDurationMs = totalDurationMs.coerceAtLeast(
-                renderedUtterances.maxOfOrNull { it.segment.endMs } ?: 5000L
+            data class ScheduledUtterance(
+                val segment: TranscriptionSegment,
+                val startFrame: Int,
+                val samplesLeft: FloatArray,
+                val samplesRight: FloatArray
             )
-            val totalFrames = ((effectiveDurationMs * TARGET_SAMPLE_RATE) / 1000).toInt()
+
+            val scheduledUtterances = mutableListOf<ScheduledUtterance>()
+            val minGapFrames = ((config.minGapBetweenCuesMs * TARGET_SAMPLE_RATE) / 1000).toInt().coerceAtLeast(0)
+            var cursorFrame = 0
+
+            for (i in renderedUtterances.indices) {
+                val item = renderedUtterances[i]
+                val nextItem = if (i + 1 < renderedUtterances.size) renderedUtterances[i + 1] else null
+
+                val nominalStartFrame = ((item.segment.startMs * TARGET_SAMPLE_RATE) / 1000).toInt().coerceAtLeast(0)
+                val nominalNextStartFrame = if (nextItem != null) {
+                    ((nextItem.segment.startMs * TARGET_SAMPLE_RATE) / 1000).toInt().coerceAtLeast(0)
+                } else {
+                    Int.MAX_VALUE
+                }
+
+                // Determine effective start frame: if preventOverlap is true, never start while preceding speech is active
+                val effectiveStartFrame = if (config.preventOverlap) {
+                    maxOf(nominalStartFrame, cursorFrame + minGapFrames)
+                } else {
+                    nominalStartFrame
+                }
+
+                var samplesL = item.samplesLeft
+                var samplesR = item.samplesRight
+
+                // Calculate available frame space before the next cue needs to begin
+                val availableFrames = if (nominalNextStartFrame < Int.MAX_VALUE) {
+                    nominalNextStartFrame - effectiveStartFrame - minGapFrames
+                } else {
+                    Int.MAX_VALUE
+                }
+
+                if (config.autoFitCues && availableFrames > 0 && availableFrames < samplesL.size) {
+                    // Time-compress audio using SOLA to comfortably fit the available window without pitch distortion
+                    val fitted = AudioTimeFitter.compressAudio(
+                        samplesLeft = samplesL,
+                        samplesRight = samplesR,
+                        targetFrames = availableFrames,
+                        sampleRate = TARGET_SAMPLE_RATE,
+                        maxSpeedUp = 1.45f
+                    )
+                    samplesL = fitted.first
+                    samplesR = fitted.second
+                }
+
+                // If still exceeding available space after maximum speedup, apply overlap resolution strategy
+                if (config.preventOverlap && availableFrames > 0 && samplesL.size > availableFrames) {
+                    when (config.overlapResolution) {
+                        OverlapResolution.SMOOTH_TRIM -> {
+                            val trimmed = AudioTimeFitter.trimWithFade(
+                                samplesLeft = samplesL,
+                                samplesRight = samplesR,
+                                targetFrames = availableFrames,
+                                fadeOutFrames = minGapFrames.coerceAtLeast(441)
+                            )
+                            samplesL = trimmed.first
+                            samplesR = trimmed.second
+                            cursorFrame = effectiveStartFrame + samplesL.size
+                        }
+                        OverlapResolution.AUTO_PACE -> {
+                            // Keep all speech intact; next cue will be sequentially pushed to prevent overlap
+                            cursorFrame = effectiveStartFrame + samplesL.size
+                        }
+                    }
+                } else {
+                    cursorFrame = effectiveStartFrame + samplesL.size
+                }
+
+                scheduledUtterances.add(
+                    ScheduledUtterance(
+                        segment = item.segment,
+                        startFrame = effectiveStartFrame,
+                        samplesLeft = samplesL,
+                        samplesRight = samplesR
+                    )
+                )
+            }
+
+            // Calculate master timeline frames based on video duration and placed speech
+            val maxPlacedEndFrame = scheduledUtterances.maxOfOrNull { it.startFrame + it.samplesLeft.size } ?: 0
+            val nominalVideoFrames = ((totalDurationMs * TARGET_SAMPLE_RATE) / 1000).toInt()
+            val totalFrames = maxOf(nominalVideoFrames, maxPlacedEndFrame, TARGET_SAMPLE_RATE)
 
             // Optional background audio (e.g. Instrumental Karaoke track or original audio for ducking)
             var bgLeft: FloatArray? = null
@@ -240,24 +355,30 @@ object TtsDubbingEngine {
                 }
             }
 
-            onProgress(0.65f, "Mixing dubbed voice with timeline...")
+            onProgress(0.65f, "Mixing dubbed voice with timeline (Zero-Overlap Guarantee)...")
 
             // Allocate full stereo speech buffer for frame-accurate placement
             val masterSpeechLeft = FloatArray(totalFrames)
             val masterSpeechRight = FloatArray(totalFrames)
             val speechActiveMask = BooleanArray(totalFrames)
 
-            for (item in renderedUtterances) {
-                val startFrame = ((item.segment.startMs * TARGET_SAMPLE_RATE) / 1000).toInt().coerceIn(0, totalFrames - 1)
+            for (item in scheduledUtterances) {
+                val startFrame = item.startFrame.coerceIn(0, totalFrames - 1)
                 val utteranceLen = item.samplesLeft.size
 
                 for (s in 0 until utteranceLen) {
                     val frameIndex = startFrame + s
                     if (frameIndex >= totalFrames) break
 
-                    // Overlap-add in case adjacent subtitle segments overlap slightly
-                    masterSpeechLeft[frameIndex] = (masterSpeechLeft[frameIndex] + item.samplesLeft[s]).coerceIn(-1.0f, 1.0f)
-                    masterSpeechRight[frameIndex] = (masterSpeechRight[frameIndex] + item.samplesRight[s]).coerceIn(-1.0f, 1.0f)
+                    if (config.preventOverlap) {
+                        // Direct non-overlapping placement ensures multiple cues never speak simultaneously
+                        masterSpeechLeft[frameIndex] = item.samplesLeft[s]
+                        masterSpeechRight[frameIndex] = item.samplesRight[s]
+                    } else {
+                        // Legacy additive overlap
+                        masterSpeechLeft[frameIndex] = (masterSpeechLeft[frameIndex] + item.samplesLeft[s]).coerceIn(-1.0f, 1.0f)
+                        masterSpeechRight[frameIndex] = (masterSpeechRight[frameIndex] + item.samplesRight[s]).coerceIn(-1.0f, 1.0f)
+                    }
                     speechActiveMask[frameIndex] = true
                 }
             }

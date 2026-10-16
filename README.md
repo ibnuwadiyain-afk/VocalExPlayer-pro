@@ -92,6 +92,11 @@ npx expo run:android
 - **Audio Switcher**: Toggle between **AI Vocals Only** and **Original Audio** directly in the video player.
 - **Translated SRT Dubbing & Export/Import**:
   - In the Dubbing dialog, customize target TTS language, voice speed, pitch, and translation service.
+  - **Cue Overlap Prevention & Auto-Pacing (SOLA)**:
+    - **Zero-Overlap Guarantee**: Eliminates simultaneous voice collision when translated text is longer than original subtitle cues.
+    - **Smart Speed Auto-Pacing**: Automatically time-compresses long translated sentences using Synchronized Overlap-Add (SOLA) without pitch distortion.
+    - **Flexible Collision Strategy**: Choose between **Auto-Pacing** (shifts subsequent cues with natural pauses so every word is preserved) or **Strict Timeline** (smooth cosine fade at next cue start).
+    - **Configurable Inter-Cue Gap**: Adjust natural breath pause between consecutive cues (40ms - 160ms).
   - **Export Translated SRT**: Share or save translated subtitle cues as a `.srt` file.
   - **Import Translated SRT**: Import any pre-translated `.srt` file directly to preview cues and dub the video instantly—even if the video doesn't have an original transcript.
 - **Management**: Long-press any video card in the list to delete it and remove its cached audio track.
