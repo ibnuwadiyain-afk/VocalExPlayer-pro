@@ -55,6 +55,65 @@ object WhisperTokenizer {
         "fa" to 50300  // Persian
     )
 
+    // Standard Whisper non-speech symbols to suppress in tiny and base models
+    val NON_SPEECH_SUPPRESS_TOKENS: Set<Int> = hashSetOf(
+        1, 2, 7, 8, 9, 10, 14, 25, 26, 27, 28, 29, 31, 58, 59, 60, 61, 62, 63,
+        90, 91, 92, 93, 359, 503, 522, 542, 873, 893, 902, 918, 922, 936, 950,
+        985, 1007, 1030, 1060, 1061, 1071, 1072, 1073, 1078, 1079, 1080
+    )
+
+    // Common hallucinated subtitles that small models produce on silence, music or noise
+    private val HALLUCINATION_PHRASES = setOf(
+        "thank you",
+        "thank you.",
+        "thank you for watching",
+        "thank you for watching.",
+        "thanks for watching",
+        "thanks for watching.",
+        "please subscribe",
+        "please subscribe.",
+        "subscribe to my channel",
+        "subtitles by",
+        "transcribed by",
+        "sous-titres réalisés par",
+        "شكرا للمشاهدة",
+        "شكراً للمشاهدة",
+        "شكرا لكم على المشاهدة",
+        "شكراً لكم على المشاهدة",
+        "اشترك في القناة",
+        "لا تنسى الاشتراك",
+        "you",
+        "bye",
+        "amara.org",
+        "translated by"
+    )
+
+    fun isHallucination(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.length < 2) return true
+        val normalized = trimmed.lowercase().replace(Regex("[.!?,،؛:\"'\\[\\]()]"), "").trim()
+        if (normalized.isEmpty()) return true
+        if (normalized in HALLUCINATION_PHRASES) return true
+
+        // Detect single repeated character (e.g. "aaaaa" or ".....")
+        if (normalized.length >= 4 && normalized.all { it == normalized[0] }) return true
+
+        // Detect repeated 1-word or 2-word loop in string (e.g. "you you you you" or "and the and the and the")
+        val words = normalized.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.size >= 3) {
+            val allSame = words.all { it == words[0] }
+            if (allSame) return true
+        }
+        if (words.size >= 4 && words.size % 2 == 0) {
+            val isTwoWordLoop = (0 until words.size step 2).all {
+                words[it] == words[0] && words[it + 1] == words[1]
+            }
+            if (isTwoWordLoop) return true
+        }
+
+        return false
+    }
+
     data class SupportedLanguage(
         val code: String,
         val displayName: String,

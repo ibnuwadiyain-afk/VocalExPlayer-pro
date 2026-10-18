@@ -38,6 +38,19 @@ class WhisperAudioPreprocessor(private val context: Context) {
     // Precomputed Slaney Mel filterbank matrix: [N_MELS (80), N_FFT/2 + 1 (201)]
     private val melFilterBank: Array<FloatArray> = createMelFilterBank(N_MELS, N_FFT, SAMPLE_RATE)
 
+    // Precomputed non-zero bounds for sparse Mel filterbank matrix multiplication
+    private val melStartBin: IntArray = IntArray(N_MELS) { m ->
+        var s = 0
+        while (s < (N_FFT / 2 + 1) && melFilterBank[m][s] == 0f) s++
+        s
+    }
+
+    private val melEndBin: IntArray = IntArray(N_MELS) { m ->
+        var e = N_FFT / 2
+        while (e >= 0 && melFilterBank[m][e] == 0f) e--
+        e.coerceAtLeast(melStartBin[m])
+    }
+
     // Precomputed DFT Cosine and Sine Basis Matrices: [numFreqs (201), N_FFT (400)]
     // Window multiplication is folded into the basis matrices for zero-overhead windowing!
     private val cosBasis: Array<FloatArray> = Array(N_FFT / 2 + 1) { k ->
@@ -97,11 +110,36 @@ class WhisperAudioPreprocessor(private val context: Context) {
                 }
             }
 
-            return if (sampleRate == SAMPLE_RATE) {
+            val monoAt16k = if (sampleRate == SAMPLE_RATE) {
                 rawMono
             } else {
                 resampleLinear(rawMono, sampleRate, SAMPLE_RATE)
             }
+
+            // DC offset removal & gentle peak normalization to provide clear vocal formants to Whisper
+            if (monoAt16k.isNotEmpty()) {
+                var sum = 0.0
+                for (s in monoAt16k) sum += s
+                val mean = (sum / monoAt16k.size).toFloat()
+
+                var maxPeak = 0f
+                for (i in monoAt16k.indices) {
+                    val s = monoAt16k[i] - mean
+                    monoAt16k[i] = s
+                    val abs = kotlin.math.abs(s)
+                    if (abs > maxPeak) maxPeak = abs
+                }
+
+                // If audio is quiet (peak < 0.70) but audible (peak > 0.005), apply gentle gain to 0.85
+                if (maxPeak in 0.005f..0.70f) {
+                    val gain = 0.85f / maxPeak
+                    for (i in monoAt16k.indices) {
+                        monoAt16k[i] = (monoAt16k[i] * gain).coerceIn(-1.0f, 1.0f)
+                    }
+                }
+            }
+
+            return monoAt16k
         }
     }
 
@@ -148,33 +186,60 @@ class WhisperAudioPreprocessor(private val context: Context) {
     /**
      * Computes the 80x3000 log-Mel filterbank spectrogram required by Whisper.
      */
+    /**
+     * Computes the 80x3000 log-Mel filterbank spectrogram required by Whisper:
+     * - Uses exact librosa Slaney Mel filterbank with area normalization
+     * - Uses PyTorch/librosa center reflect padding (200 samples)
+     * - Log10 compression with 1e-10 floor
+     * - Clamps to max - 8.0 and normalizes to (clamped + 4.0) / 4.0
+     */
     fun computeMelSpectrogram(samples30s: FloatArray): Array<FloatArray> {
-        // [80][3000]
         val melSpec = Array(N_MELS) { FloatArray(CHUNK_FRAMES) }
-        val numFreqs = N_FFT / 2 + 1
+        val numFreqs = N_FFT / 2 + 1 // 201
+        val pad = N_FFT / 2 // 200 samples reflect padding
+
+        // Create reflect-padded 30s buffer matching PyTorch center=True
+        val paddedLen = CHUNK_SAMPLES + N_FFT
+        val paddedAudio = FloatArray(paddedLen)
+
+        // Reflect padding at start
+        for (i in 0 until pad) {
+            val srcIdx = (pad - i).coerceIn(0, samples30s.size - 1)
+            paddedAudio[i] = if (srcIdx < samples30s.size) samples30s[srcIdx] else 0f
+        }
+
+        // Copy main 30s audio
+        val mainCopyCount = samples30s.size.coerceAtMost(CHUNK_SAMPLES)
+        System.arraycopy(samples30s, 0, paddedAudio, pad, mainCopyCount)
+
+        // Reflect padding at end
+        for (i in 0 until pad) {
+            val srcIdx = (CHUNK_SAMPLES - 2 - i).coerceIn(0, samples30s.size - 1)
+            paddedAudio[pad + CHUNK_SAMPLES + i] = if (srcIdx >= 0 && srcIdx < samples30s.size) samples30s[srcIdx] else 0f
+        }
+
         val powerSpectrum = FloatArray(numFreqs)
         val windowBuffer = FloatArray(N_FFT)
 
         for (frame in 0 until CHUNK_FRAMES) {
             val start = frame * HOP_LENGTH
 
-            // Check if frame has any audio (skip silence optimization)
-            var hasEnergy = false
+            var frameEnergy = 0f
             for (i in 0 until N_FFT) {
-                val sampleIdx = start + i
-                val s = if (sampleIdx < samples30s.size) samples30s[sampleIdx] else 0f
+                val s = paddedAudio[start + i]
                 windowBuffer[i] = s
-                if (s != 0f) hasEnergy = true
+                frameEnergy += kotlin.math.abs(s)
             }
 
-            if (!hasEnergy) {
+            // Quick bypass for complete silence
+            if (frameEnergy < 1e-5f) {
                 for (m in 0 until N_MELS) {
-                    melSpec[m][frame] = -5.0f // log10(1e-5)
+                    melSpec[m][frame] = -10.0f
                 }
                 continue
             }
 
-            // Exact 400-point STFT via precomputed Hann-weighted basis
+            // 400-point STFT using precomputed Hann basis
             for (k in 0 until numFreqs) {
                 val cRow = cosBasis[k]
                 val sRow = sinBasis[k]
@@ -188,19 +253,20 @@ class WhisperAudioPreprocessor(private val context: Context) {
                 powerSpectrum[k] = realSum * realSum + imagSum * imagSum
             }
 
-            // Apply 80 Mel filterbanks
+            // Sparse Slaney Mel filterbank multiplication
             for (m in 0 until N_MELS) {
                 var melEnergy = 0f
                 val filter = melFilterBank[m]
-                for (k in 0 until numFreqs) {
+                val kStart = melStartBin[m]
+                val kEnd = melEndBin[m]
+                for (k in kStart..kEnd) {
                     val w = filter[k]
                     if (w > 0f) {
                         melEnergy += powerSpectrum[k] * w
                     }
                 }
-                // Log compression
-                val logMel = log10(melEnergy.coerceAtLeast(1e-5f))
-                melSpec[m][frame] = logMel
+                // Whisper log compression with 1e-10 floor (dynamic range of 10 decades)
+                melSpec[m][frame] = log10(melEnergy.coerceAtLeast(1e-10f))
             }
         }
 
@@ -223,6 +289,18 @@ class WhisperAudioPreprocessor(private val context: Context) {
         return melSpec
     }
 
+    /**
+     * Computes the RMS energy of a 30s chunk to detect silence.
+     */
+    fun calculateChunkRms(samples: FloatArray): Float {
+        if (samples.isEmpty()) return 0f
+        var sum = 0.0
+        for (s in samples) {
+            sum += (s * s)
+        }
+        return sqrt((sum / samples.size).toFloat())
+    }
+
     private fun resampleLinear(input: FloatArray, inRate: Int, outRate: Int): FloatArray {
         if (inRate == outRate) return input
         val ratio = inRate.toDouble() / outRate.toDouble()
@@ -240,37 +318,62 @@ class WhisperAudioPreprocessor(private val context: Context) {
         return output
     }
 
+    /**
+     * Generates the exact librosa Slaney Mel filterbank matrix: [nMels, nFft/2 + 1].
+     * Matches Python: librosa.filters.mel(sr=16000, n_fft=400, n_mels=80, norm='slaney', mel_scale='slaney')
+     */
     private fun createMelFilterBank(nMels: Int, nFft: Int, sampleRate: Int): Array<FloatArray> {
         val numFreqs = nFft / 2 + 1
         val bank = Array(nMels) { FloatArray(numFreqs) }
 
-        fun hzToMel(hz: Double): Double = 2595.0 * log10(1.0 + hz / 700.0)
-        fun melToHz(mel: Double): Double = 700.0 * (Math.pow(10.0, mel / 2595.0) - 1.0)
+        val minLogHz = 1000.0
+        val minLogMel = 15.0 // (1000.0 - 0.0) / (200.0 / 3.0)
+        val logStep = ln(6.4) / 27.0 // ln(6400.0 / 1000.0) / 27.0
 
-        val minMel = hzToMel(0.0)
-        val maxMel = hzToMel(sampleRate / 2.0)
-        val melStep = (maxMel - minMel) / (nMels + 1)
-
-        val melPoints = DoubleArray(nMels + 2) { i -> minMel + i * melStep }
-        val hzPoints = DoubleArray(nMels + 2) { i -> melToHz(melPoints[i]) }
-        val binPoints = IntArray(nMels + 2) { i ->
-            ((hzPoints[i] / (sampleRate / 2.0)) * (numFreqs - 1)).toInt().coerceIn(0, numFreqs - 1)
+        fun hzToMel(hz: Double): Double {
+            return if (hz < minLogHz) {
+                hz / (200.0 / 3.0)
+            } else {
+                minLogMel + ln(hz / minLogHz) / logStep
+            }
         }
 
-        for (m in 0 until nMels) {
-            val left = binPoints[m]
-            val center = binPoints[m + 1]
-            val right = binPoints[m + 2]
-
-            for (k in left until center) {
-                if (center != left) {
-                    bank[m][k] = ((k - left).toFloat() / (center - left).toFloat())
-                }
+        fun melToHz(mel: Double): Double {
+            return if (mel < minLogMel) {
+                (200.0 / 3.0) * mel
+            } else {
+                minLogHz * kotlin.math.exp(logStep * (mel - minLogMel))
             }
-            for (k in center until right) {
-                if (right != center) {
-                    bank[m][k] = ((right - k).toFloat() / (right - center).toFloat())
+        }
+
+        val fMin = 0.0
+        val fMax = sampleRate / 2.0 // 8000.0 Hz
+        val minMel = hzToMel(fMin)
+        val maxMel = hzToMel(fMax)
+
+        val melPoints = DoubleArray(nMels + 2) { i ->
+            minMel + i * (maxMel - minMel) / (nMels + 1)
+        }
+        val fPoints = DoubleArray(nMels + 2) { i -> melToHz(melPoints[i]) }
+        val fftFreqs = DoubleArray(numFreqs) { k -> (k.toDouble() * sampleRate) / nFft.toDouble() }
+
+        for (m in 0 until nMels) {
+            val fLeft = fPoints[m]
+            val fCenter = fPoints[m + 1]
+            val fRight = fPoints[m + 2]
+
+            // Slaney normalization: area of triangular filter normalized to 2.0 / (fRight - fLeft)
+            val enorm = if (fRight > fLeft) 2.0 / (fRight - fLeft) else 1.0
+
+            for (k in 0 until numFreqs) {
+                val f = fftFreqs[k]
+                var weight = 0.0
+                if (f >= fLeft && f <= fCenter && fCenter > fLeft) {
+                    weight = (f - fLeft) / (fCenter - fLeft)
+                } else if (f > fCenter && f <= fRight && fRight > fCenter) {
+                    weight = (fRight - f) / (fRight - fCenter)
                 }
+                bank[m][k] = (weight * enorm).toFloat()
             }
         }
 

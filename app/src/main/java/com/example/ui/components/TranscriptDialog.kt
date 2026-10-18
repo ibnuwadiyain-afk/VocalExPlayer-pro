@@ -266,7 +266,7 @@ fun TranscriptDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Dub Video with Android TTS",
+                            text = "Dub Video with TTS Engine",
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp

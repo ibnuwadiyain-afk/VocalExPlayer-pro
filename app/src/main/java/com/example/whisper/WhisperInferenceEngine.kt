@@ -108,7 +108,9 @@ class WhisperInferenceEngine(private val context: Context) {
             // Check if companion decoder is available
             val modelManager = AppModelManager.getInstance(context)
             val decoderFile = modelManager.getDecoderFile(whisperModel.id)
+                ?: File(modelFile.parentFile, "${modelFile.nameWithoutExtension}_decoder.onnx").takeIf { it.exists() && it.length() > 100_000L }
                 ?: File(context.filesDir, "models/${whisperModel.id}_decoder.onnx").takeIf { it.exists() && it.length() > 100_000L }
+                ?: File(context.filesDir, "models/${whisperModel.fileName.substringBefore(".onnx")}_decoder.onnx").takeIf { it.exists() && it.length() > 100_000L }
 
             if (decoderFile != null && decoderFile.exists()) {
                 try {
@@ -305,6 +307,23 @@ class WhisperInferenceEngine(private val context: Context) {
         languageCode: String,
         startIndex: Int
     ): List<TranscriptionSegment> {
+        // Quick Voice Activity Check: inspect vocal mel energy (bins 12..60)
+        var voiceFrames = 0
+        val mel = chunk.melSpectrogram
+        for (f in 0 until 3000 step 5) {
+            var sum = 0f
+            for (b in 12..60) sum += mel[b][f]
+            val avg = sum / (60 - 12 + 1)
+            if (avg > -0.65f) { // Above background noise floor in normalized log-mel [-1.0, 1.0]
+                voiceFrames++
+            }
+        }
+        // If less than 1.5% of frames have voice energy, chunk is silent/instrumental
+        if (voiceFrames < 8) {
+            Log.d(TAG, "Chunk ${chunk.windowIndex} has no active voice formants ($voiceFrames frames); skipping autoregressive decoding.")
+            return emptyList()
+        }
+
         val decInputNames = decoderSession.inputNames
         val inputIdsName = decInputNames.firstOrNull { it.contains("input", ignoreCase = true) } ?: "input_ids"
         val encHiddenName = decInputNames.firstOrNull {
@@ -335,7 +354,6 @@ class WhisperInferenceEngine(private val context: Context) {
             WhisperTokenizer.NO_TIMESTAMPS.toLong()
         )
         val generatedTokens = mutableListOf<Int>()
-        // 224 tokens allows full 30s of rapid speech / multilingual BPE (prevents the 14-18s cutoff)
         val maxTokens = 224
 
         for (step in 0 until maxTokens) {
@@ -364,15 +382,48 @@ class WhisperInferenceEngine(private val context: Context) {
                     if (batch0 is Array<*>) {
                         val lastStepLogits = batch0[seqLen - 1]
                         if (lastStepLogits is FloatArray) {
+                            // On step 0, check no-speech token probability
+                            if (step == 0) {
+                                val noSpeechLogit = if (WhisperTokenizer.NO_SPEECH in lastStepLogits.indices) {
+                                    lastStepLogits[WhisperTokenizer.NO_SPEECH]
+                                } else -Float.MAX_VALUE
+
+                                var maxSpeechLogit = -Float.MAX_VALUE
+                                for (i in 0 until lastStepLogits.size.coerceAtMost(WhisperTokenizer.START_OF_TRANSCRIPT)) {
+                                    if (lastStepLogits[i] > maxSpeechLogit) maxSpeechLogit = lastStepLogits[i]
+                                }
+                                if (noSpeechLogit > maxSpeechLogit + 0.8f) {
+                                    Log.d(TAG, "Chunk ${chunk.windowIndex} classified as NO_SPEECH by Whisper decoder.")
+                                    decResult.close()
+                                    break
+                                }
+                            }
+
+                            // Build recent token penalty window to stop looping in tiny/base models
+                            val recentWindow = generatedTokens.takeLast(24)
+                            val tokenFreq = recentWindow.groupingBy { it }.eachCount()
+
                             var maxVal = -Float.MAX_VALUE
                             for (v in 0 until lastStepLogits.size) {
-                                // Suppress prompt control tokens (50258..50363)
-                                if (v in 50258..50363) continue
-                                // On step 0, suppress immediate end-of-text and leading space (Whisper begin_suppress_tokens)
+                                // Suppress all special and timestamp tokens (50258..51864) except END_OF_TEXT (50257)
+                                if (v >= WhisperTokenizer.START_OF_TRANSCRIPT) continue
+
+                                // Suppress standard non-speech symbols
+                                if (v in WhisperTokenizer.NON_SPEECH_SUPPRESS_TOKENS) continue
+
+                                // On step 0, suppress immediate end-of-text and whitespace
                                 if (step == 0 && (v == WhisperTokenizer.END_OF_TEXT || v == 220)) continue
 
-                                if (lastStepLogits[v] > maxVal) {
-                                    maxVal = lastStepLogits[v]
+                                var adjustedLogit = lastStepLogits[v]
+
+                                // Repetition penalty: penalize tokens that appeared recently
+                                val freq = tokenFreq[v] ?: 0
+                                if (freq > 0) {
+                                    adjustedLogit -= (1.8f * freq)
+                                }
+
+                                if (adjustedLogit > maxVal) {
+                                    maxVal = adjustedLogit
                                     bestToken = v
                                 }
                             }
@@ -387,23 +438,27 @@ class WhisperInferenceEngine(private val context: Context) {
                     break
                 }
 
-                // Repetition Safeguard: Prevent infinite looping on silence / noise
-                if (generatedTokens.size >= 3 &&
-                    generatedTokens[generatedTokens.size - 1] == bestToken &&
-                    generatedTokens[generatedTokens.size - 2] == bestToken &&
-                    generatedTokens[generatedTokens.size - 3] == bestToken) {
-                    Log.d(TAG, "Repetition detected (token $bestToken repeated 3x), stopping decoding for chunk ${chunk.windowIndex}")
+                // Multi-gram repetition loop safeguard for tiny/base models
+                val gSize = generatedTokens.size
+                if (gSize >= 3 &&
+                    generatedTokens[gSize - 1] == bestToken &&
+                    generatedTokens[gSize - 2] == bestToken &&
+                    generatedTokens[gSize - 3] == bestToken) {
+                    Log.d(TAG, "1-gram repetition loop detected, terminating chunk ${chunk.windowIndex}")
                     break
                 }
-                if (generatedTokens.size >= 6) {
-                    val n = generatedTokens.size
-                    if (generatedTokens[n - 1] == generatedTokens[n - 3] &&
-                        generatedTokens[n - 3] == generatedTokens[n - 5] &&
-                        generatedTokens[n - 2] == generatedTokens[n - 4] &&
-                        generatedTokens[n - 4] == generatedTokens[n - 6]) {
-                        Log.d(TAG, "2-gram repetition loop detected, stopping decoding for chunk ${chunk.windowIndex}")
-                        break
-                    }
+                if (gSize >= 4 &&
+                    generatedTokens[gSize - 1] == generatedTokens[gSize - 3] &&
+                    generatedTokens[gSize - 2] == generatedTokens[gSize - 4]) {
+                    Log.d(TAG, "2-gram repetition loop detected, terminating chunk ${chunk.windowIndex}")
+                    break
+                }
+                if (gSize >= 6 &&
+                    generatedTokens[gSize - 1] == generatedTokens[gSize - 4] &&
+                    generatedTokens[gSize - 2] == generatedTokens[gSize - 5] &&
+                    generatedTokens[gSize - 3] == generatedTokens[gSize - 6]) {
+                    Log.d(TAG, "3-gram repetition loop detected, terminating chunk ${chunk.windowIndex}")
+                    break
                 }
 
                 tokenSequence.add(bestToken.toLong())
@@ -418,20 +473,14 @@ class WhisperInferenceEngine(private val context: Context) {
 
         if (generatedTokens.isEmpty()) return emptyList()
 
-        // 3. Check if timestamps were generated in the stream
-        val hasTimestampTokens = generatedTokens.any { WhisperTokenizer.isTimestampToken(it) }
-        if (hasTimestampTokens) {
-            val timestampSegments = parseWhisperTokensIntoSegments(generatedTokens, chunk.startTimeMs, startIndex)
-            if (timestampSegments.size >= 2) {
-                return timestampSegments
-            }
+        // 3. Decode the complete text generated for this 30s chunk
+        val text = WhisperTokenizer.decodeTokens(generatedTokens)
+        if (text.isBlank() || WhisperTokenizer.isHallucination(text)) {
+            Log.d(TAG, "Chunk ${chunk.windowIndex} text was empty or filtered as hallucination: '$text'")
+            return emptyList()
         }
 
-        // 4. Decode the complete text generated for this 30s chunk
-        val text = WhisperTokenizer.decodeTokens(generatedTokens)
-        if (text.isBlank()) return emptyList()
-
-        // 5. Break the text into natural, readable 2-5 second subtitle cues aligned with active voice energy
+        // 4. Break the text into natural, readable 2-5 second subtitle cues aligned with active voice energy
         return segmentTextIntoTimedPhrases(text, chunk, startIndex)
     }
 
@@ -463,7 +512,9 @@ class WhisperInferenceEngine(private val context: Context) {
             ))
 
             val logitsValue = decResult[logitsName]?.get()?.value
-            var bestToken = 50259 // default en
+            val appLocale = context.resources.configuration.locales.get(0) ?: java.util.Locale.getDefault()
+            val fallbackLang = if (appLocale.language == "ar") "ar" else "en"
+            var bestToken = WhisperTokenizer.getLanguageToken(fallbackLang) ?: 50259
             var maxLogit = -Float.MAX_VALUE
 
             if (logitsValue is Array<*> && logitsValue.isNotEmpty()) {
@@ -484,12 +535,13 @@ class WhisperInferenceEngine(private val context: Context) {
             decResult.close()
             idsTensor.close()
 
-            val detectedCode = WhisperTokenizer.LANGUAGE_TOKENS.entries.firstOrNull { it.value == bestToken }?.key ?: "en"
+            val detectedCode = WhisperTokenizer.LANGUAGE_TOKENS.entries.firstOrNull { it.value == bestToken }?.key ?: fallbackLang
             Log.i(TAG, "Whisper dynamic language detection: '$detectedCode' (token $bestToken, score: $maxLogit)")
             return bestToken
         } catch (e: Exception) {
             Log.w(TAG, "Language auto-detection error: ${e.message}. Using locale fallback.")
-            val defaultLang = if (java.util.Locale.getDefault().language == "ar") "ar" else "en"
+            val appLocale = context.resources.configuration.locales.get(0) ?: java.util.Locale.getDefault()
+            val defaultLang = if (appLocale.language == "ar") "ar" else "en"
             return WhisperTokenizer.getLanguageToken(defaultLang) ?: 50259
         }
     }

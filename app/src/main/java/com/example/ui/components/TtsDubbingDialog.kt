@@ -223,7 +223,7 @@ fun TtsDubbingDialog(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Dub Video with Android TTS",
+                            text = "Dub Video with TTS Engine",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
