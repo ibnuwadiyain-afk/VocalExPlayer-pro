@@ -338,6 +338,24 @@ class ExampleUnitTest {
         assertEquals(5000, config.localServerPort)
         assertEquals("/translate", config.localServerEndpoint)
     }
+
+    @Test
+    fun testTwitterStatusExtraction() {
+        val processor = SocialMediaVideoProcessor()
+        val standardX = "https://x.com/OpenAI/status/1707077710047216095"
+        val twitterWithParams = "https://twitter.com/OpenAI/status/1707077710047216095?s=20&t=abcdef"
+        val mobileTwitter = "https://mobile.twitter.com/OpenAI/status/1707077710047216095"
+        val iStatus = "https://x.com/i/status/1707077710047216095"
+
+        assertEquals("1707077710047216095", processor.extractTwitterStatusId(standardX))
+        assertEquals("1707077710047216095", processor.extractTwitterStatusId(twitterWithParams))
+        assertEquals("1707077710047216095", processor.extractTwitterStatusId(mobileTwitter))
+        assertEquals("1707077710047216095", processor.extractTwitterStatusId(iStatus))
+
+        assertEquals("X (Twitter)", processor.detectPlatform(standardX))
+        assertEquals("X (Twitter)", processor.detectPlatform(twitterWithParams))
+        assertEquals("X (Twitter)", processor.detectPlatform("https://t.co/pyj8a9HWkB"))
+    }
 }
 
 

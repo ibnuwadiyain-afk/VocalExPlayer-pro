@@ -11,6 +11,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
@@ -77,6 +78,10 @@ class SocialMediaVideoProcessor(private val context: Context? = null) {
         private val TIKTOK_REGEX = Pattern.compile("""(?:tiktok\.com)""", Pattern.CASE_INSENSITIVE)
         private val INSTAGRAM_REGEX = Pattern.compile("""(?:instagram\.com\/(?:p|reel|tv))""", Pattern.CASE_INSENSITIVE)
         private val TWITTER_REGEX = Pattern.compile("""(?:twitter\.com|x\.com)""", Pattern.CASE_INSENSITIVE)
+        private val TWITTER_STATUS_REGEX = Pattern.compile(
+            """(?:twitter\.com|x\.com)\/(?:[^\/\s?#]+\/status|i\/status|i\/web\/status)\/(\d+)""",
+            Pattern.CASE_INSENSITIVE
+        )
         private val FACEBOOK_REGEX = Pattern.compile("""(?:facebook\.com|fb\.watch)""", Pattern.CASE_INSENSITIVE)
         private val DAILYMOTION_REGEX = Pattern.compile(
             """(?:dailymotion\.com\/(?:video|embed\/video)\/|dai\.ly\/)([a-zA-Z0-9]+)""",
@@ -134,6 +139,11 @@ class SocialMediaVideoProcessor(private val context: Context? = null) {
                 title = "Dailymotion Video Clip",
                 url = "https://www.dailymotion.com/video/x8o0ocx",
                 platform = "Dailymotion Link"
+            ),
+            SamplePreset(
+                title = "ChatGPT Browsing Demo (X / Twitter)",
+                url = "https://x.com/OpenAI/status/1707077710047216095",
+                platform = "X (Twitter)"
             )
         )
     }
@@ -160,7 +170,7 @@ class SocialMediaVideoProcessor(private val context: Context? = null) {
             }
             TIKTOK_REGEX.matcher(url).find() -> "TikTok"
             INSTAGRAM_REGEX.matcher(url).find() -> "Instagram Reel"
-            TWITTER_REGEX.matcher(url).find() -> "X (Twitter)"
+            TWITTER_REGEX.matcher(url).find() || lower.contains("t.co/") -> "X (Twitter)"
             FACEBOOK_REGEX.matcher(url).find() -> "Facebook"
             lower.contains("vidlii.com") -> "VidLii"
             lower.contains("dailymotion.com") -> "Dailymotion"
@@ -253,7 +263,17 @@ class SocialMediaVideoProcessor(private val context: Context? = null) {
                 }
             }
 
-            // 4. HLS Stream (.m3u8)
+            // 4. X (formerly Twitter) format resolution
+            val twitterUrl = if (cleanUrl.contains("t.co/")) resolveRedirect(cleanUrl) else cleanUrl
+            val twitterStatusId = extractTwitterStatusId(twitterUrl)
+            if (twitterStatusId != null) {
+                val twitterFormats = fetchTwitterFormats(twitterStatusId)
+                if (twitterFormats.isNotEmpty()) {
+                    return@withContext twitterFormats
+                }
+            }
+
+            // 5. HLS Stream (.m3u8)
             if (cleanUrl.contains(".m3u8")) {
                 val hlsFormats = fetchHlsFormats(cleanUrl)
                 if (hlsFormats.isNotEmpty()) {
@@ -526,7 +546,22 @@ class SocialMediaVideoProcessor(private val context: Context? = null) {
             }
         }
 
-        // 7. Universal HTML5 Web Scraper & Stream Resolver
+        // 7. X (Twitter) video resolution via Syndication & FxTwitter APIs
+        val resolvedTwitterUrl = if (url.contains("t.co/")) resolveRedirect(url) else url
+        val twitterStatusId = extractTwitterStatusId(resolvedTwitterUrl)
+        if (twitterStatusId != null) {
+            onProgress(DownloadProgressState.Resolving("Extracting X (Twitter) video stream…"))
+            try {
+                val twitterRes = resolveTwitterVideo(twitterStatusId, targetResolution)
+                if (twitterRes != null) {
+                    return twitterRes
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Twitter video resolution failed for $resolvedTwitterUrl", e)
+            }
+        }
+
+        // 8. Universal HTML5 Web Scraper & Stream Resolver
         // (Supports VidLii, Dailymotion, Vimeo, Rumble, Internet Archive, Reddit, blogs, news, and HTML5 video sites)
         try {
             val webMedia = extractWebPageMedia(url, platform, onProgress)
@@ -1508,6 +1543,348 @@ class SocialMediaVideoProcessor(private val context: Context? = null) {
             }
         }
         return null
+    }
+
+    data class TwitterMediaResult(
+        val title: String?,
+        val variants: List<Pair<String, Int>>
+    )
+
+    fun extractTwitterStatusId(url: String): String? {
+        val resolved = if (url.contains("t.co/")) resolveRedirect(url) else url
+        val matcher = TWITTER_STATUS_REGEX.matcher(resolved)
+        if (matcher.find()) {
+            return matcher.group(1)
+        }
+        val fallbackMatch = Regex("""/status/(\d+)""").find(resolved)
+        return fallbackMatch?.groupValues?.get(1)
+    }
+
+    private fun resolveRedirect(url: String): String {
+        return try {
+            val req = Request.Builder()
+                .url(url)
+                .head()
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .build()
+            httpClient.newCall(req).execute().use { response ->
+                response.request.url.toString()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to resolve redirect for $url: ${e.message}")
+            url
+        }
+    }
+
+    private fun fetchTwitterFormats(statusId: String): List<MediaResolutionOption> {
+        try {
+            val syndication = queryTwitterSyndication(statusId)
+            if (syndication != null && syndication.variants.isNotEmpty()) {
+                val formats = buildTwitterFormats(syndication.variants)
+                if (formats.isNotEmpty()) return formats
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Twitter syndication format fetch failed: ${e.message}")
+        }
+
+        try {
+            val fx = queryFxTwitterApi(statusId)
+            if (fx != null && fx.variants.isNotEmpty()) {
+                val formats = buildTwitterFormats(fx.variants)
+                if (formats.isNotEmpty()) return formats
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "FxTwitter format fetch failed: ${e.message}")
+        }
+
+        return emptyList()
+    }
+
+    private fun resolveTwitterVideo(statusId: String, targetResolution: MediaResolutionOption?): StreamResolution? {
+        if (targetResolution != null && !targetResolution.directUrl.isNullOrBlank()) {
+            return StreamResolution(
+                url = targetResolution.directUrl,
+                title = "X (Twitter) Video - ${targetResolution.label}",
+                referer = "https://x.com"
+            )
+        }
+
+        // 1. Try official Syndication API (fast, unauthenticated, official CDN)
+        try {
+            val syndication = queryTwitterSyndication(statusId)
+            if (syndication != null && syndication.variants.isNotEmpty()) {
+                val chosenUrl = selectTwitterVariant(syndication.variants, targetResolution)
+                if (chosenUrl != null) {
+                    val title = syndication.title?.take(60)?.let { "X - $it" } ?: "X (Twitter) Video"
+                    return StreamResolution(url = chosenUrl, title = title, referer = "https://x.com")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Twitter syndication resolution failed for status $statusId", e)
+        }
+
+        // 2. Try FxTwitter API fallback
+        try {
+            val fxResult = queryFxTwitterApi(statusId)
+            if (fxResult != null && fxResult.variants.isNotEmpty()) {
+                val chosenUrl = selectTwitterVariant(fxResult.variants, targetResolution)
+                if (chosenUrl != null) {
+                    val title = fxResult.title?.take(60)?.let { "X - $it" } ?: "X (Twitter) Video"
+                    return StreamResolution(url = chosenUrl, title = title, referer = "https://x.com")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "FxTwitter resolution failed for status $statusId", e)
+        }
+
+        // 3. Fallback to Twitter HTML OpenGraph scraper
+        try {
+            val htmlResult = queryTwitterHtmlScraper(statusId)
+            if (htmlResult != null && htmlResult.variants.isNotEmpty()) {
+                val chosenUrl = htmlResult.variants.first().first
+                val title = htmlResult.title?.take(60)?.let { "X - $it" } ?: "X (Twitter) Video"
+                return StreamResolution(url = chosenUrl, title = title, referer = "https://x.com")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Twitter HTML scraper fallback failed for status $statusId", e)
+        }
+
+        return null
+    }
+
+    private fun selectTwitterVariant(
+        variants: List<Pair<String, Int>>,
+        targetResolution: MediaResolutionOption?
+    ): String? {
+        if (variants.isEmpty()) return null
+        if (targetResolution == null || targetResolution.id == "best" || targetResolution.id == "audio") {
+            return variants.maxByOrNull { it.second }?.first
+        }
+        val targetH = targetResolution.height
+        return variants.minByOrNull { (url, bitrate) ->
+            val h = extractHeightFromTwitterUrl(url, bitrate)
+            kotlin.math.abs(h - targetH)
+        }?.first ?: variants.first().first
+    }
+
+    private fun queryTwitterSyndication(statusId: String): TwitterMediaResult? {
+        val apiUrl = "https://cdn.syndication.twimg.com/tweet-result?id=$statusId&token=x"
+        val request = Request.Builder()
+            .url(apiUrl)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .addHeader("Accept", "application/json")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
+            val root = JSONObject(body)
+            val title = root.optString("text").ifBlank { null }
+            val variants = mutableListOf<Pair<String, Int>>()
+
+            fun extractFromMediaDetails(mediaArray: JSONArray?) {
+                if (mediaArray == null) return
+                for (i in 0 until mediaArray.length()) {
+                    val mediaObj = mediaArray.optJSONObject(i) ?: continue
+                    val videoInfo = mediaObj.optJSONObject("video_info") ?: continue
+                    val varList = videoInfo.optJSONArray("variants") ?: continue
+                    for (v in 0 until varList.length()) {
+                        val variant = varList.optJSONObject(v) ?: continue
+                        val url = variant.optString("url")
+                        val contentType = variant.optString("content_type", variant.optString("type"))
+                        val bitrate = variant.optInt("bitrate", 0)
+                        if (url.isNotBlank() && (contentType.contains("mp4") || url.contains(".mp4"))) {
+                            variants.add(url to bitrate)
+                        }
+                    }
+                }
+            }
+
+            fun extractFromVideoObj(videoObj: JSONObject?) {
+                if (videoObj == null) return
+                val varList = videoObj.optJSONArray("variants") ?: return
+                for (v in 0 until varList.length()) {
+                    val variant = varList.optJSONObject(v) ?: continue
+                    val url = variant.optString("src", variant.optString("url"))
+                    val type = variant.optString("type", variant.optString("contentType"))
+                    val bitrate = variant.optInt("bitrate", 0)
+                    if (url.isNotBlank() && (type.contains("mp4") || url.contains(".mp4"))) {
+                        variants.add(url to bitrate)
+                    }
+                }
+            }
+
+            extractFromMediaDetails(root.optJSONArray("mediaDetails"))
+            extractFromVideoObj(root.optJSONObject("video"))
+
+            val quoted = root.optJSONObject("quoted_tweet")
+            if (quoted != null) {
+                extractFromMediaDetails(quoted.optJSONArray("mediaDetails"))
+                extractFromVideoObj(quoted.optJSONObject("video"))
+            }
+
+            if (variants.isNotEmpty()) {
+                return TwitterMediaResult(title, variants)
+            }
+        }
+        return null
+    }
+
+    private fun queryFxTwitterApi(statusId: String): TwitterMediaResult? {
+        val apiUrl = "https://api.fxtwitter.com/i/status/$statusId"
+        val request = Request.Builder()
+            .url(apiUrl)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .addHeader("Accept", "application/json")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
+            val root = JSONObject(body)
+            val tweet = root.optJSONObject("tweet") ?: return null
+            val title = tweet.optString("text").ifBlank { null }
+            val variants = mutableListOf<Pair<String, Int>>()
+
+            fun extractFromMediaObj(media: JSONObject?) {
+                if (media == null) return
+                val videos = media.optJSONArray("videos") ?: media.optJSONArray("all") ?: return
+                for (i in 0 until videos.length()) {
+                    val item = videos.optJSONObject(i) ?: continue
+                    val itemUrl = item.optString("url")
+                    val formats = item.optJSONArray("formats")
+                    if (formats != null && formats.length() > 0) {
+                        for (f in 0 until formats.length()) {
+                            val fmt = formats.optJSONObject(f) ?: continue
+                            val url = fmt.optString("url")
+                            val bitrate = fmt.optInt("bitrate", 0)
+                            if (url.isNotBlank()) {
+                                variants.add(url to bitrate)
+                            }
+                        }
+                    } else if (itemUrl.isNotBlank() && (itemUrl.contains(".mp4") || item.optString("type") == "video" || item.optString("type") == "gif")) {
+                        variants.add(itemUrl to 0)
+                    }
+                }
+            }
+
+            extractFromMediaObj(tweet.optJSONObject("media"))
+            val quote = tweet.optJSONObject("quote")
+            if (quote != null) {
+                extractFromMediaObj(quote.optJSONObject("media"))
+            }
+
+            if (variants.isNotEmpty()) {
+                return TwitterMediaResult(title, variants)
+            }
+        }
+        return null
+    }
+
+    private fun queryTwitterHtmlScraper(statusId: String): TwitterMediaResult? {
+        val scraperUrls = listOf(
+            "https://fxtwitter.com/i/status/$statusId",
+            "https://vxtwitter.com/i/status/$statusId"
+        )
+        for (pageUrl in scraperUrls) {
+            try {
+                val request = Request.Builder()
+                    .url(pageUrl)
+                    .addHeader("User-Agent", "facebookexternalhit/1.1")
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val html = response.body?.string() ?: return@use
+                    val ogVideoMatch = Regex("""<meta\s+property=["']og:video(?::secure_url)?["']\s+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
+                        ?: Regex("""<meta\s+content=["']([^"']+)["']\s+property=["']og:video(?::secure_url)?["']""", RegexOption.IGNORE_CASE).find(html)
+                    val ogTitleMatch = Regex("""<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
+                    val videoUrl = ogVideoMatch?.groupValues?.get(1)?.replace("&amp;", "&")
+                    if (!videoUrl.isNullOrBlank()) {
+                        val title = ogTitleMatch?.groupValues?.get(1)?.replace("&amp;", "&")
+                        return TwitterMediaResult(title, listOf(videoUrl to 0))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "HTML scraper failed for $pageUrl: ${e.message}")
+            }
+        }
+        return null
+    }
+
+    private fun buildTwitterFormats(mp4List: List<Pair<String, Int>>): List<MediaResolutionOption> {
+        if (mp4List.isEmpty()) return emptyList()
+
+        val uniqueVariants = mp4List
+            .distinctBy { it.first }
+            .sortedByDescending { it.second }
+
+        val options = mutableListOf<MediaResolutionOption>()
+        var isFirst = true
+
+        for ((url, bitrate) in uniqueVariants) {
+            val height = extractHeightFromTwitterUrl(url, bitrate)
+            val label = when {
+                height >= 1080 -> "1080p (Full HD)"
+                height >= 720 -> "720p (HD)"
+                height >= 480 -> "480p (SD)"
+                height >= 360 -> "360p (Fast)"
+                else -> "${height}p (Mobile)"
+            }
+            val id = "${height}p"
+            if (options.none { it.id == id }) {
+                options.add(
+                    MediaResolutionOption(
+                        id = id,
+                        label = label,
+                        height = height,
+                        format = "mp4",
+                        directUrl = url,
+                        isRecommended = isFirst,
+                        isFromSource = true
+                    )
+                )
+                isFirst = false
+            }
+        }
+
+        val bestStream = uniqueVariants.firstOrNull()?.first
+        if (bestStream != null) {
+            options.add(
+                MediaResolutionOption(
+                    id = "audio",
+                    label = "Audio Only (MP3)",
+                    height = 0,
+                    format = "mp3",
+                    directUrl = bestStream,
+                    isFromSource = true
+                )
+            )
+        }
+
+        return options
+    }
+
+    private fun extractHeightFromTwitterUrl(url: String, bitrate: Int): Int {
+        val dimensionMatch = Regex("""(?:vid/(?:avc1/)?|/)?(\d{2,4})x(\d{2,4})""").find(url)
+        if (dimensionMatch != null) {
+            val w = dimensionMatch.groupValues[1].toIntOrNull()
+            val h = dimensionMatch.groupValues[2].toIntOrNull()
+            if (h != null && w != null) {
+                return minOf(h, w)
+            }
+            if (h != null && h > 100) return h
+        }
+        return when {
+            bitrate > 2_000_000 -> 1080
+            bitrate >= 800_000 -> 720
+            bitrate >= 400_000 -> 480
+            bitrate > 0 -> 360
+            else -> 720
+        }
     }
 
     private fun queryCobaltApi(apiEndpoint: String, targetUrl: String, targetResolution: MediaResolutionOption? = null): StreamResolution? {
